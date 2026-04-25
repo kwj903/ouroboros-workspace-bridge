@@ -2189,6 +2189,8 @@ def workspace_apply_patch(
     cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")] = ".",
     operation_id: Annotated[str | None, Field(description="Optional idempotency key for retry-safe patch application.")] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=120)] = 30,
+    return_diff: Annotated[bool, Field(description="Whether to include git diff in the tool result. Keep false for large changes.")] = False,
+    diff_max_chars: Annotated[int, Field(ge=1, le=20_000, description="Maximum diff characters to return when return_diff is true.")] = 4_000,
 ) -> PatchApplyResult:
     """Apply a unified diff patch under ~/workspace after git apply --check. Existing files are backed up first."""
     op_id, previous = _begin_operation(
@@ -2197,6 +2199,8 @@ def workspace_apply_patch(
             "cwd": cwd,
             "patch_length": len(patch),
             "patch_sha256": _sha256_bytes(patch.encode("utf-8")),
+            "return_diff": return_diff,
+            "diff_max_chars": diff_max_chars,
         },
         operation_id,
     )
@@ -2255,6 +2259,15 @@ def workspace_apply_patch(
             timeout_seconds=15,
         )
 
+        git_diff = ""
+        diff_truncated = diff_result.truncated
+
+        if return_diff:
+            git_diff, limit_truncated = _truncate(diff_result.stdout, diff_max_chars)
+            diff_truncated = diff_truncated or limit_truncated
+        else:
+            diff_truncated = diff_truncated or bool(diff_result.stdout)
+
         result = PatchApplyResult(
             cwd=_relative(target),
             files=[PatchFileEntry(path=item) for item in patch_paths],
@@ -2262,9 +2275,9 @@ def workspace_apply_patch(
             stdout=applied.stdout,
             stderr=applied.stderr,
             backup_ids=backup_ids,
-            git_diff=diff_result.stdout,
+            git_diff=git_diff,
             operation_id=op_id,
-            truncated=applied.truncated or diff_result.truncated,
+            truncated=applied.truncated or diff_truncated,
         )
 
         _audit(

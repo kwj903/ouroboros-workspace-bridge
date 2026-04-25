@@ -160,6 +160,8 @@ workspace_apply_patch
 
 큰 수정은 `workspace_apply_patch`를 우선 사용합니다. 여러 번의 작은 write 호출보다 한 번의 patch 적용이 안정적입니다.
 
+기본 설정에서는 적용 결과를 가볍게 유지하기 위해 전체 diff를 반환하지 않습니다. 전체 diff가 필요하면 `workspace_git_diff`로 별도 조회합니다.
+
 ### 삭제/복구
 
 ```text
