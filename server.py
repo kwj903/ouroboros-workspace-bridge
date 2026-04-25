@@ -25,6 +25,7 @@ AUDIT_LOG = RUNTIME_ROOT / "audit.jsonl"
 BACKUP_DIR = RUNTIME_ROOT / "backups"
 TRASH_DIR = RUNTIME_ROOT / "trash"
 OPERATION_DIR = RUNTIME_ROOT / "operations"
+TASK_DIR = RUNTIME_ROOT / "tasks"
 
 MAX_READ_CHARS = 20_000
 MAX_WRITE_CHARS = 200_000
@@ -323,6 +324,43 @@ class PatchApplyResult(BaseModel):
     truncated: bool
 
 
+class TaskStepEntry(BaseModel):
+    ts: str
+    kind: str
+    message: str
+    data: dict[str, object] | None = None
+
+
+class TaskStatusResult(BaseModel):
+    task_id: str
+    title: str
+    goal: str
+    status: str
+    created_at: str
+    updated_at: str
+    finished_at: str | None = None
+    plan: list[str]
+    steps: list[TaskStepEntry]
+    metadata: dict[str, object]
+    summary: str | None = None
+    next_steps: list[str]
+
+
+class TaskListEntry(BaseModel):
+    task_id: str
+    title: str
+    status: str
+    created_at: str
+    updated_at: str
+    finished_at: str | None = None
+    summary: str | None = None
+
+
+class TaskListResult(BaseModel):
+    entries: list[TaskListEntry]
+    count: int
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -332,6 +370,7 @@ def _ensure_runtime_dirs() -> None:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     TRASH_DIR.mkdir(parents=True, exist_ok=True)
     OPERATION_DIR.mkdir(parents=True, exist_ok=True)
+    TASK_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _audit(event: str, **data: object) -> None:
@@ -455,6 +494,89 @@ def _fail_operation(operation_id: str, exc: BaseException) -> None:
 
     _write_operation_record(record)
     _audit("operation_failed", operation_id=operation_id, error=record["error"])
+
+
+def _new_task_id() -> str:
+    return f"task-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
+
+def _normalize_task_id(task_id: str) -> str:
+    normalized = task_id.strip()
+
+    if normalized == "":
+        raise ValueError("task_id cannot be empty.")
+
+    if len(normalized) > 160:
+        raise ValueError("task_id is too long.")
+
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+    if any(ch not in allowed for ch in normalized):
+        raise ValueError("task_id can only contain letters, numbers, '-' and '_'.")
+
+    return normalized
+
+
+def _task_path(task_id: str) -> Path:
+    return TASK_DIR / f"{task_id}.json"
+
+
+def _read_task_record(task_id: str) -> dict[str, object] | None:
+    _ensure_runtime_dirs()
+    path = _task_path(_normalize_task_id(task_id))
+
+    if not path.exists():
+        return None
+
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_task_record(record: dict[str, object]) -> None:
+    _ensure_runtime_dirs()
+    task_id = _normalize_task_id(str(record["task_id"]))
+    path = _task_path(task_id)
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _task_result(record: dict[str, object]) -> TaskStatusResult:
+    raw_steps = record.get("steps")
+    steps: list[TaskStepEntry] = []
+
+    if isinstance(raw_steps, list):
+        for raw_step in raw_steps:
+            if not isinstance(raw_step, dict):
+                continue
+
+            steps.append(
+                TaskStepEntry(
+                    ts=str(raw_step.get("ts", "")),
+                    kind=str(raw_step.get("kind", "note")),
+                    message=str(raw_step.get("message", "")),
+                    data=raw_step.get("data") if isinstance(raw_step.get("data"), dict) else None,
+                )
+            )
+
+    raw_plan = record.get("plan")
+    plan = [str(item) for item in raw_plan] if isinstance(raw_plan, list) else []
+
+    raw_next_steps = record.get("next_steps")
+    next_steps = [str(item) for item in raw_next_steps] if isinstance(raw_next_steps, list) else []
+
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+
+    return TaskStatusResult(
+        task_id=str(record.get("task_id", "")),
+        title=str(record.get("title", "")),
+        goal=str(record.get("goal", "")),
+        status=str(record.get("status", "unknown")),
+        created_at=str(record.get("created_at", "")),
+        updated_at=str(record.get("updated_at", "")),
+        finished_at=record.get("finished_at") if isinstance(record.get("finished_at"), str) else None,
+        plan=plan,
+        steps=steps,
+        metadata=metadata,
+        summary=record.get("summary") if isinstance(record.get("summary"), str) else None,
+        next_steps=next_steps,
+    )
 
 
 def _safe_env() -> dict[str, str]:
@@ -853,6 +975,12 @@ def workspace_info() -> WorkspaceInfo:
             "workspace_project_snapshot",
             "workspace_preview_patch",
             "workspace_apply_patch",
+            "workspace_task_start",
+            "workspace_task_status",
+            "workspace_task_log_step",
+            "workspace_task_update_plan",
+            "workspace_task_finish",
+            "workspace_list_tasks",
         ],
     )
 
@@ -1842,6 +1970,178 @@ def workspace_project_snapshot(
         git_status=git_status,
         truncated=tree_result.truncated or git_status_result.truncated,
     )
+
+
+@mcp.tool()
+def workspace_task_start(
+    title: Annotated[str, Field(min_length=1, max_length=120, description="Short task title.")],
+    goal: Annotated[str, Field(min_length=1, max_length=2_000, description="Task goal or user request summary.")],
+    plan: Annotated[list[str], Field(description="Initial ordered plan steps.")] = [],
+    metadata: Annotated[dict[str, object] | None, Field(description="Optional task metadata.")] = None,
+    task_id: Annotated[str | None, Field(description="Optional explicit task id. Generated if omitted.")] = None,
+) -> TaskStatusResult:
+    """Start a Codex-style local work task record for planning, steps, verification, and handoff."""
+    new_task_id = _normalize_task_id(task_id) if task_id else _new_task_id()
+
+    if _read_task_record(new_task_id) is not None:
+        raise FileExistsError(f"Task already exists: {new_task_id}")
+
+    now = _now_iso()
+    record: dict[str, object] = {
+        "task_id": new_task_id,
+        "title": title,
+        "goal": goal,
+        "status": "active",
+        "created_at": now,
+        "updated_at": now,
+        "finished_at": None,
+        "plan": [str(item) for item in plan],
+        "steps": [],
+        "metadata": metadata or {},
+        "summary": None,
+        "next_steps": [],
+    }
+
+    _write_task_record(record)
+    _audit("task_started", task_id=new_task_id, title=title)
+    return _task_result(record)
+
+
+@mcp.tool()
+def workspace_task_status(
+    task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
+) -> TaskStatusResult:
+    """Return a task record by task_id."""
+    normalized = _normalize_task_id(task_id)
+    record = _read_task_record(normalized)
+
+    if record is None:
+        raise FileNotFoundError(f"Task not found: {normalized}")
+
+    return _task_result(record)
+
+
+@mcp.tool()
+def workspace_task_log_step(
+    task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
+    message: Annotated[str, Field(min_length=1, max_length=2_000, description="Step message to append.")],
+    kind: Annotated[
+        Literal["note", "read", "write", "test", "decision", "todo", "error"],
+        Field(description="Step kind."),
+    ] = "note",
+    data: Annotated[dict[str, object] | None, Field(description="Optional structured data for this step.")] = None,
+) -> TaskStatusResult:
+    """Append a step to a task record and return the updated task."""
+    normalized = _normalize_task_id(task_id)
+    record = _read_task_record(normalized)
+
+    if record is None:
+        raise FileNotFoundError(f"Task not found: {normalized}")
+
+    if record.get("status") not in {"active", "paused"}:
+        raise ValueError(f"Cannot log step to non-active task: {record.get('status')}")
+
+    steps = record.get("steps") if isinstance(record.get("steps"), list) else []
+    steps.append(
+        {
+            "ts": _now_iso(),
+            "kind": kind,
+            "message": message,
+            "data": data,
+        }
+    )
+
+    record["steps"] = steps
+    record["updated_at"] = _now_iso()
+
+    _write_task_record(record)
+    _audit("task_step_logged", task_id=normalized, kind=kind, message=message)
+    return _task_result(record)
+
+
+@mcp.tool()
+def workspace_task_update_plan(
+    task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
+    plan: Annotated[list[str], Field(description="Replacement ordered plan steps.")],
+) -> TaskStatusResult:
+    """Replace the plan for an active task."""
+    normalized = _normalize_task_id(task_id)
+    record = _read_task_record(normalized)
+
+    if record is None:
+        raise FileNotFoundError(f"Task not found: {normalized}")
+
+    if record.get("status") not in {"active", "paused"}:
+        raise ValueError(f"Cannot update plan for non-active task: {record.get('status')}")
+
+    record["plan"] = [str(item) for item in plan]
+    record["updated_at"] = _now_iso()
+
+    _write_task_record(record)
+    _audit("task_plan_updated", task_id=normalized, plan=record["plan"])
+    return _task_result(record)
+
+
+@mcp.tool()
+def workspace_task_finish(
+    task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
+    status: Annotated[
+        Literal["completed", "paused", "cancelled"],
+        Field(description="Final or paused task status."),
+    ] = "completed",
+    summary: Annotated[str, Field(max_length=4_000, description="Task summary.")] = "",
+    next_steps: Annotated[list[str], Field(description="Follow-up steps, if any.")] = [],
+) -> TaskStatusResult:
+    """Finish, pause, or cancel a task record."""
+    normalized = _normalize_task_id(task_id)
+    record = _read_task_record(normalized)
+
+    if record is None:
+        raise FileNotFoundError(f"Task not found: {normalized}")
+
+    now = _now_iso()
+    record["status"] = status
+    record["updated_at"] = now
+    record["finished_at"] = now if status in {"completed", "cancelled"} else None
+    record["summary"] = summary
+    record["next_steps"] = [str(item) for item in next_steps]
+
+    _write_task_record(record)
+    _audit("task_finished", task_id=normalized, status=status, summary=summary)
+    return _task_result(record)
+
+
+@mcp.tool()
+def workspace_list_tasks(
+    limit: Annotated[int, Field(ge=1, le=200, description="Maximum tasks to return.")] = 50,
+) -> TaskListResult:
+    """List recent task records, newest first."""
+    _ensure_runtime_dirs()
+
+    entries: list[TaskListEntry] = []
+
+    for task_path in sorted(TASK_DIR.glob("*.json"), reverse=True):
+        try:
+            record = json.loads(task_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+
+        entries.append(
+            TaskListEntry(
+                task_id=str(record.get("task_id", task_path.stem)),
+                title=str(record.get("title", "")),
+                status=str(record.get("status", "unknown")),
+                created_at=str(record.get("created_at", "")),
+                updated_at=str(record.get("updated_at", "")),
+                finished_at=record.get("finished_at") if isinstance(record.get("finished_at"), str) else None,
+                summary=record.get("summary") if isinstance(record.get("summary"), str) else None,
+            )
+        )
+
+        if len(entries) >= limit:
+            break
+
+    return TaskListResult(entries=entries, count=len(entries))
 
 
 @mcp.tool()
