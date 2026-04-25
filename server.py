@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -293,6 +294,32 @@ class ProjectSnapshotResult(BaseModel):
     tree: list[str]
     key_files: list[str]
     git_status: str
+    truncated: bool
+
+
+class PatchFileEntry(BaseModel):
+    path: str
+
+
+class PatchPreviewResult(BaseModel):
+    cwd: str
+    files: list[PatchFileEntry]
+    can_apply: bool
+    exit_code: int
+    stdout: str
+    stderr: str
+    truncated: bool
+
+
+class PatchApplyResult(BaseModel):
+    cwd: str
+    files: list[PatchFileEntry]
+    exit_code: int
+    stdout: str
+    stderr: str
+    backup_ids: dict[str, str | None]
+    git_diff: str
+    operation_id: str
     truncated: bool
 
 
@@ -623,6 +650,129 @@ def _validate_command_args(cwd: Path, args: list[str]) -> list[str]:
     return safe_args
 
 
+def _clean_patch_path(raw_path: str) -> str | None:
+    value = raw_path.strip()
+
+    if "\t" in value:
+        value = value.split("\t", 1)[0]
+
+    if value == "/dev/null":
+        return None
+
+    if value.startswith("a/") or value.startswith("b/"):
+        value = value[2:]
+
+    if value == "":
+        return None
+
+    path = Path(value)
+
+    if path.is_absolute() or value.startswith("~") or ".." in path.parts:
+        raise ValueError(f"Unsafe patch path: {raw_path}")
+
+    if value.startswith(".git/") or "/.git/" in value:
+        raise PermissionError(f"Patch path touches .git: {raw_path}")
+
+    return value
+
+
+def _extract_patch_paths(patch: str) -> list[str]:
+    paths: set[str] = set()
+
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            parts = line.split()
+            if len(parts) >= 4:
+                for raw in (parts[2], parts[3]):
+                    cleaned = _clean_patch_path(raw)
+                    if cleaned is not None:
+                        paths.add(cleaned)
+
+        elif line.startswith("--- ") or line.startswith("+++ "):
+            cleaned = _clean_patch_path(line[4:])
+            if cleaned is not None:
+                paths.add(cleaned)
+
+        elif line.startswith("rename from "):
+            cleaned = _clean_patch_path(line[len("rename from ") :])
+            if cleaned is not None:
+                paths.add(cleaned)
+
+        elif line.startswith("rename to "):
+            cleaned = _clean_patch_path(line[len("rename to ") :])
+            if cleaned is not None:
+                paths.add(cleaned)
+
+        elif line.startswith("copy from "):
+            cleaned = _clean_patch_path(line[len("copy from ") :])
+            if cleaned is not None:
+                paths.add(cleaned)
+
+        elif line.startswith("copy to "):
+            cleaned = _clean_patch_path(line[len("copy to ") :])
+            if cleaned is not None:
+                paths.add(cleaned)
+
+    if not paths:
+        raise ValueError("No patch file paths were found.")
+
+    return sorted(paths)
+
+
+def _resolve_patch_path(cwd: Path, patch_path: str) -> Path:
+    cwd_rel = _relative(cwd)
+    if cwd_rel == ".":
+        combined = Path(patch_path)
+    else:
+        combined = Path(cwd_rel) / patch_path
+
+    return _resolve_workspace_path(str(combined))
+
+
+def _validate_patch_paths(cwd: Path, patch_paths: list[str]) -> None:
+    for patch_path in patch_paths:
+        target = _resolve_patch_path(cwd, patch_path)
+
+        for part in target.relative_to(WORKSPACE_ROOT).parts:
+            if part in BLOCKED_DIR_NAMES:
+                raise PermissionError(f"Patch path touches blocked directory: {patch_path}")
+
+        if _is_blocked_name(target.name):
+            raise PermissionError(f"Patch path touches blocked file: {patch_path}")
+
+
+def _run_git_apply_with_stdin(
+    cwd: Path,
+    args: list[str],
+    patch: str,
+    timeout_seconds: int,
+) -> CommandResult:
+    completed = subprocess.run(
+        ["git", "apply", *args],
+        input=patch,
+        cwd=str(cwd),
+        env=_safe_env(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout_seconds,
+        shell=False,
+        check=False,
+    )
+
+    stdout, out_truncated = _truncate(completed.stdout, MAX_STDOUT_CHARS)
+    stderr, err_truncated = _truncate(completed.stderr, MAX_STDERR_CHARS)
+
+    return CommandResult(
+        cwd=_relative(cwd),
+        command=["git", "apply", *args],
+        exit_code=completed.returncode,
+        stdout=stdout,
+        stderr=stderr,
+        truncated=out_truncated or err_truncated,
+    )
+
+
 def _run_command(cwd: str, command: list[str], timeout_seconds: int = 30) -> CommandResult:
     target = _resolve_workspace_path(cwd)
 
@@ -701,6 +851,8 @@ def workspace_info() -> WorkspaceInfo:
             "workspace_search_text",
             "workspace_read_many_files",
             "workspace_project_snapshot",
+            "workspace_preview_patch",
+            "workspace_apply_patch",
         ],
     )
 
@@ -1690,6 +1842,146 @@ def workspace_project_snapshot(
         git_status=git_status,
         truncated=tree_result.truncated or git_status_result.truncated,
     )
+
+
+@mcp.tool()
+def workspace_preview_patch(
+    patch: Annotated[str, Field(description="Unified diff patch text to validate with git apply --check.")],
+    cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")] = ".",
+    timeout_seconds: Annotated[int, Field(ge=1, le=60)] = 15,
+) -> PatchPreviewResult:
+    """Validate a unified diff patch without applying it."""
+    if patch.strip() == "":
+        raise ValueError("patch cannot be empty.")
+
+    if len(patch) > MAX_WRITE_CHARS:
+        raise ValueError(f"Patch too large. Max characters: {MAX_WRITE_CHARS}")
+
+    target = _resolve_workspace_path(cwd)
+
+    if not target.exists() or not target.is_dir():
+        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+
+    patch_paths = _extract_patch_paths(patch)
+    _validate_patch_paths(target, patch_paths)
+
+    check = _run_git_apply_with_stdin(
+        cwd=target,
+        args=["--check"],
+        patch=patch,
+        timeout_seconds=timeout_seconds,
+    )
+
+    return PatchPreviewResult(
+        cwd=_relative(target),
+        files=[PatchFileEntry(path=item) for item in patch_paths],
+        can_apply=check.exit_code == 0,
+        exit_code=check.exit_code,
+        stdout=check.stdout,
+        stderr=check.stderr,
+        truncated=check.truncated,
+    )
+
+
+@mcp.tool()
+def workspace_apply_patch(
+    patch: Annotated[str, Field(description="Unified diff patch text to apply with git apply.")],
+    cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")] = ".",
+    operation_id: Annotated[str | None, Field(description="Optional idempotency key for retry-safe patch application.")] = None,
+    timeout_seconds: Annotated[int, Field(ge=1, le=120)] = 30,
+) -> PatchApplyResult:
+    """Apply a unified diff patch under ~/workspace after git apply --check. Existing files are backed up first."""
+    op_id, previous = _begin_operation(
+        "workspace_apply_patch",
+        {
+            "cwd": cwd,
+            "patch_length": len(patch),
+            "patch_sha256": _sha256_bytes(patch.encode("utf-8")),
+        },
+        operation_id,
+    )
+
+    if previous is not None and previous.get("status") == "completed":
+        result = dict(previous.get("result") or {})
+        result["operation_id"] = op_id
+        return PatchApplyResult(**result)
+
+    try:
+        if patch.strip() == "":
+            raise ValueError("patch cannot be empty.")
+
+        if len(patch) > MAX_WRITE_CHARS:
+            raise ValueError(f"Patch too large. Max characters: {MAX_WRITE_CHARS}")
+
+        target = _resolve_workspace_path(cwd)
+
+        if not target.exists() or not target.is_dir():
+            raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+
+        patch_paths = _extract_patch_paths(patch)
+        _validate_patch_paths(target, patch_paths)
+
+        check = _run_git_apply_with_stdin(
+            cwd=target,
+            args=["--check"],
+            patch=patch,
+            timeout_seconds=timeout_seconds,
+        )
+
+        if check.exit_code != 0:
+            raise RuntimeError(f"git apply --check failed: {check.stderr or check.stdout}")
+
+        backup_ids: dict[str, str | None] = {}
+        for patch_path in patch_paths:
+            workspace_path = _resolve_patch_path(target, patch_path)
+            if workspace_path.exists() and workspace_path.is_file():
+                backup_ids[patch_path] = _backup_file(workspace_path)
+            else:
+                backup_ids[patch_path] = None
+
+        applied = _run_git_apply_with_stdin(
+            cwd=target,
+            args=[],
+            patch=patch,
+            timeout_seconds=timeout_seconds,
+        )
+
+        if applied.exit_code != 0:
+            raise RuntimeError(f"git apply failed: {applied.stderr or applied.stdout}")
+
+        diff_result = _run_command(
+            cwd=_relative(target),
+            command=["git", "diff", "--no-ext-diff"],
+            timeout_seconds=15,
+        )
+
+        result = PatchApplyResult(
+            cwd=_relative(target),
+            files=[PatchFileEntry(path=item) for item in patch_paths],
+            exit_code=applied.exit_code,
+            stdout=applied.stdout,
+            stderr=applied.stderr,
+            backup_ids=backup_ids,
+            git_diff=diff_result.stdout,
+            operation_id=op_id,
+            truncated=applied.truncated or diff_result.truncated,
+        )
+
+        _audit(
+            "apply_patch",
+            operation_id=op_id,
+            cwd=result.cwd,
+            files=patch_paths,
+            backup_ids=backup_ids,
+            patch_sha256=_sha256_bytes(patch.encode("utf-8")),
+        )
+        _complete_operation(op_id, result)
+
+        return result
+
+    except Exception as exc:
+        _fail_operation(op_id, exc)
+        raise
 
 
 @mcp.tool()
