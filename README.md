@@ -378,6 +378,26 @@ npx -y @modelcontextprotocol/inspector --cli https://iguana-dashing-tuna.ngrok-f
   --tool-name workspace_info
 ```
 
+### Smoke check 스크립트
+
+로컬 기본 검증은 다음 명령으로 실행합니다.
+
+```bash
+uv run python scripts/smoke_check.py
+```
+
+MCP 서버와 ngrok이 실행 중이면 Inspector까지 포함해서 확인할 수 있습니다.
+
+```bash
+uv run python scripts/smoke_check.py --mcp-url https://iguana-dashing-tuna.ngrok-free.app/mcp
+```
+
+또는 환경 변수로 지정할 수 있습니다.
+
+```bash
+MCP_URL=https://iguana-dashing-tuna.ngrok-free.app/mcp uv run python scripts/smoke_check.py
+```
+
 ## 커밋 기준
 
 기능 단위로 커밋합니다.
