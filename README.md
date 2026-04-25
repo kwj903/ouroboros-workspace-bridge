@@ -380,7 +380,7 @@ npx -y @modelcontextprotocol/inspector --cli https://iguana-dashing-tuna.ngrok-f
 
 ### Smoke check 스크립트
 
-로컬 기본 검증은 다음 명령으로 실행합니다.
+로컬 기본 검증은 다음 명령으로 실행합니다. 이 명령은 `server.py` 문법 검사, `unittest` 기반 안전성 테스트, `git diff --check`를 함께 실행합니다.
 
 ```bash
 uv run python scripts/smoke_check.py

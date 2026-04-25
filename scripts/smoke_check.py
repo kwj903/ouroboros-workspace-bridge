@@ -52,6 +52,11 @@ def check_local_python() -> None:
     require_success("py_compile", result)
 
 
+def check_unit_tests() -> None:
+    result = run_command([sys.executable, "-m", "unittest", "discover", "-s", "tests"], timeout=60)
+    require_success("unit tests", result)
+
+
 def check_git_diff() -> None:
     result = run_command(["git", "diff", "--check"], timeout=30)
     require_success("git diff --check", result)
@@ -120,6 +125,7 @@ def main() -> int:
 
     checks = [
         ("py_compile", lambda: check_local_python()),
+        ("unit tests", lambda: check_unit_tests()),
         ("git diff --check", lambda: check_git_diff()),
     ]
 
