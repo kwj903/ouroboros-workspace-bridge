@@ -42,7 +42,7 @@ def find_bundle(bundle_id: str) -> tuple[Path, dict[str, object]]:
         path = directory / f"{bundle_id}.json"
         if path.exists():
             return path, read_json(path)
-    raise FileNotFound오류(f"Bundle not found: {bundle_id}")
+    raise FileNotFoundError(f"Bundle not found: {bundle_id}")
 
 
 def list_bundles() -> list[dict[str, object]]:
@@ -171,6 +171,42 @@ def run_runner(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def step_summary_html(step: dict[str, object], idx: int) -> str:
+    kind = str(step.get("type", "command"))
+
+    if kind == "command":
+        detail = f"""
+        <p class="meta">명령:</p>
+        <pre>{escape(step.get("argv", []))}</pre>
+        <p class="meta">제한 시간: {escape(step.get("timeout_seconds", ""))}</p>
+        """
+    elif kind in {"write_file", "append_file"}:
+        detail = f"""
+        <p class="meta">파일: <code>{escape(step.get("path", ""))}</code></p>
+        <p class="meta">내용 길이: {len(str(step.get("content", "")))}자</p>
+        <p class="meta">덮어쓰기: {escape(bool_label(step.get("overwrite", False)))}</p>
+        """
+    elif kind == "replace_text":
+        detail = f"""
+        <p class="meta">파일: <code>{escape(step.get("path", ""))}</code></p>
+        <p class="meta">기존 문구 길이: {len(str(step.get("old_text", "")))}자</p>
+        <p class="meta">새 문구 길이: {len(str(step.get("new_text", "")))}자</p>
+        <p class="meta">전체 치환: {escape(bool_label(step.get("replace_all", False)))}</p>
+        """
+    else:
+        detail = f"<pre>{escape(step)}</pre>"
+
+    return f"""
+    <div class="card">
+      <h3>{idx}. {escape(step.get("name", ""))}</h3>
+      <p class="meta">작업 종류: <code>{escape(kind)}</code></p>
+      <p class="meta">위험도: <code>{escape(risk_label(step.get("risk", "")))}</code></p>
+      <p class="meta">이유: {escape(step.get("reason", ""))}</p>
+      {detail}
+    </div>
+    """
+
+
 def bundle_summary_html(record: dict[str, object]) -> str:
     steps = record.get("steps")
     if not isinstance(steps, list):
@@ -180,16 +216,7 @@ def bundle_summary_html(record: dict[str, object]) -> str:
     for idx, step in enumerate(steps, 1):
         if not isinstance(step, dict):
             continue
-        step_items.append(
-            f"""
-            <div class="card">
-              <h3>{idx}. {escape(step.get("name", ""))}</h3>
-              <p class="meta">위험도: <code>{escape(risk_label(step.get("risk", "")))}</code></p>
-              <p class="meta">이유: {escape(step.get("reason", ""))}</p>
-              <pre>{escape(step.get("argv", []))}</pre>
-            </div>
-            """
-        )
+        step_items.append(step_summary_html(step, idx))
 
     return "\n".join(step_items)
 
@@ -248,7 +275,7 @@ class Handler(BaseHTTPRequestHandler):
             bundle_id = parts[1]
             try:
                 path, record = find_bundle(bundle_id)
-            except FileNotFound오류 as exc:
+            except FileNotFoundError as exc:
                 self.send_html("찾을 수 없음", f"<pre>{escape(exc)}</pre>", status=404)
                 return
 

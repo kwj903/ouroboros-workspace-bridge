@@ -257,6 +257,20 @@ class CommandBundleStep(BaseModel):
     timeout_seconds: int = 60
 
 
+class CommandBundleAction(BaseModel):
+    name: str
+    type: Literal["command", "write_file", "append_file", "replace_text"] = "command"
+    argv: list[str] | None = None
+    timeout_seconds: int = 60
+    path: str | None = None
+    content: str | None = None
+    old_text: str | None = None
+    new_text: str | None = None
+    overwrite: bool = False
+    create_parent_dirs: bool = True
+    replace_all: bool = False
+
+
 class CommandBundleStageResult(BaseModel):
     bundle_id: str
     title: str
@@ -852,7 +866,7 @@ def _safe_env() -> dict[str, str]:
 
     safe_env = {
         "PATH": path_value,
-        "HOME": str(WORKSPACE_ROOT / ".mcp_home"),
+        "HOME": os.environ.get("HOME", str(Path.home())),
         "LANG": os.environ.get("LANG", "en_US.UTF-8"),
         "LC_ALL": os.environ.get("LC_ALL", "en_US.UTF-8"),
     }
@@ -1339,6 +1353,116 @@ def _serialize_command_steps(
     return serialized, _combined_bundle_risk(risks), approval_required
 
 
+def _resolve_bundle_file_action_path(cwd_path: Path, action_path: str | None) -> str:
+    if action_path is None or action_path.strip() == "":
+        raise ValueError("File action path is required.")
+
+    raw = Path(action_path)
+    if raw.is_absolute() or action_path.startswith("~") or ".." in raw.parts:
+        raise ValueError(f"Unsafe file action path: {action_path}")
+
+    target = (cwd_path / raw).resolve(strict=False)
+
+    if target != WORKSPACE_ROOT and not target.is_relative_to(WORKSPACE_ROOT):
+        raise ValueError(f"File action path escapes workspace: {action_path}")
+
+    rel_parts = target.relative_to(WORKSPACE_ROOT).parts
+    if any(part in BLOCKED_DIR_NAMES for part in rel_parts):
+        raise PermissionError(f"File action touches blocked directory: {action_path}")
+
+    if _is_blocked_name(target.name):
+        raise PermissionError(f"File action touches blocked file: {action_path}")
+
+    return _relative(target)
+
+
+def _serialize_action_steps(
+    cwd_path: Path,
+    actions: list[CommandBundleAction],
+) -> tuple[list[dict[str, object]], Literal["low", "medium", "high", "blocked"], bool]:
+    serialized: list[dict[str, object]] = []
+    risks: list[str] = []
+    approval_required = False
+
+    for action in actions:
+        action_type = action.type
+
+        if action_type == "command":
+            if action.argv is None:
+                raise ValueError(f"Command action requires argv: {action.name}")
+
+            argv = _validate_exec_argv(action.argv)
+            risk, reason = _classify_exec_command(cwd_path, argv)
+
+            if risk != "low":
+                approval_required = True
+
+            risks.append(risk)
+            serialized.append(
+                {
+                    "type": "command",
+                    "name": action.name,
+                    "argv": argv,
+                    "timeout_seconds": action.timeout_seconds,
+                    "risk": risk,
+                    "reason": reason,
+                }
+            )
+            continue
+
+        file_path = _resolve_bundle_file_action_path(cwd_path, action.path)
+
+        if action_type in {"write_file", "append_file"}:
+            if action.content is None:
+                raise ValueError(f"{action_type} action requires content: {action.name}")
+            if len(action.content) > MAX_WRITE_CHARS:
+                raise ValueError(f"{action_type} content is too large: {action.name}")
+
+            risks.append("medium")
+            approval_required = True
+            serialized.append(
+                {
+                    "type": action_type,
+                    "name": action.name,
+                    "path": file_path,
+                    "content": action.content,
+                    "overwrite": action.overwrite,
+                    "create_parent_dirs": action.create_parent_dirs,
+                    "risk": "medium",
+                    "reason": "File write action requires local approval.",
+                }
+            )
+            continue
+
+        if action_type == "replace_text":
+            if action.old_text is None or action.new_text is None:
+                raise ValueError(f"replace_text action requires old_text and new_text: {action.name}")
+            if len(action.old_text) > MAX_WRITE_CHARS or len(action.new_text) > MAX_WRITE_CHARS:
+                raise ValueError(f"replace_text content is too large: {action.name}")
+
+            risks.append("medium")
+            approval_required = True
+            serialized.append(
+                {
+                    "type": "replace_text",
+                    "name": action.name,
+                    "path": file_path,
+                    "old_text": action.old_text,
+                    "new_text": action.new_text,
+                    "replace_all": action.replace_all,
+                    "risk": "medium",
+                    "reason": "File replace action requires local approval.",
+                }
+            )
+            continue
+
+        raise ValueError(f"Unsupported action type: {action_type}")
+
+    return serialized, _combined_bundle_risk(risks), approval_required
+
+
+
+
 
 def _clean_patch_path(raw_path: str) -> str | None:
     value = raw_path.strip()
@@ -1537,6 +1661,7 @@ def workspace_info() -> WorkspaceInfo:
             "workspace_run_profile",
             "workspace_exec",
             "workspace_stage_command_bundle",
+            "workspace_stage_action_bundle",
             "workspace_command_bundle_status",
             "workspace_list_command_bundles",
             "workspace_cancel_command_bundle",
@@ -3142,6 +3267,78 @@ def workspace_exec(
         operation_id=operation_id,
     )
 
+
+
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_stage_action_bundle(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative working directory under ~/workspace.")],
+    actions: Annotated[list[CommandBundleAction], Field(min_length=1, max_length=30)],
+) -> CommandBundleStageResult:
+    """Stage file and command actions for local approval.
+
+    Supported action types are command, write_file, append_file, and replace_text.
+    Project files are not modified until the local review UI approves and applies
+    the staged bundle.
+    """
+    target = _resolve_workspace_path(cwd)
+
+    if not target.exists():
+        raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
+
+    if not target.is_dir():
+        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+
+    bundle_id = _new_command_bundle_id()
+    serialized_steps, risk, approval_required = _serialize_action_steps(target, actions)
+    now = _now_iso()
+
+    record: dict[str, object] = {
+        "version": 2,
+        "bundle_id": bundle_id,
+        "title": title,
+        "cwd": _relative(target),
+        "status": "pending",
+        "risk": risk,
+        "approval_required": approval_required,
+        "created_at": now,
+        "updated_at": now,
+        "steps": serialized_steps,
+        "result": None,
+        "error": None,
+    }
+
+    bundle_path = _command_bundle_path(bundle_id, "pending")
+    _write_command_bundle(bundle_path, record)
+    _audit(
+        "stage_action_bundle",
+        bundle_id=bundle_id,
+        cwd=_relative(target),
+        title=title,
+        risk=risk,
+        action_count=len(serialized_steps),
+    )
+
+    return CommandBundleStageResult(
+        bundle_id=bundle_id,
+        title=title,
+        cwd=_relative(target),
+        status="pending",
+        risk=risk,
+        approval_required=approval_required,
+        path=str(bundle_path),
+        review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
+        command_count=len(serialized_steps),
+    )
 
 
 
