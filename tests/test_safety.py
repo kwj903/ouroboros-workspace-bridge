@@ -67,5 +67,40 @@ class OperationIdTests(unittest.TestCase):
             server._normalize_operation_id("bad id with spaces")
 
 
+class TokenAuthTests(unittest.TestCase):
+    def test_allows_when_no_token_configured(self) -> None:
+        self.assertTrue(server._is_authorized_mcp_request({}, b"", None))
+        self.assertTrue(server._is_authorized_mcp_request({}, b"", ""))
+
+    def test_extracts_bearer_token(self) -> None:
+        headers = {"authorization": "Bearer secret-token"}
+        self.assertEqual(server._extract_bearer_token(headers), "secret-token")
+
+    def test_extracts_query_token(self) -> None:
+        self.assertEqual(server._extract_query_token(b"access_token=secret-token"), "secret-token")
+        self.assertEqual(server._extract_query_token(b"token=secret-token"), "secret-token")
+
+    def test_allows_bearer_token(self) -> None:
+        headers = {"authorization": "Bearer secret-token"}
+        self.assertTrue(server._is_authorized_mcp_request(headers, b"", "secret-token"))
+
+    def test_allows_query_token(self) -> None:
+        self.assertTrue(
+            server._is_authorized_mcp_request({}, b"access_token=secret-token", "secret-token")
+        )
+
+    def test_rejects_missing_token(self) -> None:
+        self.assertFalse(server._is_authorized_mcp_request({}, b"", "secret-token"))
+
+    def test_rejects_wrong_token(self) -> None:
+        headers = {"authorization": "Bearer wrong-token"}
+        self.assertFalse(server._is_authorized_mcp_request(headers, b"", "secret-token"))
+
+    def test_rejects_wrong_scheme(self) -> None:
+        headers = {"authorization": "Basic secret-token"}
+        self.assertFalse(server._is_authorized_mcp_request(headers, b"", "secret-token"))
+
+
+
 if __name__ == "__main__":
     unittest.main()

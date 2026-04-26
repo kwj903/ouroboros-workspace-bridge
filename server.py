@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import hashlib
+import hmac
 import json
 import os
 import shutil
@@ -11,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import parse_qs
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -73,6 +76,7 @@ SAFE_ARG_FLAGS = {
 MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("MCP_PORT", "8787"))
 NGROK_HOST = os.getenv("NGROK_HOST", "iguana-dashing-tuna.ngrok-free.app")
+MCP_ACCESS_TOKEN = os.getenv("MCP_ACCESS_TOKEN")
 
 transport_security = TransportSecuritySettings(
     enable_dns_rebinding_protection=True,
@@ -577,6 +581,121 @@ def _task_result(record: dict[str, object]) -> TaskStatusResult:
         summary=record.get("summary") if isinstance(record.get("summary"), str) else None,
         next_steps=next_steps,
     )
+
+
+def _extract_bearer_token(headers: dict[str, str]) -> str | None:
+    authorization = headers.get("authorization")
+
+    if not authorization:
+        return None
+
+    scheme, _, value = authorization.partition(" ")
+
+    if scheme.lower() != "bearer" or not value:
+        return None
+
+    return value.strip()
+
+
+def _extract_query_token(query_string: bytes) -> str | None:
+    if not query_string:
+        return None
+
+    parsed = parse_qs(query_string.decode("utf-8", errors="replace"), keep_blank_values=False)
+    values = parsed.get("access_token") or parsed.get("token")
+
+    if not values:
+        return None
+
+    return values[0]
+
+
+def _is_authorized_mcp_request(
+    headers: dict[str, str],
+    query_string: bytes,
+    configured_token: str | None = MCP_ACCESS_TOKEN,
+) -> bool:
+    if configured_token is None or configured_token == "":
+        return True
+
+    candidates = [
+        _extract_bearer_token(headers),
+        _extract_query_token(query_string),
+    ]
+
+    return any(
+        candidate is not None and hmac.compare_digest(candidate, configured_token)
+        for candidate in candidates
+    )
+
+
+class AccessTokenMiddleware:
+    def __init__(self, app: object, access_token: str | None) -> None:
+        self.app = app
+        self.access_token = access_token
+
+    async def __call__(self, scope: dict[str, object], receive: object, send: object) -> None:
+        if scope.get("type") != "http" or not self.access_token:
+            await self.app(scope, receive, send)
+            return
+
+        raw_headers = scope.get("headers", [])
+        headers = {
+            key.decode("latin1").lower(): value.decode("latin1")
+            for key, value in raw_headers
+            if isinstance(key, bytes) and isinstance(value, bytes)
+        }
+
+        query_string = scope.get("query_string", b"")
+        if isinstance(query_string, str):
+            query_string = query_string.encode("utf-8")
+
+        if _is_authorized_mcp_request(headers, query_string, self.access_token):
+            await self.app(scope, receive, send)
+            return
+
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"www-authenticate", b"Bearer"),
+                ],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b'{"error":"Unauthorized MCP request."}',
+            }
+        )
+
+
+def _run_server() -> None:
+    if not MCP_ACCESS_TOKEN:
+        _run_server()
+        return
+
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+    import uvicorn
+
+    protected_mcp_app = AccessTokenMiddleware(mcp.streamable_http_app(), MCP_ACCESS_TOKEN)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: Starlette):
+        async with mcp.session_manager.run():
+            yield
+
+    app = Starlette(
+        routes=[
+            Mount("/", app=protected_mcp_app),
+        ],
+        lifespan=lifespan,
+    )
+
+    uvicorn.run(app, host=MCP_HOST, port=MCP_PORT)
 
 
 def _safe_env() -> dict[str, str]:
@@ -2430,4 +2549,4 @@ def workspace_git_commit(
 
 if __name__ == "__main__":
     _ensure_runtime_dirs()
-    mcp.run(transport="streamable-http")
+    _run_server()

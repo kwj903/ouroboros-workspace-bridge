@@ -114,6 +114,41 @@ https://iguana-dashing-tuna.ngrok-free.app/mcp
 NGROK_HOST=your-domain.ngrok-free.app uv run python server.py
 ```
 
+## 연결 단위 토큰 인증
+
+기본값으로는 기존처럼 토큰 없이 동작합니다.
+
+서버 시작 시 `MCP_ACCESS_TOKEN`을 설정하면 `/mcp` 요청에 토큰이 필요합니다.
+
+```bash
+TOKEN="$(openssl rand -hex 32)"
+MCP_ACCESS_TOKEN="$TOKEN" uv run python server.py
+```
+
+토큰은 다음 두 방식 중 하나로 전달할 수 있습니다.
+
+```text
+Authorization: Bearer <TOKEN>
+```
+
+또는 ChatGPT 앱 URL에 query parameter로 포함합니다.
+
+```text
+https://iguana-dashing-tuna.ngrok-free.app/mcp?access_token=<TOKEN>
+```
+
+이 방식은 연결 설정 단계에서만 토큰을 등록하는 구조입니다. 새 채팅마다 다시 인증하는 방식이 아닙니다.
+
+토큰을 바꾸면 서버를 새 토큰으로 재시작하고 ChatGPT 앱 설정 URL도 갱신해야 합니다.
+
+Inspector로 확인할 때는 URL에 토큰을 붙입니다.
+
+```bash
+uv run python scripts/smoke_check.py --mcp-url "https://iguana-dashing-tuna.ngrok-free.app/mcp?access_token=$TOKEN"
+```
+
+주의: query token 방식은 간단하지만 URL 로그에 남을 수 있습니다. 개인 로컬 개발 MVP에서는 실용적이지만, 장기 운영이나 공유 환경에서는 OAuth, Access proxy, Tailscale, Cloudflare Access 같은 방식을 검토해야 합니다.
+
 ## ChatGPT 앱 갱신
 
 `server.py`에 도구를 추가하거나 도구 스키마가 바뀌면 다음 순서로 갱신합니다.
