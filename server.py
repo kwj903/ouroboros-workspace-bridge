@@ -2200,7 +2200,7 @@ def workspace_stage_action_bundle(
         raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
 
     bundle_id = _new_command_bundle_id()
-    serialized_steps, risk, approval_required = _serialize_action_steps(target, actions)
+    serialized_steps, risk, _ = _serialize_action_steps(target, actions)
     now = _now_iso()
 
     record: dict[str, object] = {
@@ -2210,7 +2210,7 @@ def workspace_stage_action_bundle(
         "cwd": _relative(target),
         "status": "pending",
         "risk": risk,
-        "approval_required": approval_required,
+        "approval_required": True,
         "created_at": now,
         "updated_at": now,
         "steps": serialized_steps,
@@ -2235,7 +2235,7 @@ def workspace_stage_action_bundle(
         cwd=_relative(target),
         status="pending",
         risk=risk,
-        approval_required=approval_required,
+        approval_required=True,
         path=str(bundle_path),
         review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
         command_count=len(serialized_steps),
@@ -2270,7 +2270,7 @@ def workspace_stage_command_bundle(
         raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
 
     bundle_id = _new_command_bundle_id()
-    serialized_steps, risk, approval_required = _serialize_command_steps(target, steps)
+    serialized_steps, risk, _ = _serialize_command_steps(target, steps)
     now = _now_iso()
 
     record: dict[str, object] = {
@@ -2280,7 +2280,7 @@ def workspace_stage_command_bundle(
         "cwd": _relative(target),
         "status": "pending",
         "risk": risk,
-        "approval_required": approval_required,
+        "approval_required": True,
         "created_at": now,
         "updated_at": now,
         "steps": serialized_steps,
@@ -2305,7 +2305,7 @@ def workspace_stage_command_bundle(
         cwd=_relative(target),
         status="pending",
         risk=risk,
-        approval_required=approval_required,
+        approval_required=True,
         path=str(bundle_path),
         review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
         command_count=len(serialized_steps),
