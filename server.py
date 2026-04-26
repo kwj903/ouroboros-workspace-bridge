@@ -29,6 +29,11 @@ BACKUP_DIR = RUNTIME_ROOT / "backups"
 TRASH_DIR = RUNTIME_ROOT / "trash"
 OPERATION_DIR = RUNTIME_ROOT / "operations"
 TASK_DIR = RUNTIME_ROOT / "tasks"
+COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
+COMMAND_BUNDLE_PENDING_DIR = COMMAND_BUNDLES_DIR / "pending"
+COMMAND_BUNDLE_APPLIED_DIR = COMMAND_BUNDLES_DIR / "applied"
+COMMAND_BUNDLE_REJECTED_DIR = COMMAND_BUNDLES_DIR / "rejected"
+COMMAND_BUNDLE_FAILED_DIR = COMMAND_BUNDLES_DIR / "failed"
 
 MAX_READ_CHARS = 20_000
 MAX_WRITE_CHARS = 200_000
@@ -73,6 +78,52 @@ SAFE_ARG_FLAGS = {
     "--no-summary",
 }
 
+BLOCKED_EXECUTABLES = {
+    "sudo",
+    "su",
+    "ssh",
+    "scp",
+    "sftp",
+    "rsync",
+    "launchctl",
+    "osascript",
+    "diskutil",
+    "dd",
+    "mkfs",
+    "killall",
+    "pkill",
+}
+
+APPROVAL_REQUIRED_EXECUTABLES = {
+    "bash",
+    "sh",
+    "zsh",
+    "curl",
+    "wget",
+    "pip",
+    "pip3",
+    "npm",
+    "pnpm",
+    "yarn",
+}
+
+APPROVAL_REQUIRED_PATTERNS = {
+    "rm",
+    "chmod",
+    "chown",
+    "git clean",
+    "git reset",
+    "git push",
+    "git checkout",
+    "git switch",
+    "uv add",
+    "uv sync",
+    "uv pip",
+    "npm install",
+    "npm add",
+}
+
+
 MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("MCP_PORT", "8787"))
 NGROK_HOST = os.getenv("NGROK_HOST", "iguana-dashing-tuna.ngrok-free.app")
@@ -101,8 +152,8 @@ mcp = FastMCP(
         "Provides controlled development access under ~/workspace. "
         "This server rejects absolute paths, path traversal, secret-like files, "
         "and paths outside ~/workspace. It supports reading, safe file writes, "
-        "soft deletion, restore, approved command profiles, and basic git operations. "
-        "It never accepts arbitrary shell commands."
+        "soft deletion, restore, approved command profiles, basic git operations, "
+        "and sandboxed argv-based command execution with risk classification."
     ),
     stateless_http=True,
     json_response=True,
@@ -185,6 +236,66 @@ class CommandResult(BaseModel):
     stdout: str
     stderr: str
     truncated: bool
+
+
+
+class WorkspaceExecResult(BaseModel):
+    cwd: str
+    command: list[str]
+    risk: Literal["low", "medium", "high", "blocked"]
+    approval_required: bool
+    exit_code: int | None = None
+    stdout: str = ""
+    stderr: str = ""
+    truncated: bool = False
+    operation_id: str
+
+
+class CommandBundleStep(BaseModel):
+    name: str
+    argv: list[str]
+    timeout_seconds: int = 60
+
+
+class CommandBundleStageResult(BaseModel):
+    bundle_id: str
+    title: str
+    cwd: str
+    status: str
+    risk: Literal["low", "medium", "high", "blocked"]
+    approval_required: bool
+    path: str
+    review_hint: str
+    command_count: int
+
+
+class CommandBundleStatusResult(BaseModel):
+    bundle_id: str
+    title: str
+    cwd: str
+    status: str
+    risk: str
+    approval_required: bool
+    command_count: int
+    created_at: str
+    updated_at: str
+    result: dict[str, object] | None = None
+    error: str | None = None
+
+
+class CommandBundleListEntry(BaseModel):
+    bundle_id: str
+    title: str
+    cwd: str
+    status: str
+    risk: str
+    command_count: int
+    updated_at: str
+
+
+class CommandBundleListResult(BaseModel):
+    entries: list[CommandBundleListEntry]
+    count: int
 
 
 class GitCommitResult(BaseModel):
@@ -375,6 +486,10 @@ def _ensure_runtime_dirs() -> None:
     TRASH_DIR.mkdir(parents=True, exist_ok=True)
     OPERATION_DIR.mkdir(parents=True, exist_ok=True)
     TASK_DIR.mkdir(parents=True, exist_ok=True)
+    COMMAND_BUNDLE_PENDING_DIR.mkdir(parents=True, exist_ok=True)
+    COMMAND_BUNDLE_APPLIED_DIR.mkdir(parents=True, exist_ok=True)
+    COMMAND_BUNDLE_REJECTED_DIR.mkdir(parents=True, exist_ok=True)
+    COMMAND_BUNDLE_FAILED_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _audit(event: str, **data: object) -> None:
@@ -414,6 +529,18 @@ def _normalize_operation_id(operation_id: str | None) -> str:
         raise ValueError("operation_id can only contain letters, numbers, '-' and '_'.")
 
     return normalized
+
+
+def _read_json(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_json(path: Path, data: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def _operation_path(operation_id: str) -> Path:
@@ -699,12 +826,43 @@ def _run_server() -> None:
 
 
 def _safe_env() -> dict[str, str]:
-    return {
-        "PATH": "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
+    """Return a minimal child-process environment for workspace commands.
+
+    Secret-bearing variables are intentionally not forwarded. PATH is preserved
+    from the server process so uv, mise-managed Python, Homebrew tools, and the
+    project .venv/bin can be resolved when the server was started from the
+    user's private shell environment.
+    """
+    project_root = Path(__file__).resolve().parent
+    fallback_path = ":".join(
+        [
+            str(project_root / ".venv/bin"),
+            str(Path.home() / ".local/bin"),
+            str(Path.home() / ".local/share/mise/shims"),
+            str(Path.home() / ".local/share/mise/installs/python/3.12/bin"),
+            "/usr/local/bin",
+            "/opt/homebrew/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+    )
+    path_value = os.environ.get("PATH") or fallback_path
+
+    safe_env = {
+        "PATH": path_value,
         "HOME": str(WORKSPACE_ROOT / ".mcp_home"),
-        "LANG": "en_US.UTF-8",
-        "LC_ALL": "en_US.UTF-8",
+        "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+        "LC_ALL": os.environ.get("LC_ALL", "en_US.UTF-8"),
     }
+
+    for key in ("USER", "LOGNAME", "SHELL", "TERM"):
+        value = os.environ.get(key)
+        if value:
+            safe_env[key] = value
+
+    return safe_env
 
 
 def _is_blocked_name(name: str) -> bool:
@@ -889,6 +1047,301 @@ def _validate_command_args(cwd: Path, args: list[str]) -> list[str]:
         safe_args.append(arg)
 
     return safe_args
+
+
+
+def _validate_exec_argv(argv: list[str]) -> list[str]:
+    if not argv:
+        raise ValueError("argv cannot be empty.")
+
+    if len(argv) > 64:
+        raise ValueError("argv has too many items.")
+
+    safe: list[str] = []
+    for item in argv:
+        if not isinstance(item, str):
+            raise ValueError("All argv items must be strings.")
+        if item == "":
+            raise ValueError("argv items cannot be empty.")
+        if len(item) > 1000:
+            raise ValueError("argv item is too long.")
+        if "\x00" in item or "\n" in item or "\r" in item:
+            raise ValueError("argv items cannot contain control characters.")
+        safe.append(item)
+
+    return safe
+
+
+def _pathish_arg_touches_blocked_location(cwd: Path, arg: str) -> bool:
+    if arg.startswith("-") or "://" in arg:
+        return False
+
+    path = Path(arg).expanduser()
+    looks_pathish = path.is_absolute() or arg.startswith("~") or "/" in arg or ".." in path.parts
+
+    if not looks_pathish:
+        return _is_blocked_name(arg)
+
+    if path.is_absolute():
+        candidate = path.resolve(strict=False)
+    else:
+        candidate = (cwd / path).resolve(strict=False)
+
+    if candidate != WORKSPACE_ROOT and not candidate.is_relative_to(WORKSPACE_ROOT):
+        return True
+
+    rel_parts = candidate.relative_to(WORKSPACE_ROOT).parts
+    if any(part in BLOCKED_DIR_NAMES for part in rel_parts):
+        return True
+
+    return _is_blocked_name(candidate.name)
+
+
+def _classify_exec_command(
+    cwd: Path,
+    argv: list[str],
+) -> tuple[Literal["low", "medium", "high", "blocked"], str]:
+    executable = Path(argv[0]).name
+    command_text = " ".join(argv)
+
+    if executable in BLOCKED_EXECUTABLES:
+        return "blocked", f"Executable is blocked: {executable}"
+
+    if executable in {"bash", "sh", "zsh"} and "-c" in argv[1:]:
+        return "blocked", "Shell -c execution is blocked in workspace_exec."
+
+    if any(_pathish_arg_touches_blocked_location(cwd, arg) for arg in argv[1:]):
+        return "blocked", "Command argument touches a blocked or out-of-workspace path."
+
+    if executable in APPROVAL_REQUIRED_EXECUTABLES:
+        return "medium", f"Executable requires approval: {executable}"
+
+    for pattern in APPROVAL_REQUIRED_PATTERNS:
+        if command_text == pattern or command_text.startswith(pattern + " "):
+            return "medium", f"Command pattern requires approval: {pattern}"
+
+    if any("://" in arg for arg in argv):
+        return "medium", "URL-like argument requires approval."
+
+    return "low", "Command is allowed for automatic workspace execution."
+
+
+def _run_workspace_exec(
+    cwd: str,
+    argv: list[str],
+    timeout_seconds: int,
+    operation_id: str | None = None,
+) -> WorkspaceExecResult:
+    safe_argv = _validate_exec_argv(argv)
+    target = _resolve_workspace_path(cwd)
+
+    if not target.exists():
+        raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
+
+    if not target.is_dir():
+        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+
+    risk, reason = _classify_exec_command(target, safe_argv)
+    op_id, previous = _begin_operation(
+        "workspace_exec",
+        {
+            "cwd": cwd,
+            "argv": safe_argv,
+            "timeout_seconds": timeout_seconds,
+            "risk": risk,
+            "reason": reason,
+        },
+        operation_id,
+    )
+
+    if previous is not None and previous.get("status") == "completed":
+        result = dict(previous.get("result") or {})
+        result["operation_id"] = op_id
+        return WorkspaceExecResult(**result)
+
+    try:
+        if risk == "blocked":
+            result = WorkspaceExecResult(
+                cwd=_relative(target),
+                command=safe_argv,
+                risk=risk,
+                approval_required=False,
+                operation_id=op_id,
+                stderr=reason,
+            )
+            _complete_operation(op_id, result)
+            return result
+
+        if risk != "low":
+            result = WorkspaceExecResult(
+                cwd=_relative(target),
+                command=safe_argv,
+                risk=risk,
+                approval_required=True,
+                operation_id=op_id,
+                stderr=reason,
+            )
+            _complete_operation(op_id, result)
+            return result
+
+        completed = subprocess.run(
+            safe_argv,
+            cwd=str(target),
+            env=_safe_env(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_seconds,
+            shell=False,
+            check=False,
+        )
+
+        stdout, out_truncated = _truncate(completed.stdout, MAX_STDOUT_CHARS)
+        stderr, err_truncated = _truncate(completed.stderr, MAX_STDERR_CHARS)
+
+        result = WorkspaceExecResult(
+            cwd=_relative(target),
+            command=safe_argv,
+            risk=risk,
+            approval_required=False,
+            exit_code=completed.returncode,
+            stdout=stdout,
+            stderr=stderr,
+            truncated=out_truncated or err_truncated,
+            operation_id=op_id,
+        )
+
+        _audit(
+            "workspace_exec",
+            "workspace_stage_command_bundle",
+            "workspace_command_bundle_status",
+            "workspace_list_command_bundles",
+            "workspace_cancel_command_bundle",
+            operation_id=op_id,
+            cwd=result.cwd,
+            command=safe_argv,
+            risk=risk,
+            exit_code=result.exit_code,
+        )
+        _complete_operation(op_id, result)
+        return result
+
+    except Exception as exc:
+        _fail_operation(op_id, exc)
+        raise
+
+
+
+def _command_bundle_dirs() -> list[Path]:
+    return [
+        COMMAND_BUNDLE_PENDING_DIR,
+        COMMAND_BUNDLE_APPLIED_DIR,
+        COMMAND_BUNDLE_REJECTED_DIR,
+        COMMAND_BUNDLE_FAILED_DIR,
+    ]
+
+
+def _new_command_bundle_id() -> str:
+    return f"cmd-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
+
+def _command_bundle_path(bundle_id: str, status: str = "pending") -> Path:
+    if not bundle_id.startswith("cmd-"):
+        raise ValueError("Invalid command bundle id.")
+
+    mapping = {
+        "pending": COMMAND_BUNDLE_PENDING_DIR,
+        "applied": COMMAND_BUNDLE_APPLIED_DIR,
+        "rejected": COMMAND_BUNDLE_REJECTED_DIR,
+        "failed": COMMAND_BUNDLE_FAILED_DIR,
+    }
+    directory = mapping.get(status)
+    if directory is None:
+        raise ValueError(f"Unknown command bundle status: {status}")
+
+    return directory / f"{bundle_id}.json"
+
+
+def _find_command_bundle(bundle_id: str) -> tuple[Path, dict[str, object]]:
+    for directory in _command_bundle_dirs():
+        path = directory / f"{bundle_id}.json"
+        if path.exists():
+            return path, _read_json(path)
+    raise FileNotFoundError(f"Command bundle not found: {bundle_id}")
+
+
+def _write_command_bundle(path: Path, record: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(path, record)
+
+
+def _move_command_bundle(
+    bundle_id: str,
+    target_status: str,
+    updates: dict[str, object] | None = None,
+) -> dict[str, object]:
+    source_path, record = _find_command_bundle(bundle_id)
+    now = _now_iso()
+    record["status"] = target_status
+    record["updated_at"] = now
+
+    if updates:
+        record.update(updates)
+
+    target_path = _command_bundle_path(bundle_id, target_status)
+    _write_command_bundle(target_path, record)
+
+    if source_path != target_path and source_path.exists():
+        source_path.unlink()
+
+    return record
+
+
+def _bundle_risk_rank(risk: str) -> int:
+    order = {"low": 0, "medium": 1, "high": 2, "blocked": 3}
+    return order.get(risk, 3)
+
+
+def _combined_bundle_risk(
+    risks: list[str],
+) -> Literal["low", "medium", "high", "blocked"]:
+    if not risks:
+        return "low"
+    worst = max(risks, key=_bundle_risk_rank)
+    if worst not in {"low", "medium", "high", "blocked"}:
+        return "blocked"
+    return worst  # type: ignore[return-value]
+
+
+def _serialize_command_steps(
+    cwd_path: Path,
+    steps: list[CommandBundleStep],
+) -> tuple[list[dict[str, object]], Literal["low", "medium", "high", "blocked"], bool]:
+    serialized: list[dict[str, object]] = []
+    risks: list[str] = []
+    approval_required = False
+
+    for step in steps:
+        argv = _validate_exec_argv(step.argv)
+        risk, reason = _classify_exec_command(cwd_path, argv)
+
+        if risk != "low":
+            approval_required = True
+
+        risks.append(risk)
+        serialized.append(
+            {
+                "name": step.name,
+                "argv": argv,
+                "timeout_seconds": step.timeout_seconds,
+                "risk": risk,
+                "reason": reason,
+            }
+        )
+
+    return serialized, _combined_bundle_risk(risks), approval_required
+
 
 
 def _clean_patch_path(raw_path: str) -> str | None:
@@ -1086,6 +1539,11 @@ def workspace_info() -> WorkspaceInfo:
             "workspace_git_status",
             "workspace_git_diff",
             "workspace_run_profile",
+            "workspace_exec",
+            "workspace_stage_command_bundle",
+            "workspace_command_bundle_status",
+            "workspace_list_command_bundles",
+            "workspace_cancel_command_bundle",
             "workspace_git_add",
             "workspace_git_commit",
             "workspace_read_audit_log",
@@ -2653,6 +3111,226 @@ def workspace_git_diff(
 ) -> CommandResult:
     """Run git diff under ~/workspace."""
     return _run_command(cwd=cwd, command=["git", "diff", "--no-ext-diff"], timeout_seconds=15)
+
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_exec(
+    cwd: Annotated[str, Field(description="Relative working directory under ~/workspace.")],
+    argv: Annotated[
+        list[str],
+        Field(description="Command argv to run with shell=False. The first item is the executable."),
+    ],
+    timeout_seconds: Annotated[int, Field(ge=1, le=300)] = 60,
+    operation_id: Annotated[
+        str | None,
+        Field(description="Optional idempotency key for retry-safe command execution."),
+    ] = None,
+) -> WorkspaceExecResult:
+    """Run a sandboxed argv-based command under ~/workspace after risk classification.
+
+    Low-risk commands run immediately. Medium/high-risk commands return
+    approval_required=true for a future local approval UI. Blocked commands are never executed.
+    """
+    return _run_workspace_exec(
+        cwd=cwd,
+        argv=argv,
+        timeout_seconds=timeout_seconds,
+        operation_id=operation_id,
+    )
+
+
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_stage_command_bundle(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative working directory under ~/workspace.")],
+    steps: Annotated[list[CommandBundleStep], Field(min_length=1, max_length=20)],
+) -> CommandBundleStageResult:
+    """Stage a command bundle for local approval instead of executing it in ChatGPT.
+
+    This does not modify project files. It writes a pending command bundle under
+    the MCP runtime directory. A local runner can preview/apply/reject it.
+    """
+    target = _resolve_workspace_path(cwd)
+
+    if not target.exists():
+        raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
+
+    if not target.is_dir():
+        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+
+    bundle_id = _new_command_bundle_id()
+    serialized_steps, risk, approval_required = _serialize_command_steps(target, steps)
+    now = _now_iso()
+
+    record: dict[str, object] = {
+        "version": 1,
+        "bundle_id": bundle_id,
+        "title": title,
+        "cwd": _relative(target),
+        "status": "pending",
+        "risk": risk,
+        "approval_required": approval_required,
+        "created_at": now,
+        "updated_at": now,
+        "steps": serialized_steps,
+        "result": None,
+        "error": None,
+    }
+
+    bundle_path = _command_bundle_path(bundle_id, "pending")
+    _write_command_bundle(bundle_path, record)
+    _audit(
+        "stage_command_bundle",
+        bundle_id=bundle_id,
+        cwd=_relative(target),
+        title=title,
+        risk=risk,
+        command_count=len(serialized_steps),
+    )
+
+    return CommandBundleStageResult(
+        bundle_id=bundle_id,
+        title=title,
+        cwd=_relative(target),
+        status="pending",
+        risk=risk,
+        approval_required=approval_required,
+        path=str(bundle_path),
+        review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
+        command_count=len(serialized_steps),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_command_bundle_status(
+    bundle_id: Annotated[str, Field(description="Command bundle id returned by workspace_stage_command_bundle.")],
+) -> CommandBundleStatusResult:
+    """Return status and result for a staged command bundle."""
+    _, record = _find_command_bundle(bundle_id)
+    steps = record.get("steps") if isinstance(record.get("steps"), list) else []
+
+    return CommandBundleStatusResult(
+        bundle_id=str(record.get("bundle_id", bundle_id)),
+        title=str(record.get("title", "")),
+        cwd=str(record.get("cwd", "")),
+        status=str(record.get("status", "unknown")),
+        risk=str(record.get("risk", "unknown")),
+        approval_required=bool(record.get("approval_required", False)),
+        command_count=len(steps),
+        created_at=str(record.get("created_at", "")),
+        updated_at=str(record.get("updated_at", "")),
+        result=record.get("result") if isinstance(record.get("result"), dict) else None,
+        error=record.get("error") if isinstance(record.get("error"), str) else None,
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_list_command_bundles(
+    limit: Annotated[int, Field(ge=1, le=200)] = 50,
+) -> CommandBundleListResult:
+    """List recent command bundles across pending/applied/rejected/failed states."""
+    entries: list[CommandBundleListEntry] = []
+
+    for directory in _command_bundle_dirs():
+        if not directory.exists():
+            continue
+
+        for path in directory.glob("cmd-*.json"):
+            try:
+                record = _read_json(path)
+            except Exception:
+                continue
+
+            steps = record.get("steps") if isinstance(record.get("steps"), list) else []
+            entries.append(
+                CommandBundleListEntry(
+                    bundle_id=str(record.get("bundle_id", path.stem)),
+                    title=str(record.get("title", "")),
+                    cwd=str(record.get("cwd", "")),
+                    status=str(record.get("status", directory.name)),
+                    risk=str(record.get("risk", "unknown")),
+                    command_count=len(steps),
+                    updated_at=str(record.get("updated_at", "")),
+                )
+            )
+
+    entries.sort(key=lambda item: item.updated_at, reverse=True)
+    return CommandBundleListResult(entries=entries[:limit], count=min(len(entries), limit))
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_cancel_command_bundle(
+    bundle_id: Annotated[str, Field(description="Pending command bundle id to reject.")],
+) -> CommandBundleStatusResult:
+    """Reject a pending command bundle without executing it."""
+    _, record = _find_command_bundle(bundle_id)
+
+    if record.get("status") != "pending":
+        raise ValueError(f"Only pending bundles can be cancelled. Current status: {record.get('status')}")
+
+    updated = _move_command_bundle(
+        bundle_id,
+        "rejected",
+        {
+            "error": "Cancelled from ChatGPT.",
+            "result": None,
+        },
+    )
+    _audit("cancel_command_bundle", bundle_id=bundle_id)
+
+    steps = updated.get("steps") if isinstance(updated.get("steps"), list) else []
+    return CommandBundleStatusResult(
+        bundle_id=str(updated.get("bundle_id", bundle_id)),
+        title=str(updated.get("title", "")),
+        cwd=str(updated.get("cwd", "")),
+        status=str(updated.get("status", "rejected")),
+        risk=str(updated.get("risk", "unknown")),
+        approval_required=bool(updated.get("approval_required", False)),
+        command_count=len(steps),
+        created_at=str(updated.get("created_at", "")),
+        updated_at=str(updated.get("updated_at", "")),
+        result=updated.get("result") if isinstance(updated.get("result"), dict) else None,
+        error=updated.get("error") if isinstance(updated.get("error"), str) else None,
+    )
+
 
 
 @mcp.tool(

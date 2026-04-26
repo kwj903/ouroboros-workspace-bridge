@@ -457,3 +457,11 @@ git status --short --branch
 ## 현재 개발 메모
 
 이 프로젝트는 개인 로컬 개발 워크플로우를 위한 도구입니다. 최종 목표는 ChatGPT와 대화하면서 로컬 프로젝트를 안전하게 탐색하고, patch 단위로 수정하고, 테스트 결과와 작업 로그를 남기며 계속 이어서 개발할 수 있는 환경을 만드는 것입니다.
+
+Command Bundle Workflow
+
+- ChatGPT가 command bundle stage
+- 로컬 review server 실행
+- watcher 실행
+- 브라우저에서 승인하고 실행
+- ChatGPT가 status 확인
