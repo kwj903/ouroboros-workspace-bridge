@@ -29,6 +29,7 @@ BACKUP_DIR = RUNTIME_ROOT / "backups"
 TRASH_DIR = RUNTIME_ROOT / "trash"
 OPERATION_DIR = RUNTIME_ROOT / "operations"
 TASK_DIR = RUNTIME_ROOT / "tasks"
+TEXT_PAYLOAD_DIR = RUNTIME_ROOT / "text_payloads"
 COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
 COMMAND_BUNDLE_PENDING_DIR = COMMAND_BUNDLES_DIR / "pending"
 COMMAND_BUNDLE_APPLIED_DIR = COMMAND_BUNDLES_DIR / "applied"
@@ -40,6 +41,8 @@ MAX_WRITE_CHARS = 200_000
 MAX_TREE_ENTRIES = 300
 MAX_STDOUT_CHARS = 20_000
 MAX_STDERR_CHARS = 8_000
+TEXT_PAYLOAD_CHUNK_MAX_CHARS = 32_000
+TEXT_PAYLOAD_MAX_TOTAL_CHARS = 1_000_000
 
 BLOCKED_DIR_NAMES = {
     ".ssh",
@@ -264,8 +267,11 @@ class CommandBundleAction(BaseModel):
     timeout_seconds: int = 60
     path: str | None = None
     content: str | None = None
+    content_ref: str | None = None
     old_text: str | None = None
+    old_text_ref: str | None = None
     new_text: str | None = None
+    new_text_ref: str | None = None
     overwrite: bool = False
     create_parent_dirs: bool = True
     replace_all: bool = False
@@ -310,6 +316,16 @@ class CommandBundleListEntry(BaseModel):
 class CommandBundleListResult(BaseModel):
     entries: list[CommandBundleListEntry]
     count: int
+
+
+class TextPayloadStageResult(BaseModel):
+    payload_id: str
+    chunk_index: int
+    total_chunks: int
+    chunk_chars: int
+    total_chars: int
+    complete: bool
+    path: str
 
 
 class GitCommitResult(BaseModel):
@@ -500,6 +516,7 @@ def _ensure_runtime_dirs() -> None:
     TRASH_DIR.mkdir(parents=True, exist_ok=True)
     OPERATION_DIR.mkdir(parents=True, exist_ok=True)
     TASK_DIR.mkdir(parents=True, exist_ok=True)
+    TEXT_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_PENDING_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_APPLIED_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_REJECTED_DIR.mkdir(parents=True, exist_ok=True)
@@ -555,6 +572,171 @@ def _write_json(path: Path, data: dict[str, object]) -> None:
         json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+
+
+def _new_text_payload_id() -> str:
+    return f"txt-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
+
+def _normalize_text_payload_id(payload_id: str) -> str:
+    normalized = payload_id.strip()
+
+    if normalized == "":
+        raise ValueError("payload_id cannot be empty.")
+
+    if len(normalized) > 120:
+        raise ValueError("payload_id is too long.")
+
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+    if any(ch not in allowed for ch in normalized):
+        raise ValueError("payload_id can only contain letters, numbers, '-' and '_'.")
+
+    return normalized
+
+
+def _text_payload_dir(payload_id: str) -> Path:
+    return TEXT_PAYLOAD_DIR / _normalize_text_payload_id(payload_id)
+
+
+def _text_payload_manifest_path(payload_id: str) -> Path:
+    return _text_payload_dir(payload_id) / "manifest.json"
+
+
+def _stage_text_payload_chunk(
+    payload_id: str,
+    chunk_index: int,
+    total_chunks: int,
+    text: str,
+) -> TextPayloadStageResult:
+    if total_chunks < 1:
+        raise ValueError("total_chunks must be at least 1.")
+
+    if chunk_index < 0 or chunk_index >= total_chunks:
+        raise ValueError("chunk_index must be in range 0 <= chunk_index < total_chunks.")
+
+    if len(text) > TEXT_PAYLOAD_CHUNK_MAX_CHARS:
+        raise ValueError(f"text chunk too large. Max characters: {TEXT_PAYLOAD_CHUNK_MAX_CHARS}")
+
+    payload_dir = _text_payload_dir(payload_id)
+    payload_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = _text_payload_manifest_path(payload_id)
+    if manifest_path.exists():
+        manifest = _read_json(manifest_path)
+        if int(manifest.get("total_chunks", total_chunks)) != total_chunks:
+            raise ValueError("total_chunks does not match existing payload manifest.")
+        created_at = str(manifest.get("created_at", _now_iso()))
+        chunks = manifest.get("chunks") if isinstance(manifest.get("chunks"), dict) else {}
+    else:
+        created_at = _now_iso()
+        chunks = {}
+
+    chunk_path = payload_dir / f"chunk_{chunk_index:06d}.txt"
+    if chunk_path.exists():
+        existing = chunk_path.read_text(encoding="utf-8")
+        if existing != text:
+            raise ValueError(f"chunk {chunk_index} already exists with different content.")
+    else:
+        chunk_path.write_text(text, encoding="utf-8")
+
+    chunk_bytes = text.encode("utf-8")
+    chunks[str(chunk_index)] = {
+        "chars": len(text),
+        "sha256": _sha256_bytes(chunk_bytes),
+    }
+
+    chunk_paths = [payload_dir / f"chunk_{idx:06d}.txt" for idx in range(total_chunks)]
+    complete = all(item.exists() for item in chunk_paths)
+    total_chars = 0
+
+    for item in chunk_paths:
+        if item.exists():
+            total_chars += len(item.read_text(encoding="utf-8"))
+
+    if total_chars > TEXT_PAYLOAD_MAX_TOTAL_CHARS:
+        raise ValueError(f"text payload too large. Max characters: {TEXT_PAYLOAD_MAX_TOTAL_CHARS}")
+
+    manifest = {
+        "payload_id": payload_id,
+        "created_at": created_at,
+        "updated_at": _now_iso(),
+        "total_chunks": total_chunks,
+        "chunks": chunks,
+        "total_chars": total_chars,
+        "complete": complete,
+    }
+    _write_json(manifest_path, manifest)
+
+    return TextPayloadStageResult(
+        payload_id=payload_id,
+        chunk_index=chunk_index,
+        total_chunks=total_chunks,
+        chunk_chars=len(text),
+        total_chars=total_chars,
+        complete=complete,
+        path=str(payload_dir),
+    )
+
+
+def _validate_text_payload_ref(payload_ref: str) -> dict[str, object]:
+    payload_id = _normalize_text_payload_id(payload_ref)
+    manifest_path = _text_payload_manifest_path(payload_id)
+
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"text payload ref does not exist: {payload_id}")
+
+    manifest = _read_json(manifest_path)
+
+    if not bool(manifest.get("complete", False)):
+        raise ValueError(f"text payload ref is incomplete: {payload_id}")
+
+    total_chunks = int(manifest.get("total_chunks", 0))
+    if total_chunks < 1:
+        raise ValueError(f"text payload manifest is invalid: {payload_id}")
+
+    for idx in range(total_chunks):
+        chunk_path = _text_payload_dir(payload_id) / f"chunk_{idx:06d}.txt"
+        if not chunk_path.exists():
+            raise FileNotFoundError(f"text payload chunk is missing: {payload_id}#{idx}")
+
+    total_chars = int(manifest.get("total_chars", 0))
+    if total_chars > TEXT_PAYLOAD_MAX_TOTAL_CHARS:
+        raise ValueError(f"text payload too large: {payload_id}")
+
+    return {
+        "payload_id": payload_id,
+        "total_chunks": total_chunks,
+        "total_chars": total_chars,
+    }
+
+
+def _serialize_text_payload_field(
+    action_name: str,
+    field_name: str,
+    inline_value: str | None,
+    ref_value: str | None,
+) -> dict[str, object]:
+    if inline_value is not None and ref_value is not None:
+        raise ValueError(f"{field_name} and {field_name}_ref cannot both be set: {action_name}")
+
+    if inline_value is None and ref_value is None:
+        raise ValueError(f"{field_name} or {field_name}_ref is required: {action_name}")
+
+    if inline_value is not None:
+        if len(inline_value) > MAX_WRITE_CHARS:
+            raise ValueError(f"{field_name} content is too large: {action_name}")
+        return {
+            field_name: inline_value,
+            f"{field_name}_chars": len(inline_value),
+        }
+
+    assert ref_value is not None
+    ref_info = _validate_text_payload_ref(ref_value)
+    return {
+        f"{field_name}_ref": str(ref_info["payload_id"]),
+        f"{field_name}_chars": int(ref_info["total_chars"]),
+        f"{field_name}_chunks": int(ref_info["total_chunks"]),
+    }
 
 
 def _operation_path(operation_id: str) -> Path:
@@ -1413,10 +1595,12 @@ def _serialize_action_steps(
         file_path = _resolve_bundle_file_action_path(cwd_path, action.path)
 
         if action_type in {"write_file", "append_file"}:
-            if action.content is None:
-                raise ValueError(f"{action_type} action requires content: {action.name}")
-            if len(action.content) > MAX_WRITE_CHARS:
-                raise ValueError(f"{action_type} content is too large: {action.name}")
+            content_field = _serialize_text_payload_field(
+                action.name,
+                "content",
+                action.content,
+                action.content_ref,
+            )
 
             risks.append("medium")
             approval_required = True
@@ -1425,7 +1609,7 @@ def _serialize_action_steps(
                     "type": action_type,
                     "name": action.name,
                     "path": file_path,
-                    "content": action.content,
+                    **content_field,
                     "overwrite": action.overwrite,
                     "create_parent_dirs": action.create_parent_dirs,
                     "risk": "medium",
@@ -1435,10 +1619,18 @@ def _serialize_action_steps(
             continue
 
         if action_type == "replace_text":
-            if action.old_text is None or action.new_text is None:
-                raise ValueError(f"replace_text action requires old_text and new_text: {action.name}")
-            if len(action.old_text) > MAX_WRITE_CHARS or len(action.new_text) > MAX_WRITE_CHARS:
-                raise ValueError(f"replace_text content is too large: {action.name}")
+            old_text_field = _serialize_text_payload_field(
+                action.name,
+                "old_text",
+                action.old_text,
+                action.old_text_ref,
+            )
+            new_text_field = _serialize_text_payload_field(
+                action.name,
+                "new_text",
+                action.new_text,
+                action.new_text_ref,
+            )
 
             risks.append("medium")
             approval_required = True
@@ -1447,8 +1639,8 @@ def _serialize_action_steps(
                     "type": "replace_text",
                     "name": action.name,
                     "path": file_path,
-                    "old_text": action.old_text,
-                    "new_text": action.new_text,
+                    **old_text_field,
+                    **new_text_field,
                     "replace_all": action.replace_all,
                     "risk": "medium",
                     "reason": "File replace action requires local approval.",
@@ -1459,8 +1651,6 @@ def _serialize_action_steps(
         raise ValueError(f"Unsupported action type: {action_type}")
 
     return serialized, _combined_bundle_risk(risks), approval_required
-
-
 
 
 
@@ -1661,6 +1851,7 @@ def workspace_info() -> WorkspaceInfo:
             "workspace_run_profile",
             "workspace_exec",
             "workspace_stage_command_bundle",
+            "workspace_stage_text_payload",
             "workspace_stage_action_bundle",
             "workspace_command_bundle_status",
             "workspace_list_command_bundles",
@@ -3269,6 +3460,57 @@ def workspace_exec(
 
 
 
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_stage_text_payload(
+    text: Annotated[
+        str,
+        Field(
+            max_length=TEXT_PAYLOAD_CHUNK_MAX_CHARS,
+            description="One UTF-8 text payload chunk. Store large content in chunks, then reference it from action bundles.",
+        ),
+    ],
+    payload_id: Annotated[
+        str | None,
+        Field(description="Optional payload id. Omit for the first chunk to create a new id."),
+    ] = None,
+    chunk_index: Annotated[int, Field(ge=0, le=1000)] = 0,
+    total_chunks: Annotated[int, Field(ge=1, le=1000)] = 1,
+) -> TextPayloadStageResult:
+    """Stage a text payload chunk in the MCP runtime directory.
+
+    This does not modify project files. Action bundles can later reference the
+    completed payload via content_ref, old_text_ref, or new_text_ref.
+    """
+    _ensure_runtime_dirs()
+    normalized_id = _new_text_payload_id() if payload_id is None or payload_id.strip() == "" else _normalize_text_payload_id(payload_id)
+
+    result = _stage_text_payload_chunk(
+        payload_id=normalized_id,
+        chunk_index=chunk_index,
+        total_chunks=total_chunks,
+        text=text,
+    )
+
+    _audit(
+        "stage_text_payload",
+        payload_id=result.payload_id,
+        chunk_index=result.chunk_index,
+        total_chunks=result.total_chunks,
+        chunk_chars=result.chunk_chars,
+        total_chars=result.total_chars,
+        complete=result.complete,
+    )
+
+    return result
 
 
 @mcp.tool(

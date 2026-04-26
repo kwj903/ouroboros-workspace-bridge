@@ -20,9 +20,11 @@ APPLIED_DIR = COMMAND_BUNDLES_DIR / "applied"
 REJECTED_DIR = COMMAND_BUNDLES_DIR / "rejected"
 FAILED_DIR = COMMAND_BUNDLES_DIR / "failed"
 BACKUP_DIR = RUNTIME_ROOT / "command_bundle_file_backups"
+TEXT_PAYLOAD_DIR = RUNTIME_ROOT / "text_payloads"
 
 MAX_STDOUT_CHARS = 20_000
 MAX_STDERR_CHARS = 8_000
+TEXT_PAYLOAD_MAX_TOTAL_CHARS = 1_000_000
 
 BLOCKED_DIR_NAMES = {
     ".ssh",
@@ -60,6 +62,79 @@ def read_json(path: Path) -> dict[str, Any]:
 def write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def normalize_text_payload_id(payload_id: str) -> str:
+    normalized = payload_id.strip()
+
+    if normalized == "":
+        raise ValueError("payload_id cannot be empty.")
+
+    if len(normalized) > 120:
+        raise ValueError("payload_id is too long.")
+
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+    if any(ch not in allowed for ch in normalized):
+        raise ValueError("payload_id can only contain letters, numbers, '-' and '_'.")
+
+    return normalized
+
+
+def read_text_payload_ref(payload_ref: str) -> str:
+    payload_id = normalize_text_payload_id(payload_ref)
+    payload_dir = TEXT_PAYLOAD_DIR / payload_id
+    manifest_path = payload_dir / "manifest.json"
+
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"text payload ref does not exist: {payload_id}")
+
+    manifest = read_json(manifest_path)
+
+    if not bool(manifest.get("complete", False)):
+        raise ValueError(f"text payload ref is incomplete: {payload_id}")
+
+    total_chunks = int(manifest.get("total_chunks", 0))
+    if total_chunks < 1:
+        raise ValueError(f"text payload manifest is invalid: {payload_id}")
+
+    parts: list[str] = []
+    for idx in range(total_chunks):
+        chunk_path = payload_dir / f"chunk_{idx:06d}.txt"
+        if not chunk_path.exists():
+            raise FileNotFoundError(f"text payload chunk is missing: {payload_id}#{idx}")
+        parts.append(chunk_path.read_text(encoding="utf-8"))
+
+    content = "".join(parts)
+    if len(content) > TEXT_PAYLOAD_MAX_TOTAL_CHARS:
+        raise ValueError(f"text payload too large: {payload_id}")
+
+    return content
+
+
+def step_text(step: dict[str, Any], key: str) -> str:
+    inline_value = step.get(key)
+    ref_value = step.get(f"{key}_ref")
+
+    if inline_value is not None and ref_value:
+        raise ValueError(f"{key} and {key}_ref cannot both be set.")
+
+    if inline_value is not None:
+        return str(inline_value)
+
+    if ref_value:
+        return read_text_payload_ref(str(ref_value))
+
+    raise ValueError(f"{key} or {key}_ref is required.")
+
+
+def text_source_preview(step: dict[str, Any], key: str) -> str:
+    ref_value = step.get(f"{key}_ref")
+    chars_value = step.get(f"{key}_chars")
+
+    if ref_value:
+        return f"ref={ref_value}, chars={chars_value}"
+
+    return f"inline_chars={len(str(step.get(key, '')))}"
 
 
 def bundle_dirs() -> list[Path]:
@@ -231,11 +306,11 @@ def preview(bundle_id: str) -> None:
         else:
             print(f"   path: {raw_step.get('path')}")
             if kind in {"write_file", "append_file"}:
-                print(f"   content_chars: {len(str(raw_step.get('content', '')))}")
+                print(f"   content: {text_source_preview(raw_step, 'content')}")
                 print(f"   overwrite: {raw_step.get('overwrite')}")
             elif kind == "replace_text":
-                print(f"   old_text_chars: {len(str(raw_step.get('old_text', '')))}")
-                print(f"   new_text_chars: {len(str(raw_step.get('new_text', '')))}")
+                print(f"   old_text: {text_source_preview(raw_step, 'old_text')}")
+                print(f"   new_text: {text_source_preview(raw_step, 'new_text')}")
                 print(f"   replace_all: {raw_step.get('replace_all')}")
 
 
@@ -291,7 +366,7 @@ def apply_command(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
 
 def apply_write_file(step: dict[str, Any]) -> dict[str, Any]:
     target = resolve_file_path(str(step.get("path", "")))
-    content = str(step.get("content", ""))
+    content = step_text(step, "content")
     overwrite = bool(step.get("overwrite", False))
     create_parent_dirs = bool(step.get("create_parent_dirs", True))
 
@@ -315,7 +390,7 @@ def apply_write_file(step: dict[str, Any]) -> dict[str, Any]:
 
 def apply_append_file(step: dict[str, Any]) -> dict[str, Any]:
     target = resolve_file_path(str(step.get("path", "")))
-    content = str(step.get("content", ""))
+    content = step_text(step, "content")
     create_parent_dirs = bool(step.get("create_parent_dirs", True))
 
     if create_parent_dirs:
@@ -336,9 +411,12 @@ def apply_append_file(step: dict[str, Any]) -> dict[str, Any]:
 
 def apply_replace_text(step: dict[str, Any]) -> dict[str, Any]:
     target = resolve_file_path(str(step.get("path", "")))
-    old_text = str(step.get("old_text", ""))
-    new_text = str(step.get("new_text", ""))
+    old_text = step_text(step, "old_text")
+    new_text = step_text(step, "new_text")
     replace_all = bool(step.get("replace_all", False))
+
+    if old_text == "":
+        raise ValueError("old_text cannot be empty.")
 
     if not target.exists() or not target.is_file():
         raise FileNotFoundError(f"file does not exist: {relative(target)}")

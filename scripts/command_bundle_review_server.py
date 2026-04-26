@@ -171,6 +171,22 @@ def run_runner(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def step_text_meta_html(step: dict[str, object], key: str, label: str) -> str:
+    ref_value = step.get(f"{key}_ref")
+    chars_value = step.get(f"{key}_chars")
+    chunks_value = step.get(f"{key}_chunks")
+
+    if ref_value:
+        return (
+            f'<p class="meta">{escape(label)} ref: '
+            f'<code>{escape(ref_value)}</code>, '
+            f'길이: {escape(chars_value)}자, '
+            f'청크: {escape(chunks_value)}</p>'
+        )
+
+    return f'<p class="meta">{escape(label)} 길이: {len(str(step.get(key, "")))}자</p>'
+
+
 def step_summary_html(step: dict[str, object], idx: int) -> str:
     kind = str(step.get("type", "command"))
 
@@ -183,14 +199,14 @@ def step_summary_html(step: dict[str, object], idx: int) -> str:
     elif kind in {"write_file", "append_file"}:
         detail = f"""
         <p class="meta">파일: <code>{escape(step.get("path", ""))}</code></p>
-        <p class="meta">내용 길이: {len(str(step.get("content", "")))}자</p>
+        {step_text_meta_html(step, "content", "내용")}
         <p class="meta">덮어쓰기: {escape(bool_label(step.get("overwrite", False)))}</p>
         """
     elif kind == "replace_text":
         detail = f"""
         <p class="meta">파일: <code>{escape(step.get("path", ""))}</code></p>
-        <p class="meta">기존 문구 길이: {len(str(step.get("old_text", "")))}자</p>
-        <p class="meta">새 문구 길이: {len(str(step.get("new_text", "")))}자</p>
+        {step_text_meta_html(step, "old_text", "기존 문구")}
+        {step_text_meta_html(step, "new_text", "새 문구")}
         <p class="meta">전체 치환: {escape(bool_label(step.get("replace_all", False)))}</p>
         """
     else:
