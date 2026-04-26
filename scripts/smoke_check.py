@@ -4,10 +4,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+def redact_sensitive_text(value: str) -> str:
+    value = re.sub(r"(?i)(access_token=)[^&\s]+", r"\1<redacted>", value)
+    value = re.sub(r"(?i)(token=)[^&\s]+", r"\1<redacted>", value)
+    value = re.sub(r"(?i)(Authorization:\s*Bearer\s+)\S+", r"\1<redacted>", value)
+    return value
+
+
+def format_command(command: list[str]) -> str:
+    return " ".join(redact_sensitive_text(item) for item in command)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +34,7 @@ EXPECTED_TOOLS = {
 
 
 def run_command(command: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess[str]:
-    print(f"$ {' '.join(command)}")
+    print(f"$ {format_command(command)}")
     completed = subprocess.run(
         command,
         cwd=PROJECT_ROOT,
