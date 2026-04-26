@@ -17,6 +17,12 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 
+from terminal_bridge.backups import (
+    _backup_file as _create_backup_file,
+    _list_backup_entries,
+    _restore_backup_payload,
+    _sha256_file,
+)
 from terminal_bridge.bundles import (
     _bundle_risk_rank,
     _combined_bundle_risk,
@@ -437,10 +443,6 @@ def _ensure_workspace_root_exists() -> None:
         raise FileNotFoundError(f"Workspace root does not exist: {WORKSPACE_ROOT}")
 
 
-def _sha256_file(path: Path) -> str:
-    return _sha256_bytes(path.read_bytes())
-
-
 def _truncate(text: str, limit: int) -> tuple[str, bool]:
     if len(text) <= limit:
         return text, False
@@ -452,25 +454,7 @@ def _backup_file(path: Path) -> str | None:
         return None
 
     _ensure_runtime_dirs()
-
-    backup_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-    rel = _relative(path)
-    target = BACKUP_DIR / backup_id / rel
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(path, target)
-
-    manifest = {
-        "backup_id": backup_id,
-        "original_path": rel,
-        "backup_path": str(target),
-        "sha256": _sha256_file(path),
-        "created_at": _now_iso(),
-    }
-
-    manifest_path = BACKUP_DIR / backup_id / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    return backup_id
+    return _create_backup_file(path)
 
 
 def _run_workspace_exec(
@@ -1362,27 +1346,7 @@ def workspace_list_backups(
     """List recent file backups created before overwrite/append/replace/restore operations."""
     _ensure_runtime_dirs()
 
-    entries: list[BackupEntry] = []
-
-    for manifest_path in sorted(BACKUP_DIR.glob("*/manifest.json"), reverse=True):
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-
-        entries.append(
-            BackupEntry(
-                backup_id=str(manifest.get("backup_id", manifest_path.parent.name)),
-                original_path=str(manifest.get("original_path", "")),
-                backup_path=str(manifest.get("backup_path", "")),
-                sha256=manifest.get("sha256") if isinstance(manifest.get("sha256"), str) else None,
-                created_at=manifest.get("created_at") if isinstance(manifest.get("created_at"), str) else None,
-            )
-        )
-
-        if len(entries) >= limit:
-            break
-
+    entries = _list_backup_entries(limit)
     return BackupListResult(entries=entries, count=len(entries))
 
 
@@ -1413,41 +1377,14 @@ def workspace_restore_backup(
         return BackupRestoreResult(**dict(previous.get("result") or {}))
 
     try:
-        manifest_path = BACKUP_DIR / backup_id / "manifest.json"
-
-        if not manifest_path.exists():
-            raise FileNotFoundError(f"Backup manifest not found: {backup_id}")
-
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        original = _resolve_workspace_path(str(manifest["original_path"]))
-        backup_path = Path(str(manifest["backup_path"]))
-
-        if not backup_path.exists() or not backup_path.is_file():
-            raise FileNotFoundError(f"Backup payload not found: {backup_id}")
-
-        if original.exists() and not overwrite:
-            raise FileExistsError(f"Original path already exists. Set overwrite=true: {_relative(original)}")
-
-        backup_id_before_overwrite = None
-        if original.exists() and overwrite:
-            backup_id_before_overwrite = _backup_file(original)
-
-        original.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(backup_path, original)
-
-        result = BackupRestoreResult(
-            backup_id=backup_id,
-            restored_path=_relative(original),
-            sha256=_sha256_file(original),
-            backup_id_before_overwrite=backup_id_before_overwrite,
-        )
+        result = _restore_backup_payload(backup_id, overwrite)
 
         _audit(
             "restore_backup",
             operation_id=op_id,
             backup_id=backup_id,
             restored_path=result.restored_path,
-            backup_id_before_overwrite=backup_id_before_overwrite,
+            backup_id_before_overwrite=result.backup_id_before_overwrite,
         )
         _complete_operation(op_id, result)
 
