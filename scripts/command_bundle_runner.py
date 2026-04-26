@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import shutil
@@ -220,6 +221,116 @@ def resolve_file_path(raw_path: str) -> Path:
     return target
 
 
+def clean_patch_path(raw_path: str) -> str | None:
+    value = raw_path.strip()
+
+    if "\t" in value:
+        value = value.split("\t", 1)[0]
+
+    if value == "/dev/null":
+        return None
+
+    if value.startswith("a/") or value.startswith("b/"):
+        value = value[2:]
+
+    if value == "":
+        return None
+
+    path = Path(value)
+
+    if path.is_absolute() or value.startswith("~") or ".." in path.parts:
+        raise ValueError(f"unsafe patch path: {raw_path}")
+
+    if value.startswith(".git/") or "/.git/" in value:
+        raise PermissionError(f"patch path touches .git: {raw_path}")
+
+    return value
+
+
+def extract_patch_paths(patch: str) -> list[str]:
+    paths: set[str] = set()
+
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            parts = line.split()
+            if len(parts) >= 4:
+                for raw in (parts[2], parts[3]):
+                    cleaned = clean_patch_path(raw)
+                    if cleaned is not None:
+                        paths.add(cleaned)
+
+        elif line.startswith("--- ") or line.startswith("+++ "):
+            cleaned = clean_patch_path(line[4:])
+            if cleaned is not None:
+                paths.add(cleaned)
+
+        elif line.startswith("rename from "):
+            cleaned = clean_patch_path(line[len("rename from ") :])
+            if cleaned is not None:
+                paths.add(cleaned)
+
+        elif line.startswith("rename to "):
+            cleaned = clean_patch_path(line[len("rename to ") :])
+            if cleaned is not None:
+                paths.add(cleaned)
+
+        elif line.startswith("copy from "):
+            cleaned = clean_patch_path(line[len("copy from ") :])
+            if cleaned is not None:
+                paths.add(cleaned)
+
+        elif line.startswith("copy to "):
+            cleaned = clean_patch_path(line[len("copy to ") :])
+            if cleaned is not None:
+                paths.add(cleaned)
+
+    if not paths:
+        raise ValueError("No patch file paths were found.")
+
+    return sorted(paths)
+
+
+def resolve_patch_path(cwd: Path, patch_path: str) -> Path:
+    cwd_rel = relative(cwd)
+    combined = Path(patch_path) if cwd_rel == "." else Path(cwd_rel) / patch_path
+    return resolve_file_path(str(combined))
+
+
+def validate_patch_paths(cwd: Path, patch_paths: list[str]) -> None:
+    for patch_path in patch_paths:
+        resolve_patch_path(cwd, patch_path)
+
+
+def run_git_apply(cwd: Path, args: list[str], patch: str, timeout_seconds: int = 30) -> dict[str, Any]:
+    completed = subprocess.run(
+        ["git", "apply", *args],
+        input=patch,
+        cwd=str(cwd),
+        env=safe_env(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout_seconds,
+        shell=False,
+        check=False,
+    )
+    stdout, out_truncated = truncate(completed.stdout, MAX_STDOUT_CHARS)
+    stderr, err_truncated = truncate(completed.stderr, MAX_STDERR_CHARS)
+    return {
+        "exit_code": completed.returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "truncated": out_truncated or err_truncated,
+    }
+
+
+def step_patch_paths(step: dict[str, Any], patch: str) -> list[str]:
+    raw_files = step.get("files")
+    if isinstance(raw_files, list) and raw_files:
+        return [str(item) for item in raw_files]
+    return extract_patch_paths(patch)
+
+
 def relative(path: Path) -> str:
     return str(path.resolve(strict=False).relative_to(WORKSPACE_ROOT))
 
@@ -303,6 +414,29 @@ def preview(bundle_id: str) -> None:
         if kind == "command":
             print(f"   argv: {raw_step.get('argv')}")
             print(f"   timeout: {raw_step.get('timeout_seconds')}")
+        elif kind == "apply_patch":
+            print(f"   cwd: {raw_step.get('cwd', record.get('cwd'))}")
+            print(f"   patch source: {text_source_preview(raw_step, 'patch')}")
+            print(f"   files: {raw_step.get('files')}")
+            try:
+                step_cwd = resolve_cwd(str(raw_step.get("cwd", record.get("cwd", "."))))
+                patch = step_text(raw_step, "patch")
+                if not raw_step.get("patch_ref"):
+                    patch_preview, _ = truncate(patch, 1000)
+                    print("   inline patch preview:")
+                    for line in patch_preview.splitlines():
+                        print(f"     {line}")
+                patch_paths = step_patch_paths(raw_step, patch)
+                validate_patch_paths(step_cwd, patch_paths)
+                check = run_git_apply(step_cwd, ["--check"], patch)
+                print(f"   can_apply: {check['exit_code'] == 0}")
+                print(f"   git apply --check exit_code: {check['exit_code']}")
+                if check["stdout"]:
+                    print(f"   check stdout: {check['stdout']}")
+                if check["stderr"]:
+                    print(f"   check stderr: {check['stderr']}")
+            except Exception as exc:
+                print(f"   git apply --check error: {exc}")
         else:
             print(f"   path: {raw_step.get('path')}")
             if kind in {"write_file", "append_file"}:
@@ -445,6 +579,48 @@ def apply_replace_text(step: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def apply_patch_step(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
+    step_cwd = resolve_cwd(str(step.get("cwd", relative(cwd))))
+    patch = step_text(step, "patch")
+    expected_sha256 = step.get("patch_sha256")
+    patch_sha256 = hashlib.sha256(patch.encode("utf-8")).hexdigest()
+
+    if expected_sha256 is not None and str(expected_sha256) != patch_sha256:
+        raise ValueError("patch_sha256 does not match patch content.")
+
+    patch_paths = step_patch_paths(step, patch)
+    validate_patch_paths(step_cwd, patch_paths)
+
+    check = run_git_apply(step_cwd, ["--check"], patch)
+    if check["exit_code"] != 0:
+        raise RuntimeError(f"git apply --check failed: {check['stderr'] or check['stdout']}")
+
+    backup_ids: dict[str, str | None] = {}
+    for patch_path in patch_paths:
+        workspace_path = resolve_patch_path(step_cwd, patch_path)
+        if workspace_path.exists() and workspace_path.is_file():
+            backup_ids[patch_path] = backup_file(workspace_path)
+        else:
+            backup_ids[patch_path] = None
+
+    applied = run_git_apply(step_cwd, [], patch)
+    if applied["exit_code"] != 0:
+        raise RuntimeError(f"git apply failed: {applied['stderr'] or applied['stdout']}")
+
+    return {
+        "type": "apply_patch",
+        "name": step.get("name"),
+        "cwd": relative(step_cwd),
+        "files": patch_paths,
+        "exit_code": applied["exit_code"],
+        "stdout": applied["stdout"],
+        "stderr": applied["stderr"],
+        "backup_ids": backup_ids,
+        "patch_sha256": patch_sha256,
+        "truncated": applied["truncated"],
+    }
+
+
 def apply_step(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
     if step.get("risk") == "blocked":
         raise PermissionError(f"blocked step cannot be applied: {step.get('name')}")
@@ -458,6 +634,8 @@ def apply_step(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
         return apply_append_file(step)
     if kind == "replace_text":
         return apply_replace_text(step)
+    if kind == "apply_patch":
+        return apply_patch_step(cwd, step)
 
     raise ValueError(f"unsupported step type: {kind}")
 

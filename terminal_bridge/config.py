@@ -115,3 +115,4 @@ MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("MCP_PORT", "8787"))
 NGROK_HOST = os.getenv("NGROK_HOST", "iguana-dashing-tuna.ngrok-free.app")
 MCP_ACCESS_TOKEN = os.getenv("MCP_ACCESS_TOKEN")
+MCP_EXPOSE_DIRECT_MUTATION_TOOLS = os.getenv("MCP_EXPOSE_DIRECT_MUTATION_TOOLS") == "1"

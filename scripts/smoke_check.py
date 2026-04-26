@@ -27,7 +27,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TOOLS = {
     "workspace_project_snapshot",
     "workspace_preview_patch",
-    "workspace_apply_patch",
+    "workspace_stage_command_bundle",
+    "workspace_stage_patch_bundle",
     "workspace_task_start",
     "workspace_list_tasks",
 }

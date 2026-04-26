@@ -209,6 +209,14 @@ def step_summary_html(step: dict[str, object], idx: int) -> str:
         {step_text_meta_html(step, "new_text", "새 문구")}
         <p class="meta">전체 치환: {escape(bool_label(step.get("replace_all", False)))}</p>
         """
+    elif kind == "apply_patch":
+        detail = f"""
+        <p class="meta">작업 위치: <code>{escape(step.get("cwd", ""))}</code></p>
+        {step_text_meta_html(step, "patch", "Patch")}
+        <p class="meta">대상 파일:</p>
+        <pre>{escape(json.dumps(step.get("files", []), ensure_ascii=False, indent=2))}</pre>
+        <p class="meta">Patch sha256: <code>{escape(step.get("patch_sha256", ""))}</code></p>
+        """
     else:
         detail = f"<pre>{escape(step)}</pre>"
 

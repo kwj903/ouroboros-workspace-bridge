@@ -240,18 +240,17 @@ workspace_read_many_files
 workspace_project_snapshot
 ```
 
-### 파일 변경
+### 상태/patch 검증
 
 ```text
-workspace_create_directory
-workspace_write_file
-workspace_append_file
-workspace_replace_text
 workspace_preview_patch
-workspace_apply_patch
 ```
 
-작은 직접 수정 도구도 있지만, ChatGPT 앱과 함께 운영할 때는 가능한 한 action bundle과 로컬 승인 UI를 사용합니다.
+ChatGPT에 기본 노출되는 직접 도구는 읽기, 검색, 상태 확인, runtime 기록 확인 중심입니다.
+파일 쓰기, 삭제, patch 적용, 임의 명령, install, `git add`, `git commit` 같은 위험 작업은 기본 MCP surface에 노출하지 않고 bundle로 staging한 뒤 로컬 review server에서 승인/실행합니다.
+
+로컬 디버깅이 꼭 필요할 때만 `MCP_EXPOSE_DIRECT_MUTATION_TOOLS=1`로 direct mutation tools를 노출할 수 있습니다.
+일반 사용 흐름에서는 설정하지 않습니다.
 
 ### Text payload ref
 
@@ -297,6 +296,7 @@ new_text_ref
 ```text
 workspace_stage_command_bundle
 workspace_stage_action_bundle
+workspace_stage_patch_bundle
 workspace_command_bundle_status
 workspace_list_command_bundles
 workspace_cancel_command_bundle
@@ -312,6 +312,8 @@ replace_text
 ```
 
 `workspace_stage_action_bundle`은 프로젝트 파일을 즉시 수정하지 않습니다. pending bundle을 runtime에 만들고, 로컬 승인 UI에서 승인한 뒤 runner가 적용합니다.
+ChatGPT가 생성한 코드 수정은 가능하면 `workspace_stage_patch_bundle`로 unified diff를 승인 UI에 올리는 흐름을 권장합니다.
+터미널 명령, install/delete/run 명령, `git add`, `git commit`은 `workspace_stage_command_bundle`로 올린 뒤 로컬에서 승인합니다.
 
 로컬 승인 UI:
 
@@ -332,43 +334,27 @@ uv run python scripts/command_bundle_runner.py apply <bundle_id>
 ### 삭제/복구
 
 ```text
-workspace_soft_delete
-workspace_move_to_trash
-workspace_restore_deleted
 workspace_list_trash
 ```
 
-삭제는 영구 삭제가 아니라 MCP trash로 이동하는 soft delete입니다.
+삭제/복구 같은 변경 작업은 기본 직접 도구가 아니라 command/action bundle 또는 로컬 fallback/debug 도구를 통해 처리합니다.
 
 ### Git
 
 ```text
 workspace_git_status
 workspace_git_diff
-workspace_git_add
-workspace_git_commit
 ```
 
-### 실행 프로필
+`git add`와 `git commit`은 기본 직접 도구가 아니라 command bundle approval workflow로 실행합니다.
+
+### 명령 실행
 
 ```text
-workspace_run_profile
+workspace_stage_command_bundle
 ```
 
-현재 임의 shell 명령은 받지 않습니다. 허용된 프로필만 실행합니다.
-
-예시 프로필:
-
-```text
-git_status
-git_diff
-uv_pytest
-uv_ruff_check
-uv_mypy
-go_test
-npm_test
-npm_lint
-```
+테스트, lint, install, delete, run command처럼 프로젝트 상태를 바꿀 수 있거나 비용이 큰 명령은 command bundle로 staging하고 로컬 review server에서 한 번 클릭으로 승인/실행합니다.
 
 ### 기록/복구
 
@@ -377,10 +363,9 @@ workspace_read_audit_log
 workspace_get_operation
 workspace_list_operations
 workspace_list_backups
-workspace_restore_backup
 ```
 
-쓰기/삭제/patch 적용 같은 변경 작업은 operation 기록과 audit log를 남깁니다.
+쓰기/삭제/patch 적용 같은 변경 작업은 로컬 runner가 수행하고, operation 기록과 audit log를 남깁니다.
 
 ### Task/session
 
@@ -411,6 +396,20 @@ workspace_list_tasks
 
 ```text
 1. 수정 계획 정리
+2. unified diff patch 생성
+3. 필요한 경우 workspace_stage_text_payload로 patch 텍스트 저장
+4. workspace_stage_patch_bundle에 patch_ref 전달
+5. 로컬 승인 UI에서 확인 후 승인
+6. workspace_command_bundle_status
+7. workspace_git_diff
+8. 테스트 또는 smoke check
+9. git add / commit
+```
+
+작은 수동 파일 작업이나 명령 승인이 필요하면 기존 action/command bundle도 계속 사용할 수 있습니다.
+
+```text
+1. 수정 계획 정리
 2. 필요한 경우 workspace_stage_text_payload로 큰 텍스트 저장
 3. workspace_stage_action_bundle 또는 workspace_stage_command_bundle
 4. 로컬 승인 UI에서 확인 후 승인
@@ -430,19 +429,40 @@ workspace_list_tasks
 
 ## Patch 기반 수정
 
-patch를 먼저 검증합니다.
+ChatGPT가 만든 파일 수정은 direct write tool보다 patch bundle approval workflow를 우선 사용합니다.
+
+```text
+1. unified diff patch 생성
+2. workspace_stage_text_payload로 patch 텍스트 저장
+3. workspace_stage_patch_bundle(title, cwd, patch_ref) 호출로 pending bundle만 생성
+4. 로컬 승인 UI에서 preview 확인
+5. 승인 후 runner가 git apply --check, backup, git apply 수행
+6. ChatGPT는 read-only 도구로 결과 검증
+```
+
+큰 patch는 tool call 본문에 직접 넣지 말고 `patch_ref`를 사용합니다.
+
+```bash
+uv run python scripts/command_bundle_runner.py preview <bundle_id>
+uv run python scripts/command_bundle_runner.py apply <bundle_id>
+```
+
+`server.py` 또는 `terminal_bridge/*.py`를 변경한 뒤에는 MCP 서버를 재시작해야 새 tool/schema가 반영됩니다.
+
+기존 direct write/apply/exec 도구는 fallback/internal/debug 용도로만 유지되며 기본 MCP surface에는 노출되지 않습니다.
+patch를 read-only로 검증하려면 직접 노출되는 preview 도구를 사용합니다.
 
 ```text
 workspace_preview_patch
 ```
 
-검증이 통과하면 적용합니다.
+적용이 필요하면 patch bundle을 staging합니다.
 
 ```text
-workspace_apply_patch
+workspace_stage_patch_bundle
 ```
 
-`workspace_apply_patch`는 다음을 수행합니다.
+로컬 runner가 승인 후 patch bundle에 대해 다음을 수행합니다.
 
 1. patch 경로 안전성 검사
 2. `git apply --check`
@@ -451,7 +471,8 @@ workspace_apply_patch
 5. 필요하면 제한된 diff 반환
 6. operation/audit 기록
 
-큰 문서 전체 교체나 긴 본문 추가는 patch보다 `workspace_stage_text_payload` + `workspace_stage_action_bundle`이 더 안정적일 수 있습니다.
+큰 patch는 `workspace_stage_text_payload` + `workspace_stage_patch_bundle(patch_ref=...)` 흐름을 사용합니다.
+기존 direct write/apply/exec tools는 `MCP_EXPOSE_DIRECT_MUTATION_TOOLS=1`을 설정한 로컬 디버그 상황에서만 직접 노출됩니다.
 
 ## 안전 모델
 

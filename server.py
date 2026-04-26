@@ -60,6 +60,7 @@ from terminal_bridge.config import (
     MAX_STDOUT_CHARS,
     MAX_WRITE_CHARS,
     MCP_ACCESS_TOKEN,
+    MCP_EXPOSE_DIRECT_MUTATION_TOOLS,
     MCP_HOST,
     MCP_PORT,
     NGROK_HOST,
@@ -197,6 +198,16 @@ mcp = FastMCP(
     port=MCP_PORT,
     transport_security=transport_security,
 )
+
+
+def _direct_mutation_tool(**kwargs: object):
+    if MCP_EXPOSE_DIRECT_MUTATION_TOOLS:
+        return mcp.tool(**kwargs)
+
+    def decorator(func):
+        return func
+
+    return decorator
 
 
 def _ensure_runtime_dirs() -> None:
@@ -576,52 +587,66 @@ def _run_command(cwd: str, command: list[str], timeout_seconds: int = 30) -> Com
 )
 def workspace_info() -> WorkspaceInfo:
     """Return basic information about the configured ~/workspace root and enabled tools."""
+    tools = [
+        "workspace_info",
+        "workspace_list",
+        "workspace_tree",
+        "workspace_read_file",
+        "workspace_find_files",
+        "workspace_search_text",
+        "workspace_read_many_files",
+        "workspace_project_snapshot",
+        "workspace_git_status",
+        "workspace_git_diff",
+        "workspace_preview_patch",
+        "workspace_read_audit_log",
+        "workspace_get_operation",
+        "workspace_list_operations",
+        "workspace_list_backups",
+        "workspace_list_trash",
+        "workspace_task_start",
+        "workspace_task_status",
+        "workspace_task_log_step",
+        "workspace_task_update_plan",
+        "workspace_task_finish",
+        "workspace_list_tasks",
+        "workspace_stage_text_payload",
+        "workspace_stage_command_bundle",
+        "workspace_stage_action_bundle",
+        "workspace_stage_patch_bundle",
+        "workspace_command_bundle_status",
+        "workspace_list_command_bundles",
+        "workspace_cancel_command_bundle",
+    ]
+
+    if MCP_EXPOSE_DIRECT_MUTATION_TOOLS:
+        tools.extend(
+            [
+                "workspace_create_directory",
+                "workspace_write_file",
+                "workspace_append_file",
+                "workspace_replace_text",
+                "workspace_soft_delete",
+                "workspace_move_to_trash",
+                "workspace_restore_deleted",
+                "workspace_restore_backup",
+                "workspace_apply_patch",
+                "workspace_git_add",
+                "workspace_git_commit",
+                "workspace_exec",
+                "workspace_run_profile",
+            ]
+        )
+
     return WorkspaceInfo(
         root=str(WORKSPACE_ROOT),
-        mode="development_mvp_with_write_and_safe_commands",
+        mode=(
+            "development_mvp_with_direct_mutation_tools"
+            if MCP_EXPOSE_DIRECT_MUTATION_TOOLS
+            else "development_mvp_bundle_first"
+        ),
         runtime_root=str(RUNTIME_ROOT),
-        tools=[
-            "workspace_list",
-            "workspace_tree",
-            "workspace_read_file",
-            "workspace_create_directory",
-            "workspace_write_file",
-            "workspace_append_file",
-            "workspace_replace_text",
-            "workspace_soft_delete",
-            "workspace_restore_deleted",
-            "workspace_git_status",
-            "workspace_git_diff",
-            "workspace_run_profile",
-            "workspace_exec",
-            "workspace_stage_command_bundle",
-            "workspace_stage_text_payload",
-            "workspace_stage_action_bundle",
-            "workspace_command_bundle_status",
-            "workspace_list_command_bundles",
-            "workspace_cancel_command_bundle",
-            "workspace_git_add",
-            "workspace_git_commit",
-            "workspace_read_audit_log",
-            "workspace_get_operation",
-            "workspace_list_backups",
-            "workspace_restore_backup",
-            "workspace_list_trash",
-            "workspace_move_to_trash",
-            "workspace_list_operations",
-            "workspace_find_files",
-            "workspace_search_text",
-            "workspace_read_many_files",
-            "workspace_project_snapshot",
-            "workspace_preview_patch",
-            "workspace_apply_patch",
-            "workspace_task_start",
-            "workspace_task_status",
-            "workspace_task_log_step",
-            "workspace_task_update_plan",
-            "workspace_task_finish",
-            "workspace_list_tasks",
-        ],
+        tools=tools,
     )
 
 
@@ -686,7 +711,7 @@ def workspace_read_file(
     return _read_workspace_file(path, offset, limit)
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": False,
@@ -712,7 +737,7 @@ def workspace_create_directory(
     )
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -794,7 +819,7 @@ def workspace_write_file(
         raise
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": False,
@@ -846,7 +871,7 @@ def workspace_append_file(
     return result
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -945,7 +970,7 @@ def workspace_replace_text(
         raise
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -999,7 +1024,7 @@ def workspace_soft_delete(
         raise
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -1161,7 +1186,7 @@ def workspace_list_backups(
     return BackupListResult(entries=entries, count=len(entries))
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -1224,7 +1249,7 @@ def workspace_list_trash(
     return TrashListResult(entries=entries, count=len(entries))
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -1781,7 +1806,7 @@ def workspace_preview_patch(
     )
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -1939,7 +1964,7 @@ def workspace_git_diff(
 
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -2026,10 +2051,131 @@ def workspace_stage_text_payload(
     return result
 
 
+def _read_staged_text_payload(payload_ref: str) -> tuple[str, dict[str, object]]:
+    ref_info = _validate_text_payload_ref(payload_ref)
+    payload_id = str(ref_info["payload_id"])
+    total_chunks = int(ref_info["total_chunks"])
+
+    chunks: list[str] = []
+    for idx in range(total_chunks):
+        chunks.append((_text_payload_dir(payload_id) / f"chunk_{idx:06d}.txt").read_text(encoding="utf-8"))
+
+    return "".join(chunks), ref_info
+
+
 @mcp.tool(
     annotations={
         "readOnlyHint": False,
-        "destructiveHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_stage_patch_bundle(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")],
+    patch: Annotated[str | None, Field(description="Unified diff patch text. Prefer patch_ref for large patches.")] = None,
+    patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
+) -> CommandBundleStageResult:
+    """Stage a unified diff patch for local approval without modifying project files."""
+    if patch is not None and patch_ref is not None:
+        raise ValueError("patch and patch_ref cannot both be set.")
+
+    if patch is None and patch_ref is None:
+        raise ValueError("patch or patch_ref is required.")
+
+    target = _resolve_workspace_path(cwd)
+
+    if not target.exists():
+        raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
+
+    if not target.is_dir():
+        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+
+    step_source: dict[str, object]
+    if patch_ref is not None:
+        patch_text, ref_info = _read_staged_text_payload(patch_ref)
+        step_source = {
+            "patch_ref": str(ref_info["payload_id"]),
+            "patch_chars": int(ref_info["total_chars"]),
+            "patch_chunks": int(ref_info["total_chunks"]),
+        }
+    else:
+        assert patch is not None
+        patch_text = patch
+        step_source = {
+            "patch": patch_text,
+            "patch_chars": len(patch_text),
+        }
+
+    if patch_text.strip() == "":
+        raise ValueError("patch cannot be empty.")
+
+    if len(patch_text) > MAX_WRITE_CHARS:
+        raise ValueError(f"Patch too large. Max characters: {MAX_WRITE_CHARS}")
+
+    patch_paths = _extract_patch_paths(patch_text)
+    _validate_patch_paths(target, patch_paths)
+
+    bundle_id = _new_command_bundle_id()
+    now = _now_iso()
+    patch_sha256 = _sha256_bytes(patch_text.encode("utf-8"))
+    serialized_steps = [
+        {
+            "type": "apply_patch",
+            "name": title,
+            "cwd": _relative(target),
+            **step_source,
+            "patch_sha256": patch_sha256,
+            "files": patch_paths,
+            "risk": "medium",
+            "reason": "Patch apply requires local approval.",
+        }
+    ]
+
+    record: dict[str, object] = {
+        "version": 3,
+        "bundle_id": bundle_id,
+        "title": title,
+        "cwd": _relative(target),
+        "status": "pending",
+        "risk": "medium",
+        "approval_required": True,
+        "created_at": now,
+        "updated_at": now,
+        "steps": serialized_steps,
+        "result": None,
+        "error": None,
+    }
+
+    bundle_path = _command_bundle_path(bundle_id, "pending")
+    _write_command_bundle(bundle_path, record)
+    _audit(
+        "stage_patch_bundle",
+        bundle_id=bundle_id,
+        cwd=_relative(target),
+        title=title,
+        patch_sha256=patch_sha256,
+        files=patch_paths,
+    )
+
+    return CommandBundleStageResult(
+        bundle_id=bundle_id,
+        title=title,
+        cwd=_relative(target),
+        status="pending",
+        risk="medium",
+        approval_required=True,
+        path=str(bundle_path),
+        review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
+        command_count=len(serialized_steps),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -2100,7 +2246,7 @@ def workspace_stage_action_bundle(
 @mcp.tool(
     annotations={
         "readOnlyHint": False,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -2281,7 +2427,7 @@ def workspace_cancel_command_bundle(
 
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -2329,7 +2475,7 @@ def workspace_run_profile(
     return _run_command(cwd=cwd, command=command, timeout_seconds=timeout_seconds)
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -2373,7 +2519,7 @@ def workspace_git_add(
     )
 
 
-@mcp.tool(
+@_direct_mutation_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": True,
