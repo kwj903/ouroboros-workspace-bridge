@@ -131,6 +131,14 @@ from terminal_bridge.safety import (
     _validate_expected_sha256,
 )
 from terminal_bridge.storage import _now_iso, _read_json, _sha256_bytes, _write_json
+from terminal_bridge.tasks import (
+    _list_task_paths,
+    _new_task_id,
+    _normalize_task_id,
+    _read_task,
+    _task_path,
+    _write_task,
+)
 
 transport_security = TransportSecuritySettings(
     enable_dns_rebinding_protection=True,
@@ -302,45 +310,16 @@ def _fail_operation(operation_id: str, exc: BaseException) -> None:
     _audit("operation_failed", operation_id=operation_id, error=record["error"])
 
 
-def _new_task_id() -> str:
-    return f"task-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-
-
-def _normalize_task_id(task_id: str) -> str:
-    normalized = task_id.strip()
-
-    if normalized == "":
-        raise ValueError("task_id cannot be empty.")
-
-    if len(normalized) > 160:
-        raise ValueError("task_id is too long.")
-
-    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
-    if any(ch not in allowed for ch in normalized):
-        raise ValueError("task_id can only contain letters, numbers, '-' and '_'.")
-
-    return normalized
-
-
-def _task_path(task_id: str) -> Path:
-    return TASK_DIR / f"{task_id}.json"
-
-
 def _read_task_record(task_id: str) -> dict[str, object] | None:
-    _ensure_runtime_dirs()
-    path = _task_path(_normalize_task_id(task_id))
-
-    if not path.exists():
+    try:
+        return _read_task(task_id)
+    except FileNotFoundError:
         return None
-
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _write_task_record(record: dict[str, object]) -> None:
-    _ensure_runtime_dirs()
     task_id = _normalize_task_id(str(record["task_id"]))
-    path = _task_path(task_id)
-    path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_task(task_id, record)
 
 
 def _task_result(record: dict[str, object]) -> TaskStatusResult:
@@ -1939,7 +1918,7 @@ def workspace_task_start(
     """Start a Codex-style local work task record for planning, steps, verification, and handoff."""
     new_task_id = _normalize_task_id(task_id) if task_id else _new_task_id()
 
-    if _read_task_record(new_task_id) is not None:
+    if _task_path(new_task_id).exists():
         raise FileExistsError(f"Task already exists: {new_task_id}")
 
     now = _now_iso()
@@ -1958,7 +1937,7 @@ def workspace_task_start(
         "next_steps": [],
     }
 
-    _write_task_record(record)
+    _write_task(new_task_id, record)
     _audit("task_started", task_id=new_task_id, title=title)
     return _task_result(record)
 
@@ -1976,10 +1955,7 @@ def workspace_task_status(
 ) -> TaskStatusResult:
     """Return a task record by task_id."""
     normalized = _normalize_task_id(task_id)
-    record = _read_task_record(normalized)
-
-    if record is None:
-        raise FileNotFoundError(f"Task not found: {normalized}")
+    record = _read_task(normalized)
 
     return _task_result(record)
 
@@ -2003,10 +1979,7 @@ def workspace_task_log_step(
 ) -> TaskStatusResult:
     """Append a step to a task record and return the updated task."""
     normalized = _normalize_task_id(task_id)
-    record = _read_task_record(normalized)
-
-    if record is None:
-        raise FileNotFoundError(f"Task not found: {normalized}")
+    record = _read_task(normalized)
 
     if record.get("status") not in {"active", "paused"}:
         raise ValueError(f"Cannot log step to non-active task: {record.get('status')}")
@@ -2024,7 +1997,7 @@ def workspace_task_log_step(
     record["steps"] = steps
     record["updated_at"] = _now_iso()
 
-    _write_task_record(record)
+    _write_task(normalized, record)
     _audit("task_step_logged", task_id=normalized, kind=kind, message=message)
     return _task_result(record)
 
@@ -2043,10 +2016,7 @@ def workspace_task_update_plan(
 ) -> TaskStatusResult:
     """Replace the plan for an active task."""
     normalized = _normalize_task_id(task_id)
-    record = _read_task_record(normalized)
-
-    if record is None:
-        raise FileNotFoundError(f"Task not found: {normalized}")
+    record = _read_task(normalized)
 
     if record.get("status") not in {"active", "paused"}:
         raise ValueError(f"Cannot update plan for non-active task: {record.get('status')}")
@@ -2054,7 +2024,7 @@ def workspace_task_update_plan(
     record["plan"] = [str(item) for item in plan]
     record["updated_at"] = _now_iso()
 
-    _write_task_record(record)
+    _write_task(normalized, record)
     _audit("task_plan_updated", task_id=normalized, plan=record["plan"])
     return _task_result(record)
 
@@ -2078,10 +2048,7 @@ def workspace_task_finish(
 ) -> TaskStatusResult:
     """Finish, pause, or cancel a task record."""
     normalized = _normalize_task_id(task_id)
-    record = _read_task_record(normalized)
-
-    if record is None:
-        raise FileNotFoundError(f"Task not found: {normalized}")
+    record = _read_task(normalized)
 
     now = _now_iso()
     record["status"] = status
@@ -2090,7 +2057,7 @@ def workspace_task_finish(
     record["summary"] = summary
     record["next_steps"] = [str(item) for item in next_steps]
 
-    _write_task_record(record)
+    _write_task(normalized, record)
     _audit("task_finished", task_id=normalized, status=status, summary=summary)
     return _task_result(record)
 
@@ -2111,7 +2078,7 @@ def workspace_list_tasks(
 
     entries: list[TaskListEntry] = []
 
-    for task_path in sorted(TASK_DIR.glob("*.json"), reverse=True):
+    for task_path in _list_task_paths():
         try:
             record = json.loads(task_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
