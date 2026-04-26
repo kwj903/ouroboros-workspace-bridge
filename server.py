@@ -4,11 +4,8 @@ import contextlib
 import fnmatch
 import hmac
 import json
-import shutil
 import subprocess
 import tempfile
-import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import parse_qs
@@ -156,6 +153,12 @@ from terminal_bridge.tasks import (
     _read_task,
     _task_path,
     _write_task,
+)
+from terminal_bridge.trash import (
+    _list_trash_entries,
+    _move_to_trash,
+    _prepare_trash_restore,
+    _restore_trash_payload,
 )
 
 transport_security = TransportSecuritySettings(
@@ -1128,32 +1131,14 @@ def workspace_soft_delete(
 
         _ensure_runtime_dirs()
 
-        trash_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-        rel = _relative(target)
-        trash_target = TRASH_DIR / trash_id / rel
-        trash_target.parent.mkdir(parents=True, exist_ok=True)
+        result = _move_to_trash(target, op_id)
 
-        shutil.move(str(target), str(trash_target))
-
-        manifest = {
-            "trash_id": trash_id,
-            "original_path": rel,
-            "trash_path": str(trash_target),
-            "created_at": _now_iso(),
-            "operation_id": op_id,
-        }
-
-        manifest_path = TRASH_DIR / trash_id / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        result = DeleteResult(
-            original_path=rel,
-            trash_id=trash_id,
-            trash_path=str(trash_target),
+        _audit(
+            "soft_delete",
             operation_id=op_id,
+            original_path=result.original_path,
+            trash_id=result.trash_id,
         )
-
-        _audit("soft_delete", operation_id=op_id, original_path=rel, trash_id=trash_id)
         _complete_operation(op_id, result)
 
         return result
@@ -1176,41 +1161,16 @@ def workspace_restore_deleted(
     overwrite: Annotated[bool, Field(description="Whether to overwrite if the original path exists.")] = False,
 ) -> RestoreResult:
     """Restore a soft-deleted file or directory from MCP trash."""
-    manifest_path = TRASH_DIR / trash_id / "manifest.json"
+    original, trash_path, backup_id, overwrote_original = _prepare_trash_restore(trash_id, overwrite)
 
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"Trash manifest not found: {trash_id}")
-
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    original = _resolve_workspace_path(manifest["original_path"])
-    trash_path = Path(manifest["trash_path"])
-
-    if not trash_path.exists():
-        raise FileNotFoundError(f"Trash payload not found: {trash_id}")
-
-    if original.exists() and not overwrite:
-        raise FileExistsError(f"Original path already exists: {_relative(original)}")
-
-    if original.exists() and overwrite:
-        backup_id = _backup_file(original)
-        if original.is_dir():
-            shutil.rmtree(original)
-        else:
-            original.unlink()
+    if overwrote_original:
         _audit("restore_overwrite_backup", path=_relative(original), backup_id=backup_id)
 
-    original.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(trash_path), str(original))
+    result = _restore_trash_payload(trash_id, original, trash_path)
 
-    sha = _sha256_file(original) if original.is_file() else None
+    _audit("restore_deleted", restored_path=result.restored_path, trash_id=trash_id)
 
-    _audit("restore_deleted", restored_path=_relative(original), trash_id=trash_id)
-
-    return RestoreResult(
-        restored_path=_relative(original),
-        trash_id=trash_id,
-        sha256=sha,
-    )
+    return result
 
 
 @mcp.tool(
@@ -1409,29 +1369,7 @@ def workspace_list_trash(
     """List recent soft-deleted files and directories in MCP trash."""
     _ensure_runtime_dirs()
 
-    entries: list[TrashEntry] = []
-
-    for manifest_path in sorted(TRASH_DIR.glob("*/manifest.json"), reverse=True):
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-
-        trash_path = Path(str(manifest.get("trash_path", "")))
-
-        entries.append(
-            TrashEntry(
-                trash_id=str(manifest.get("trash_id", manifest_path.parent.name)),
-                original_path=str(manifest.get("original_path", "")),
-                trash_path=str(trash_path),
-                created_at=manifest.get("created_at") if isinstance(manifest.get("created_at"), str) else None,
-                exists=trash_path.exists(),
-            )
-        )
-
-        if len(entries) >= limit:
-            break
-
+    entries = _list_trash_entries(limit)
     return TrashListResult(entries=entries, count=len(entries))
 
 
