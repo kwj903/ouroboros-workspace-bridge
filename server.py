@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
-import hashlib
 import hmac
 import json
 import os
@@ -104,6 +103,7 @@ from terminal_bridge.payloads import (
     _text_payload_manifest_path,
     _validate_text_payload_ref,
 )
+from terminal_bridge.storage import _now_iso, _read_json, _sha256_bytes, _write_json
 
 transport_security = TransportSecuritySettings(
     enable_dns_rebinding_protection=True,
@@ -137,10 +137,6 @@ mcp = FastMCP(
     port=MCP_PORT,
     transport_security=transport_security,
 )
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _ensure_runtime_dirs() -> None:
@@ -193,18 +189,6 @@ def _normalize_operation_id(operation_id: str | None) -> str:
         raise ValueError("operation_id can only contain letters, numbers, '-' and '_'.")
 
     return normalized
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _write_json(path: Path, data: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
 
 
 def _operation_path(operation_id: str) -> Path:
@@ -618,10 +602,6 @@ def _relative(path: Path) -> str:
     if path == WORKSPACE_ROOT:
         return "."
     return str(path.relative_to(WORKSPACE_ROOT))
-
-
-def _sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _sha256_file(path: Path) -> str:

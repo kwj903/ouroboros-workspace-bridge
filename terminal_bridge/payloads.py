@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from terminal_bridge.config import (
@@ -13,26 +11,7 @@ from terminal_bridge.config import (
     TEXT_PAYLOAD_MAX_TOTAL_CHARS,
 )
 from terminal_bridge.models import TextPayloadStageResult
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _write_json(path: Path, data: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+from terminal_bridge.storage import _now_iso, _read_json, _sha256_bytes, _write_json
 
 
 def _new_text_payload_id() -> str:
