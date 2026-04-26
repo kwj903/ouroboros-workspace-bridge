@@ -1059,7 +1059,14 @@ def _run_command(cwd: str, command: list[str], timeout_seconds: int = 30) -> Com
     return result
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_info() -> WorkspaceInfo:
     """Return basic information about the configured ~/workspace root and enabled tools."""
     return WorkspaceInfo(
@@ -1104,7 +1111,14 @@ def workspace_info() -> WorkspaceInfo:
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_list(
     path: Annotated[
         str,
@@ -1158,7 +1172,14 @@ def workspace_list(
     return ListResult(path=_relative(target), entries=entries)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_tree(
     path: Annotated[str, Field(description="Relative directory path under ~/workspace.")] = ".",
     max_depth: Annotated[int, Field(ge=1, le=5)] = 2,
@@ -1216,7 +1237,14 @@ def workspace_tree(
     return TreeResult(path=_relative(target), entries=lines, truncated=truncated)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_read_file(
     path: Annotated[str, Field(description="Relative file path under ~/workspace.")],
     offset: Annotated[int, Field(ge=0)] = 0,
@@ -1251,7 +1279,14 @@ def workspace_read_file(
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_create_directory(
     path: Annotated[str, Field(description="Relative directory path under ~/workspace.")],
 ) -> WriteFileResult:
@@ -1270,7 +1305,14 @@ def workspace_create_directory(
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_write_file(
     path: Annotated[str, Field(description="Relative file path under ~/workspace.")],
     content: Annotated[str, Field(description="UTF-8 text content to write.")],
@@ -1345,7 +1387,14 @@ def workspace_write_file(
         raise
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_append_file(
     path: Annotated[str, Field(description="Relative file path under ~/workspace.")],
     content: Annotated[str, Field(description="UTF-8 text content to append.")],
@@ -1390,7 +1439,14 @@ def workspace_append_file(
     return result
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_replace_text(
     path: Annotated[str, Field(description="Relative UTF-8 file path under ~/workspace.")],
     old_text: Annotated[str, Field(description="Exact text to find.")],
@@ -1482,7 +1538,14 @@ def workspace_replace_text(
         raise
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_soft_delete(
     path: Annotated[str, Field(description="Relative file or directory path under ~/workspace.")],
     operation_id: Annotated[str | None, Field(description="Optional idempotency key for retry-safe trash moves.")] = None,
@@ -1547,7 +1610,14 @@ def workspace_soft_delete(
         raise
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_restore_deleted(
     trash_id: Annotated[str, Field(description="trash_id returned from workspace_soft_delete.")],
     overwrite: Annotated[bool, Field(description="Whether to overwrite if the original path exists.")] = False,
@@ -1590,7 +1660,14 @@ def workspace_restore_deleted(
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_read_audit_log(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum audit entries to return.")] = 50,
     event: Annotated[str | None, Field(description="Optional event name filter.")] = None,
@@ -1628,7 +1705,14 @@ def workspace_read_audit_log(
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_get_operation(
     operation_id: Annotated[str, Field(description="Operation id returned by write/delete/replace tools.")],
 ) -> OperationStatusResult:
@@ -1652,7 +1736,14 @@ def workspace_get_operation(
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_list_operations(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum operations to return.")] = 50,
 ) -> OperationListResult:
@@ -1688,7 +1779,14 @@ def workspace_list_operations(
     return OperationListResult(entries=entries, count=len(entries))
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_list_backups(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum backups to return.")] = 50,
 ) -> BackupListResult:
@@ -1719,7 +1817,14 @@ def workspace_list_backups(
     return BackupListResult(entries=entries, count=len(entries))
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_restore_backup(
     backup_id: Annotated[str, Field(description="backup_id returned by workspace_list_backups or write operations.")],
     overwrite: Annotated[bool, Field(description="Whether to overwrite the current original path.")] = False,
@@ -1784,7 +1889,14 @@ def workspace_restore_backup(
         raise
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_list_trash(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum trash entries to return.")] = 50,
 ) -> TrashListResult:
@@ -1817,7 +1929,14 @@ def workspace_list_trash(
     return TrashListResult(entries=entries, count=len(entries))
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_move_to_trash(
     path: Annotated[str, Field(description="Relative file or directory path under ~/workspace.")],
     operation_id: Annotated[str | None, Field(description="Optional idempotency key for retry-safe trash moves.")] = None,
@@ -1826,7 +1945,14 @@ def workspace_move_to_trash(
     return workspace_soft_delete(path=path, operation_id=operation_id)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_find_files(
     path: Annotated[str, Field(description="Relative directory path under ~/workspace.")] = ".",
     pattern: Annotated[str, Field(description="fnmatch pattern such as '*.py' or '*server*'.")] = "*",
@@ -1886,7 +2012,14 @@ def workspace_find_files(
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_search_text(
     query: Annotated[str, Field(description="Plain text query to search for. Regex is not used.")],
     path: Annotated[str, Field(description="Relative directory path under ~/workspace.")] = ".",
@@ -1971,7 +2104,14 @@ def workspace_search_text(
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_read_many_files(
     paths: Annotated[list[str], Field(description="Relative file paths under ~/workspace.")],
     limit_per_file: Annotated[int, Field(ge=1, le=20_000, description="Maximum characters per file.")] = 8_000,
@@ -2036,7 +2176,14 @@ def workspace_read_many_files(
     return ReadManyFilesResult(entries=entries, count=len(entries), truncated=truncated)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_project_snapshot(
     path: Annotated[str, Field(description="Relative project directory under ~/workspace.")] = ".",
     max_depth: Annotated[int, Field(ge=1, le=5, description="Tree depth.")] = 2,
@@ -2091,7 +2238,14 @@ def workspace_project_snapshot(
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_task_start(
     title: Annotated[str, Field(min_length=1, max_length=120, description="Short task title.")],
     goal: Annotated[str, Field(min_length=1, max_length=2_000, description="Task goal or user request summary.")],
@@ -2126,7 +2280,14 @@ def workspace_task_start(
     return _task_result(record)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_task_status(
     task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
 ) -> TaskStatusResult:
@@ -2140,7 +2301,14 @@ def workspace_task_status(
     return _task_result(record)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_task_log_step(
     task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
     message: Annotated[str, Field(min_length=1, max_length=2_000, description="Step message to append.")],
@@ -2178,7 +2346,14 @@ def workspace_task_log_step(
     return _task_result(record)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_task_update_plan(
     task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
     plan: Annotated[list[str], Field(description="Replacement ordered plan steps.")],
@@ -2201,7 +2376,14 @@ def workspace_task_update_plan(
     return _task_result(record)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_task_finish(
     task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
     status: Annotated[
@@ -2230,7 +2412,14 @@ def workspace_task_finish(
     return _task_result(record)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_list_tasks(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum tasks to return.")] = 50,
 ) -> TaskListResult:
@@ -2263,7 +2452,14 @@ def workspace_list_tasks(
     return TaskListResult(entries=entries, count=len(entries))
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_preview_patch(
     patch: Annotated[str, Field(description="Unified diff patch text to validate with git apply --check.")],
     cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")] = ".",
@@ -2302,7 +2498,14 @@ def workspace_preview_patch(
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_apply_patch(
     patch: Annotated[str, Field(description="Unified diff patch text to apply with git apply.")],
     cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")] = ".",
@@ -2416,7 +2619,14 @@ def workspace_apply_patch(
         raise
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_git_status(
     cwd: Annotated[
         str,
@@ -2427,7 +2637,14 @@ def workspace_git_status(
     return _run_command(cwd=cwd, command=["git", "status", "--short", "--branch"], timeout_seconds=15)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_git_diff(
     cwd: Annotated[
         str,
@@ -2438,7 +2655,14 @@ def workspace_git_diff(
     return _run_command(cwd=cwd, command=["git", "diff", "--no-ext-diff"], timeout_seconds=15)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_run_profile(
     profile: Annotated[
         Literal[
@@ -2479,7 +2703,14 @@ def workspace_run_profile(
     return _run_command(cwd=cwd, command=command, timeout_seconds=timeout_seconds)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_git_add(
     cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")],
     paths: Annotated[list[str], Field(description="Relative paths to stage. Use ['.'] to stage all allowed files.")],
@@ -2516,7 +2747,14 @@ def workspace_git_add(
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_git_commit(
     cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Commit message.")],
