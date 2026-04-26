@@ -56,7 +56,21 @@ my-terminal-tool/
 │   ├── run_ngrok.sh
 │   ├── run_server.sh
 │   └── smoke_check.py
+├── terminal_bridge/
+│   ├── __init__.py
+│   ├── bundle_serialization.py
+│   ├── bundles.py
+│   ├── commands.py
+│   ├── config.py
+│   ├── models.py
+│   ├── operations.py
+│   ├── patches.py
+│   ├── payloads.py
+│   ├── safety.py
+│   ├── storage.py
+│   └── tasks.py
 ├── tests/
+│   ├── test_refactored_helpers.py
 │   └── test_safety.py
 ├── main.py
 ├── pyproject.toml
@@ -65,7 +79,25 @@ my-terminal-tool/
 └── uv.lock
 ```
 
-핵심 파일은 `server.py`입니다. 로컬 승인 UI와 bundle 실행기는 `scripts/` 아래에 있습니다.
+`server.py`는 FastMCP entrypoint와 MCP tool registration layer 역할을 담당합니다. 실제 helper 로직은 `terminal_bridge/` 패키지로 분리되어 있습니다.
+
+`terminal_bridge/` 모듈 역할은 다음과 같습니다.
+
+```text
+config.py                런타임 경로, 제한값, 차단 이름, MCP 환경 설정
+models.py                Pydantic response/input 모델
+storage.py               JSON, timestamp, sha256 같은 작은 공통 helper
+safety.py                workspace path/name safety helper
+payloads.py              text payload ref 저장/검증/직렬화 helper
+bundles.py               command bundle 저장, 조회, 상태 이동 helper
+bundle_serialization.py  command/action bundle serialization helper
+commands.py              argv 검증, command risk classification helper
+patches.py               patch 경로 파싱과 git apply helper
+tasks.py                 task/session record helper
+operations.py            operation record helper
+```
+
+로컬 승인 UI와 bundle 실행기는 `scripts/` 아래에 있습니다.
 
 ## 요구 사항
 
@@ -523,10 +555,12 @@ pending bundle이 생성되기 전에 앱 UI가 멈췄다면 로컬 승인 UI에
 ```bash
 uv run python -m py_compile \
   server.py \
+  terminal_bridge/*.py \
   scripts/command_bundle_runner.py \
   scripts/command_bundle_review_server.py \
   scripts/command_bundle_watcher.py \
-  scripts/smoke_check.py
+  scripts/smoke_check.py \
+  tests/*.py
 ```
 
 유닛 테스트:
@@ -592,10 +626,12 @@ Document workspace terminal bridge
 ```bash
 uv run python -m py_compile \
   server.py \
+  terminal_bridge/*.py \
   scripts/command_bundle_runner.py \
   scripts/command_bundle_review_server.py \
   scripts/command_bundle_watcher.py \
-  scripts/smoke_check.py
+  scripts/smoke_check.py \
+  tests/*.py
 uv run python -m unittest discover -s tests
 uv run python scripts/smoke_check.py
 git diff --check
