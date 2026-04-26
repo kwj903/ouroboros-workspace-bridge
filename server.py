@@ -1214,10 +1214,6 @@ def _run_workspace_exec(
 
         _audit(
             "workspace_exec",
-            "workspace_stage_command_bundle",
-            "workspace_command_bundle_status",
-            "workspace_list_command_bundles",
-            "workspace_cancel_command_bundle",
             operation_id=op_id,
             cwd=result.cwd,
             command=safe_argv,
