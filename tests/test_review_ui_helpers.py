@@ -401,9 +401,15 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("scripts/dev_session.sh start", html)
         self.assertIn("scripts/dev_session.sh status", html)
         self.assertIn("scripts/dev_session.sh restart [mcp|ngrok]", html)
+        self.assertIn('/servers/processes/start/mcp', html)
+        self.assertIn('/servers/processes/stop/mcp', html)
         self.assertIn('/servers/processes/restart/mcp', html)
+        self.assertIn('/servers/processes/start/ngrok', html)
+        self.assertIn('/servers/processes/stop/ngrok', html)
         self.assertIn('/servers/processes/restart/ngrok', html)
         self.assertNotIn('/servers/processes/restart/review', html)
+        self.assertNotIn('/servers/processes/start/review', html)
+        self.assertNotIn('/servers/processes/stop/review', html)
         self.assertIn("scripts/dev_session.sh logs [review|mcp|ngrok]", html)
         self.assertIn("scripts/dev_session.sh stop", html)
         self.assertIn(str(root / "processes"), html)
@@ -413,16 +419,17 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn(">review.pid</code>", html)
         self.assertIn(f'title="{root / "processes" / "review.log"}"', html)
 
-    def test_processes_tab_renders_restart_success_notice(self) -> None:
+    def test_processes_tab_renders_action_success_notice(self) -> None:
         root = Path(self.tmp.name) / "runtime"
         review.RUNTIME_ROOT = root
-        notice = review.supervisor_restart_notice_html("mcp", "ok")
+        notice = review.supervisor_action_notice_html("start", "mcp", "ok")
         html = review.server_tab_content_html("processes", review.server_state(), action_notice_html=notice)
 
-        self.assertIn("Restart completed", html)
+        self.assertIn("Start completed", html)
         self.assertIn("mcp", html)
-        self.assertEqual(review.supervisor_restart_notice_html("review", "ok"), "")
-        self.assertEqual(review.supervisor_restart_notice_html("mcp", "failed"), "")
+        self.assertEqual(review.supervisor_action_notice_html("start", "review", "ok"), "")
+        self.assertEqual(review.supervisor_action_notice_html("start", "mcp", "failed"), "")
+        self.assertEqual(review.supervisor_action_notice_html("delete", "mcp", "ok"), "")
 
     def test_environment_tab_omits_token_and_renders_long_label(self) -> None:
         original_token = os.environ.get("MCP_ACCESS_TOKEN")
