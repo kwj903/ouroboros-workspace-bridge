@@ -318,7 +318,7 @@ ChatGPT가 생성한 코드 수정은 가능하면 `workspace_stage_patch_bundle
 로컬 승인 UI:
 
 ```text
-http://127.0.0.1:8790/bundles
+http://127.0.0.1:8790/pending
 ```
 
 관련 스크립트:
@@ -330,6 +330,15 @@ uv run python scripts/command_bundle_runner.py list
 uv run python scripts/command_bundle_runner.py preview <bundle_id>
 uv run python scripts/command_bundle_runner.py apply <bundle_id>
 ```
+
+권장 방식은 review server와 watcher를 함께 실행한 뒤 `/pending` 탭을 한 번 열어두는 것입니다.
+`/pending`은 long polling으로 새 pending bundle이 생길 때만 갱신되며, 새 bundle마다 브라우저 탭을 계속 만들지 않습니다.
+전체 이력은 `http://127.0.0.1:8790/bundles`에서 확인합니다.
+
+watcher 기본값은 시작 시 `/pending` 대시보드를 한 번 여는 `dashboard_once` 모드입니다.
+기존처럼 새 bundle마다 상세 탭을 열고 싶으면 `BUNDLE_WATCH_OPEN_MODE=bundle`을 설정합니다.
+브라우저를 전혀 열지 않으려면 `BUNDLE_WATCH_OPEN_MODE=none`을 설정합니다.
+macOS 알림을 끄려면 `BUNDLE_WATCH_NOTIFY=0`을 설정합니다.
 
 ### 삭제/복구
 

@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,6 +25,9 @@ FAILED_DIR = COMMAND_BUNDLES_DIR / "failed"
 
 HOST = os.environ.get("BUNDLE_REVIEW_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BUNDLE_REVIEW_PORT", "8790"))
+EVENT_POLL_SECONDS = 0.5
+EVENT_TIMEOUT_SECONDS = 25.0
+VALID_STATUS_FILTERS = {"all", "pending", "applied", "failed", "rejected"}
 
 
 def now_iso() -> str:
@@ -45,10 +50,22 @@ def find_bundle(bundle_id: str) -> tuple[Path, dict[str, object]]:
     raise FileNotFoundError(f"Bundle not found: {bundle_id}")
 
 
-def list_bundles() -> list[dict[str, object]]:
+def normalize_status_filter(value: str | None) -> str:
+    status = (value or "all").strip().lower()
+    if status not in VALID_STATUS_FILTERS:
+        return "all"
+    return status
+
+
+def list_bundles(status_filter: str = "all") -> list[dict[str, object]]:
+    status_filter = normalize_status_filter(status_filter)
     rows: list[dict[str, object]] = []
 
     for directory in bundle_dirs():
+        directory_status = directory.name
+        if status_filter != "all" and directory_status != status_filter:
+            continue
+
         if not directory.exists():
             continue
 
@@ -58,10 +75,61 @@ def list_bundles() -> list[dict[str, object]]:
             except Exception:
                 continue
             record["_file"] = str(path)
+            record["_directory_status"] = directory_status
             rows.append(record)
 
     rows.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
     return rows
+
+
+def pending_bundles() -> list[dict[str, object]]:
+    return list_bundles("pending")
+
+
+def latest_pending_bundle_id() -> str | None:
+    rows = pending_bundles()
+    if not rows:
+        return None
+    bundle_id = rows[0].get("bundle_id")
+    return str(bundle_id) if bundle_id else None
+
+
+def command_bundle_revision() -> str:
+    parts: list[str] = []
+
+    for directory in bundle_dirs():
+        if not directory.exists():
+            continue
+
+        for path in sorted(directory.glob("cmd-*.json")):
+            status = directory.name
+            bundle_id = path.stem
+            updated_at = ""
+            try:
+                record = read_json(path)
+                status = str(record.get("status", status))
+                bundle_id = str(record.get("bundle_id", bundle_id))
+                updated_at = str(record.get("updated_at", ""))
+            except Exception:
+                updated_at = ""
+
+            try:
+                mtime_ns = path.stat().st_mtime_ns
+            except OSError:
+                mtime_ns = 0
+
+            parts.append(f"{status}\t{path.name}\t{bundle_id}\t{updated_at}\t{mtime_ns}")
+
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def command_bundle_state() -> dict[str, object]:
+    pending = pending_bundles()
+    return {
+        "revision": command_bundle_revision(),
+        "pending_count": len(pending),
+        "latest_pending_bundle_id": str(pending[0].get("bundle_id", "")) if pending else None,
+    }
 
 
 def escape(value: object) -> str:
@@ -92,6 +160,25 @@ def risk_label(value: object) -> str:
 
 def bool_label(value: object) -> str:
     return "예" if bool(value) else "아니오"
+
+
+def status_filter_links_html(current: str) -> str:
+    current = normalize_status_filter(current)
+    labels = {
+        "all": "전체",
+        "pending": "승인 대기",
+        "applied": "적용 완료",
+        "failed": "실패",
+        "rejected": "거절됨",
+    }
+    links: list[str] = []
+    for status in ("all", "pending", "applied", "failed", "rejected"):
+        label = labels[status]
+        if status == current:
+            links.append(f"<strong>{escape(label)}</strong>")
+        else:
+            links.append(f'<a href="/bundles?status={escape(status)}">{escape(label)}</a>')
+    return '<p class="meta">필터: ' + " · ".join(links) + "</p>"
 
 
 def page(title: str, body: str) -> bytes:
@@ -231,6 +318,67 @@ def step_summary_html(step: dict[str, object], idx: int) -> str:
     """
 
 
+def result_step_html(step: dict[str, object], idx: int) -> str:
+    stdout = str(step.get("stdout", ""))
+    stderr = str(step.get("stderr", ""))
+    exit_code = step.get("exit_code")
+    exit_value = "" if exit_code is None else str(exit_code)
+
+    stdout_block = ""
+    if stdout:
+        stdout_block = f"""
+        <details>
+          <summary>stdout</summary>
+          <pre>{escape(stdout)}</pre>
+        </details>
+        """
+
+    stderr_block = ""
+    if stderr:
+        stderr_block = f"""
+        <details>
+          <summary>stderr</summary>
+          <pre>{escape(stderr)}</pre>
+        </details>
+        """
+
+    return f"""
+    <div class="card">
+      <h3>{idx}. {escape(step.get("name", ""))}</h3>
+      <p class="meta">
+        작업 종류: <code>{escape(step.get("type", ""))}</code><br>
+        exit_code: <code>{escape(exit_value)}</code>
+      </p>
+      {stdout_block}
+      {stderr_block}
+    </div>
+    """
+
+
+def result_html(result: object) -> str:
+    raw = json.dumps(result, ensure_ascii=False, indent=2)
+    step_cards = ""
+
+    if isinstance(result, dict):
+        steps = result.get("steps")
+        if isinstance(steps, list):
+            cards: list[str] = []
+            for idx, step in enumerate(steps, 1):
+                if isinstance(step, dict):
+                    cards.append(result_step_html(step, idx))
+            if cards:
+                step_cards = "<h3>Step 결과</h3>" + "\n".join(cards)
+
+    return f"""
+    <h2>실행 결과</h2>
+    {step_cards}
+    <details>
+      <summary>Raw result</summary>
+      <pre>{escape(raw)}</pre>
+    </details>
+    """
+
+
 def bundle_summary_html(record: dict[str, object]) -> str:
     steps = record.get("steps")
     if not isinstance(steps, list):
@@ -259,6 +407,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def send_json(self, data: dict[str, object], status: int = 200) -> None:
+        payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     def redirect(self, location: str) -> None:
         self.send_response(303)
         self.send_header("Location", location)
@@ -268,8 +425,100 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         parts = [part for part in parsed.path.split("/") if part]
 
+        if parsed.path == "/api/state":
+            self.send_json(command_bundle_state())
+            return
+
+        if parsed.path == "/api/events":
+            params = parse_qs(parsed.query)
+            since = params.get("since", [""])[0]
+            deadline = time.monotonic() + EVENT_TIMEOUT_SECONDS
+            state = command_bundle_state()
+
+            while state["revision"] == since and time.monotonic() < deadline:
+                time.sleep(EVENT_POLL_SECONDS)
+                state = command_bundle_state()
+
+            self.send_json(
+                {
+                    "changed": state["revision"] != since,
+                    **state,
+                }
+            )
+            return
+
+        if parsed.path == "/pending":
+            rows = pending_bundles()
+            cards = []
+            for record in rows:
+                bundle_id = str(record.get("bundle_id", ""))
+                cards.append(
+                    f"""
+                    <div class="card">
+                      <h2><a href="/bundles/{escape(bundle_id)}">{escape(record.get("title", ""))}</a></h2>
+                      <p class="meta">
+                        ID: <code>{escape(bundle_id)}</code><br>
+                        작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
+                        위험도: <code>{escape(risk_label(record.get("risk", "")))}</code><br>
+                        수정: {escape(record.get("updated_at", ""))}
+                      </p>
+                      <form method="post" action="/bundles/{escape(bundle_id)}/approve" style="display:inline">
+                        <button class="approve" type="submit">승인하고 실행</button>
+                      </form>
+                      <form method="post" action="/bundles/{escape(bundle_id)}/reject" style="display:inline">
+                        <button class="reject" type="submit">거절</button>
+                      </form>
+                    </div>
+                    """
+                )
+
+            pending_script = """
+            <script>
+            (function () {
+              let revision = "";
+
+              async function loadState() {
+                const response = await fetch("/api/state", { cache: "no-store" });
+                const state = await response.json();
+                revision = state.revision || "";
+              }
+
+              async function poll() {
+                try {
+                  const response = await fetch("/api/events?since=" + encodeURIComponent(revision), { cache: "no-store" });
+                  const event = await response.json();
+                  if (event.revision) {
+                    revision = event.revision;
+                  }
+                  if (event.changed) {
+                    location.reload();
+                    return;
+                  }
+                  poll();
+                } catch (error) {
+                  setTimeout(poll, 2500);
+                }
+              }
+
+              loadState().then(poll).catch(function () {
+                setTimeout(poll, 2500);
+              });
+            }());
+            </script>
+            """
+
+            body = (
+                "<p><a href='/bundles?status=all'>전체 이력 보기</a></p>"
+                + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
+                + pending_script
+            )
+            self.send_html("승인 대기 번들", body)
+            return
+
         if parsed.path in {"/", "/bundles"}:
-            rows = list_bundles()
+            params = parse_qs(parsed.query)
+            status_filter = normalize_status_filter(params.get("status", ["all"])[0])
+            rows = list_bundles(status_filter)
             cards = []
             for record in rows:
                 bundle_id = str(record.get("bundle_id", ""))
@@ -291,7 +540,12 @@ class Handler(BaseHTTPRequestHandler):
 
             self.send_html(
                 "명령 번들 목록",
-                "<p><a href='/bundles'>새로고침</a></p>" + "\n".join(cards) if cards else "<p>번들이 없습니다.</p>",
+                (
+                    "<p><a href='/pending'>승인 대기 대시보드</a> · "
+                    "<a href='/bundles?status=all'>새로고침</a></p>"
+                    + status_filter_links_html(status_filter)
+                    + ("\n".join(cards) if cards else "<p>번들이 없습니다.</p>")
+                ),
             )
             return
 
@@ -320,12 +574,12 @@ class Handler(BaseHTTPRequestHandler):
 
             result_block = ""
             if result is not None:
-                result_block = f"<h2>실행 결과</h2><pre>{escape(json.dumps(result, ensure_ascii=False, indent=2))}</pre>"
+                result_block = result_html(result)
             if error:
                 result_block += f"<h2>오류</h2><pre>{escape(error)}</pre>"
 
             body = f"""
-            <p><a href="/bundles">← 목록으로 돌아가기</a></p>
+            <p><a href="/pending">← 승인 대기로 돌아가기</a> · <a href="/bundles?status=all">전체 목록</a></p>
             <div class="card">
               <p class="meta">
                 ID: <code>{escape(bundle_id)}</code><br>
@@ -347,10 +601,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/health":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"ok": True, "ts": now_iso()}).encode("utf-8"))
+            self.send_json({"ok": True, "ts": now_iso()})
             return
 
         self.send_html("찾을 수 없음", "<p>찾을 수 없습니다.</p>", status=404)
@@ -376,14 +627,51 @@ class Handler(BaseHTTPRequestHandler):
 
             if completed.returncode != 0:
                 body = f"""
-                <p><a href="/bundles/{escape(bundle_id)}">← Back</a></p>
+                <p><a href="/bundles/{escape(bundle_id)}">← 번들로 돌아가기</a> · <a href="/pending">승인 대기</a></p>
                 <h2>실행기 오류</h2>
-                <pre>{escape(json.dumps(output, ensure_ascii=False, indent=2))}</pre>
+                <details open>
+                  <summary>stdout</summary>
+                  <pre>{escape(completed.stdout)}</pre>
+                </details>
+                <details open>
+                  <summary>stderr</summary>
+                  <pre>{escape(completed.stderr)}</pre>
+                </details>
+                <details>
+                  <summary>Raw result</summary>
+                  <pre>{escape(json.dumps(output, ensure_ascii=False, indent=2))}</pre>
+                </details>
                 """
                 self.send_html("실행기 오류", body, status=500)
                 return
 
-            self.redirect(f"/bundles/{bundle_id}")
+            if action == "approve":
+                try:
+                    _, updated_record = find_bundle(bundle_id)
+                except FileNotFoundError:
+                    updated_record = {}
+
+                if updated_record.get("status") == "failed":
+                    body = f"""
+                    <p><a href="/bundles/{escape(bundle_id)}">← 실패한 번들 보기</a> · <a href="/pending">승인 대기</a></p>
+                    <h2>번들 실행 실패</h2>
+                    <details open>
+                      <summary>stdout</summary>
+                      <pre>{escape(completed.stdout)}</pre>
+                    </details>
+                    <details open>
+                      <summary>stderr</summary>
+                      <pre>{escape(completed.stderr)}</pre>
+                    </details>
+                    <h3>기록된 결과</h3>
+                    {result_html(updated_record.get("result")) if updated_record.get("result") is not None else ""}
+                    <h3>오류</h3>
+                    <pre>{escape(updated_record.get("error", ""))}</pre>
+                    """
+                    self.send_html("번들 실행 실패", body, status=500)
+                    return
+
+            self.redirect("/pending")
             return
 
         self.send_html("찾을 수 없음", "<p>찾을 수 없습니다.</p>", status=404)
@@ -394,7 +682,7 @@ def main() -> None:
         directory.mkdir(parents=True, exist_ok=True)
 
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    url = f"http://{HOST}:{PORT}/bundles"
+    url = f"http://{HOST}:{PORT}/pending"
     print(f"명령 번들 승인 UI 실행 중: {url}")
     print("종료하려면 Ctrl-C를 누르세요.")
 
