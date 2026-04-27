@@ -273,7 +273,7 @@ uv run python scripts/command_bundle_watcher.py
 review UI, watcher, README만 변경한 경우에는 보통 `scripts/dev_session.sh review` 세션만 재시작하면 되고 MCP server 재시작이나 ChatGPT 앱 Refresh는 필요하지 않습니다.
 
 현재 `/servers` 관리 페이지의 프로세스 탭은 `scripts/dev_session.sh start`가 만든 pid/log 파일을 읽어 상태를 표시합니다.
-프로세스 탭은 제한적으로 MCP/ngrok start/stop/restart 버튼을 제공하지만, 전체 session start/stop과 review 제어는 터미널에서 수행합니다. MCP/ngrok 개별 제어는 UI 버튼 또는 `scripts/dev_session.sh start-service`, `stop-service`, `restart`로 수행할 수 있습니다.
+프로세스 탭은 제한적으로 MCP/ngrok start/stop/restart 버튼을 제공합니다. 전체 session stop은 별도 확인 페이지를 거쳐 UI에서도 요청할 수 있지만, 다시 시작하려면 터미널에서 `scripts/dev_session.sh start`를 실행해야 합니다. MCP/ngrok 개별 제어는 UI 버튼 또는 `scripts/dev_session.sh start-service`, `stop-service`, `restart`로 수행할 수 있습니다.
 
 전체 로컬 세션의 권장 실행 방식은 supervisor helper입니다.
 

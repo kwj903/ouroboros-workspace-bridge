@@ -1464,6 +1464,68 @@ def is_local_client_address(value: str) -> bool:
     return value == "::1" or value == "::ffff:127.0.0.1" or value.startswith("127.")
 
 
+def schedule_full_session_stop(delay_seconds: float = 0.6) -> None:
+    def run_stop() -> None:
+        time.sleep(delay_seconds)
+        subprocess.run(
+            ["scripts/dev_session.sh", "stop"],
+            cwd=str(PROJECT_ROOT),
+            env=os.environ.copy(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=90,
+            shell=False,
+            check=False,
+        )
+
+    threading.Thread(target=run_stop, name="delayed-session-stop", daemon=True).start()
+
+
+def full_session_stop_confirm_html() -> str:
+    return """
+    <div class="stack">
+      <div class="notice">
+        <strong>전체 세션 종료 확인</strong><br>
+        이 작업은 review UI, MCP server, ngrok을 모두 종료합니다. 브라우저의 현재 review UI 연결도 곧 끊깁니다.
+      </div>
+      <section class="card">
+        <h2>Stop full local session?</h2>
+        <p class="meta">
+          실행 명령: <code>scripts/dev_session.sh stop</code><br>
+          다시 시작하려면 터미널에서 <code>scripts/dev_session.sh start</code>를 실행하세요.
+        </p>
+        <div class="button-row">
+          <form class="inline" method="post" action="/servers/session/stop">
+            <button class="reject" type="submit">Stop full session</button>
+          </form>
+          <a class="subnav-link" href="/servers?tab=processes">취소</a>
+        </div>
+      </section>
+    </div>
+    """
+
+
+def full_session_stopping_html() -> str:
+    return """
+    <div class="stack">
+      <div class="notice">
+        <strong>Full session stop requested</strong><br>
+        review UI, MCP server, ngrok이 곧 종료됩니다.
+      </div>
+      <section class="card">
+        <h2>세션 종료 중</h2>
+        <p class="meta">
+          이 페이지가 열린 뒤 잠시 후 review UI 연결이 끊기는 것이 정상입니다.<br>
+          다시 시작하려면 터미널에서 다음 명령을 실행하세요.
+        </p>
+        <pre>scripts/dev_session.sh start</pre>
+      </section>
+    </div>
+    """
+
+
 def step_text_meta_html(step: dict[str, object], key: str, label: str) -> str:
     ref_value = step.get(f"{key}_ref")
     chars_value = step.get(f"{key}_chars")
@@ -1831,6 +1893,13 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
           <section class="card">
             {supervisor_processes_html(supervisor)}
           </section>
+          <section class="card">
+            <h3>Full session</h3>
+            <p class="meta">
+              전체 session start/stop은 review server 자기 자신을 포함하므로 별도 확인 페이지를 거칩니다.
+            </p>
+            <p><a class="subnav-link" href="/servers/session/stop/confirm">Stop full session...</a></p>
+          </section>
           <p><a href="/api/supervisor-state"><code>/api/supervisor-state</code></a> 에서 같은 상태를 JSON으로 확인합니다.</p>
         </div>
         """
@@ -2107,6 +2176,16 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/servers/session/stop/confirm":
+            self.send_html(
+                "전체 세션 종료 확인",
+                full_session_stop_confirm_html(),
+                active_nav="servers",
+                subtitle="review UI, MCP server, ngrok을 모두 종료하기 전에 확인합니다.",
+                server_tab="processes",
+            )
+            return
+
         if parsed.path == "/servers":
             params = parse_qs(parsed.query)
             current_tab = normalize_server_tab(params.get("tab", ["overview"])[0])
@@ -2224,6 +2303,27 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         parts = [part for part in parsed.path.split("/") if part]
+
+        if parts == ["servers", "session", "stop"]:
+            if not is_local_client_address(str(self.client_address[0])):
+                self.send_html(
+                    "Forbidden",
+                    "<p>Local requests only.</p>",
+                    status=403,
+                    active_nav="servers",
+                    server_tab="processes",
+                )
+                return
+
+            schedule_full_session_stop()
+            self.send_html(
+                "세션 종료 중",
+                full_session_stopping_html(),
+                active_nav="servers",
+                subtitle="전체 로컬 세션 종료를 요청했습니다.",
+                server_tab="processes",
+            )
+            return
 
         if len(parts) == 4 and parts[:2] == ["servers", "processes"] and parts[2] in SUPERVISOR_SERVICE_ACTIONS:
             action = parts[2]

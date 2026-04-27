@@ -414,6 +414,16 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn(">review.log</code>", html)
         self.assertIn(">review.pid</code>", html)
         self.assertIn(f'title="{root / "processes" / "review.log"}"', html)
+        self.assertIn("/servers/session/stop/confirm", html)
+
+    def test_full_session_stop_pages_render(self) -> None:
+        confirm_html = review.full_session_stop_confirm_html()
+        stopping_html = review.full_session_stopping_html()
+
+        self.assertIn("/servers/session/stop", confirm_html)
+        self.assertIn("Stop full session", confirm_html)
+        self.assertIn("scripts/dev_session.sh start", stopping_html)
+        self.assertIn("Full session stop requested", stopping_html)
 
     def test_processes_tab_renders_running_service_controls(self) -> None:
         html = review.supervisor_processes_html(
