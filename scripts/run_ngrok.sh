@@ -3,6 +3,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# shellcheck source=scripts/session_env.sh
+source "$(dirname "$0")/session_env.sh"
+load_session_env
+
 : "${MCP_PORT:=8787}"
 : "${NGROK_HOST:=}"
 : "${NGROK_BASE_URL:=}"

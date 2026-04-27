@@ -140,6 +140,18 @@ cd ~/workspace/Custom-Tools/GPT-Tools/my-terminal-tool
 scripts/dev_session.sh doctor
 ```
 
+`MCP_ACCESS_TOKEN` 또는 `NGROK_HOST`가 현재 shell에 없으면 private runtime env 파일을 만들 수 있습니다.
+이 파일은 프로젝트 밖의 `~/.mcp_terminal_bridge/my-terminal-tool/session.env`에 저장되며 helper script가 자동으로 source합니다.
+프로젝트를 다른 위치에서 작업하더라도 이 runtime env 위치는 동일하게 사용됩니다. 필요하면 `MCP_TERMINAL_BRIDGE_RUNTIME_ROOT`로 runtime 위치를 바꿀 수 있습니다.
+파일 권한은 `600`으로 제한합니다.
+
+```bash
+scripts/dev_session.sh configure
+```
+
+토큰 값은 입력 중 화면에 표시하지 않으며 README, 로그, git tracked 파일에 저장하지 않습니다.
+`NGROK_HOST`는 사람마다 다를 수 있으므로 환경 변수 또는 `session.env`에서 관리합니다.
+
 로컬 승인 UI 시작:
 
 ```bash
@@ -205,6 +217,8 @@ brew install terminal-notifier
 ```bash
 BUNDLE_WATCH_NOTIFICATION_CLICK_ACTION=open scripts/dev_session.sh review
 ```
+
+`scripts/run_server.sh`, `scripts/run_ngrok.sh`, `scripts/dev_session.sh review`는 `session.env`가 있으면 자동으로 불러옵니다. 이미 shell 환경변수로 관리하는 경우에는 현재 shell의 값이 `session.env`보다 우선합니다. `session.env`는 빠진 값을 채우는 fallback으로 사용됩니다.
 
 내장 watcher를 끄고 review server만 실행하려면 다음처럼 시작합니다.
 
