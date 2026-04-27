@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import socket
@@ -431,6 +432,13 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("Restart full session", restart_confirm_html)
         self.assertIn("scripts/dev_session.sh restart-session", restart_confirm_html)
         self.assertIn("Full session restart requested", restarting_html)
+
+    def test_schedule_full_session_restart_uses_detached_popen(self) -> None:
+        source = inspect.getsource(review.schedule_full_session_restart)
+
+        self.assertIn("subprocess.Popen", source)
+        self.assertIn("start_new_session=True", source)
+        self.assertNotIn("subprocess.run", source)
 
     def test_processes_tab_renders_running_service_controls(self) -> None:
         html = review.supervisor_processes_html(

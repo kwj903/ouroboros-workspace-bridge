@@ -1529,7 +1529,7 @@ def full_session_stopping_html() -> str:
 def schedule_full_session_restart(delay_seconds: float = 0.4) -> None:
     def run_restart() -> None:
         time.sleep(delay_seconds)
-        subprocess.run(
+        subprocess.Popen(
             ["scripts/dev_session.sh", "restart-session"],
             cwd=str(PROJECT_ROOT),
             env=os.environ.copy(),
@@ -1537,9 +1537,8 @@ def schedule_full_session_restart(delay_seconds: float = 0.4) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             text=True,
-            timeout=90,
             shell=False,
-            check=False,
+            start_new_session=True,
         )
 
     threading.Thread(target=run_restart, name="delayed-session-restart", daemon=True).start()
