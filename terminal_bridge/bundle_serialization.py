@@ -40,6 +40,139 @@ def _serialize_command_steps(
     return serialized, _combined_bundle_risk(risks), approval_required
 
 
+def _validate_git_commit_message(message: str) -> str:
+    normalized = message.strip()
+
+    if normalized == "":
+        raise ValueError("Commit message cannot be empty.")
+
+    if "\n" in normalized or "\r" in normalized:
+        raise ValueError("Commit message must be a single line.")
+
+    if len(normalized) > 200:
+        raise ValueError("Commit message is too long. Max characters: 200")
+
+    return normalized
+
+
+def _validate_git_commit_paths(cwd_path: Path, paths: list[str]) -> list[str]:
+    if not paths:
+        raise ValueError("paths cannot be empty.")
+
+    safe_paths: list[str] = []
+
+    for path in paths:
+        value = path.strip()
+
+        if value == "":
+            raise ValueError("git commit paths cannot contain empty values.")
+
+        if value == ".":
+            safe_paths.append(".")
+            continue
+
+        if value.startswith("-"):
+            raise ValueError("git commit paths cannot be flags.")
+
+        raw = Path(value)
+        if raw.is_absolute() or value.startswith("~") or ".." in raw.parts:
+            raise ValueError(f"Unsafe git commit path: {value}")
+
+        target = (cwd_path / raw).resolve(strict=False)
+
+        if target != WORKSPACE_ROOT and not target.is_relative_to(WORKSPACE_ROOT):
+            raise ValueError(f"Git commit path escapes workspace: {value}")
+
+        rel_parts = target.relative_to(WORKSPACE_ROOT).parts
+        if any(part in BLOCKED_DIR_NAMES for part in rel_parts):
+            raise PermissionError(f"Git commit path touches blocked directory: {value}")
+
+        if _is_blocked_name(target.name):
+            raise PermissionError(f"Git commit path touches blocked file: {value}")
+
+        safe_paths.append(value)
+
+    return safe_paths
+
+
+def _serialize_commit_command_step(
+    cwd_path: Path,
+    name: str,
+    argv: list[str],
+    timeout_seconds: int,
+    force_approval_reason: str | None = None,
+) -> dict[str, object]:
+    safe_argv = _validate_exec_argv(argv)
+    risk, reason = _classify_exec_command(cwd_path, safe_argv)
+
+    if force_approval_reason is not None and risk != "blocked":
+        risk = "medium"
+        reason = force_approval_reason
+
+    return {
+        "name": name,
+        "argv": safe_argv,
+        "timeout_seconds": timeout_seconds,
+        "risk": risk,
+        "reason": reason,
+    }
+
+
+def _serialize_commit_steps(
+    cwd_path: Path,
+    paths: list[str],
+    message: str,
+    precheck_commands: list[CommandBundleStep] | None = None,
+) -> tuple[list[dict[str, object]], Literal["low", "medium", "high", "blocked"], list[str], str]:
+    safe_paths = _validate_git_commit_paths(cwd_path, paths)
+    commit_message = _validate_git_commit_message(message)
+    prechecks = precheck_commands or [
+        CommandBundleStep(
+            name="Precheck git status",
+            argv=["git", "status", "--short", "--branch"],
+            timeout_seconds=30,
+        ),
+        CommandBundleStep(
+            name="Precheck git diff --check",
+            argv=["git", "diff", "--check"],
+            timeout_seconds=30,
+        ),
+    ]
+
+    if len(prechecks) > 10:
+        raise ValueError("precheck_commands can include at most 10 commands.")
+
+    serialized: list[dict[str, object]] = []
+    risks: list[str] = []
+
+    for precheck in prechecks:
+        step = _serialize_commit_command_step(
+            cwd_path,
+            precheck.name,
+            precheck.argv,
+            precheck.timeout_seconds,
+        )
+        if step["risk"] != "low":
+            raise ValueError(f"Commit precheck must be low risk: {precheck.name}")
+        serialized.append(step)
+        risks.append(str(step["risk"]))
+
+    mutation_reason = "Git index/history mutation requires local approval."
+    commit_steps = [
+        ("Stage requested paths", ["git", "add", "--", *safe_paths], 30, mutation_reason),
+        ("Create commit", ["git", "commit", "-m", commit_message], 30, mutation_reason),
+        ("Show post-commit status", ["git", "status", "--short", "--branch"], 30, None),
+        ("Show latest commit", ["git", "log", "--oneline", "-1"], 30, None),
+    ]
+
+    for name, argv, timeout_seconds, forced_reason in commit_steps:
+        step = _serialize_commit_command_step(cwd_path, name, argv, timeout_seconds, forced_reason)
+        serialized.append(step)
+        risks.append(str(step["risk"]))
+
+    return serialized, _combined_bundle_risk(risks), safe_paths, commit_message
+
+
 def _resolve_bundle_file_action_path(cwd_path: Path, action_path: str | None) -> str:
     if action_path is None or action_path.strip() == "":
         raise ValueError("File action path is required.")

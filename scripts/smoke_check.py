@@ -28,6 +28,7 @@ EXPECTED_TOOLS = {
     "workspace_project_snapshot",
     "workspace_preview_patch",
     "workspace_stage_command_bundle",
+    "workspace_stage_commit_bundle",
     "workspace_stage_patch_bundle",
     "workspace_task_start",
     "workspace_list_tasks",

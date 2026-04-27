@@ -41,6 +41,7 @@ from terminal_bridge.bundle_serialization import (
     _resolve_bundle_file_action_path,
     _serialize_action_steps,
     _serialize_command_steps,
+    _serialize_commit_steps,
 )
 from terminal_bridge.commands import (
     _classify_exec_command,
@@ -611,6 +612,7 @@ def workspace_info() -> WorkspaceInfo:
         "workspace_task_finish",
         "workspace_list_tasks",
         "workspace_stage_text_payload",
+        "workspace_stage_commit_bundle",
         "workspace_stage_command_bundle",
         "workspace_stage_action_bundle",
         "workspace_stage_patch_bundle",
@@ -2241,6 +2243,83 @@ def workspace_stage_action_bundle(
         command_count=len(serialized_steps),
     )
 
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_stage_commit_bundle(
+    cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")],
+    paths: Annotated[
+        list[str],
+        Field(min_length=1, max_length=100, description="Relative paths to stage and commit. Use ['.'] with care."),
+    ],
+    message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
+    precheck_commands: Annotated[
+        list[CommandBundleStep] | None,
+        Field(description="Optional low-risk commands to run before git add/commit."),
+    ] = None,
+) -> CommandBundleStageResult:
+    """Stage a git add/commit workflow for local approval without executing it in ChatGPT."""
+    target = _resolve_workspace_path(cwd)
+
+    if not target.exists():
+        raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
+
+    if not target.is_dir():
+        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+
+    serialized_steps, risk, safe_paths, commit_message = _serialize_commit_steps(
+        target,
+        paths,
+        message,
+        precheck_commands,
+    )
+    bundle_id = _new_command_bundle_id()
+    now = _now_iso()
+    title = f"Commit: {commit_message[:120]}"
+
+    record: dict[str, object] = {
+        "version": 4,
+        "bundle_id": bundle_id,
+        "title": title,
+        "cwd": _relative(target),
+        "status": "pending",
+        "risk": risk,
+        "approval_required": True,
+        "created_at": now,
+        "updated_at": now,
+        "steps": serialized_steps,
+        "result": None,
+        "error": None,
+    }
+
+    bundle_path = _command_bundle_path(bundle_id, "pending")
+    _write_command_bundle(bundle_path, record)
+    _audit(
+        "stage_commit_bundle",
+        bundle_id=bundle_id,
+        cwd=_relative(target),
+        risk=risk,
+        path_count=len(safe_paths),
+        command_count=len(serialized_steps),
+    )
+
+    return CommandBundleStageResult(
+        bundle_id=bundle_id,
+        title=title,
+        cwd=_relative(target),
+        status="pending",
+        risk=risk,
+        approval_required=True,
+        path=str(bundle_path),
+        review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
+        command_count=len(serialized_steps),
+    )
 
 
 @mcp.tool(

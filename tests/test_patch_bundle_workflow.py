@@ -31,6 +31,7 @@ BUNDLE_TOOLS = {
     "workspace_stage_text_payload",
     "workspace_stage_command_bundle",
     "workspace_stage_action_bundle",
+    "workspace_stage_commit_bundle",
     "workspace_stage_patch_bundle",
     "workspace_command_bundle_status",
     "workspace_list_command_bundles",
@@ -174,6 +175,83 @@ class PatchBundleStagingTests(unittest.TestCase):
             server._run_git_apply_with_stdin = original_run_git_apply
 
         self.assertFalse(calls)
+
+
+class CommitBundleStagingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.bundle_ids: list[str] = []
+        self.original_audit = server._audit
+        server._audit = lambda *args, **kwargs: None
+
+    def tearDown(self) -> None:
+        server._audit = self.original_audit
+
+        for bundle_id in self.bundle_ids:
+            for status in ("pending", "applied", "rejected", "failed"):
+                server._command_bundle_path(bundle_id, status).unlink(missing_ok=True)
+
+    def project_cwd(self) -> str:
+        return safety._relative(config.PROJECT_ROOT)
+
+    def test_stages_commit_bundle_with_default_prechecks(self) -> None:
+        result = server.workspace_stage_commit_bundle(
+            cwd=self.project_cwd(),
+            paths=["README.md"],
+            message="Test commit bundle",
+        )
+        self.bundle_ids.append(result.bundle_id)
+
+        bundle_path = server._command_bundle_path(result.bundle_id, "pending")
+        record = json.loads(bundle_path.read_text(encoding="utf-8"))
+        steps = record["steps"]
+
+        self.assertEqual(result.status, "pending")
+        self.assertEqual(result.risk, "medium")
+        self.assertTrue(result.approval_required)
+        self.assertEqual(result.command_count, 6)
+        self.assertEqual(steps[0]["argv"], ["git", "status", "--short", "--branch"])
+        self.assertEqual(steps[1]["argv"], ["git", "diff", "--check"])
+        self.assertEqual(steps[2]["argv"], ["git", "add", "--", "README.md"])
+        self.assertEqual(steps[2]["risk"], "medium")
+        self.assertEqual(steps[3]["argv"], ["git", "commit", "-m", "Test commit bundle"])
+        self.assertEqual(steps[3]["risk"], "medium")
+
+    def test_stages_commit_bundle_with_custom_low_risk_precheck(self) -> None:
+        result = server.workspace_stage_commit_bundle(
+            cwd=self.project_cwd(),
+            paths=["README.md"],
+            message="Test custom precheck",
+            precheck_commands=[
+                server.CommandBundleStep(
+                    name="custom status",
+                    argv=["git", "status", "--short"],
+                    timeout_seconds=15,
+                )
+            ],
+        )
+        self.bundle_ids.append(result.bundle_id)
+
+        bundle_path = server._command_bundle_path(result.bundle_id, "pending")
+        record = json.loads(bundle_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.command_count, 5)
+        self.assertEqual(record["steps"][0]["name"], "custom status")
+
+    def test_rejects_multiline_commit_message(self) -> None:
+        with self.assertRaises(ValueError):
+            server.workspace_stage_commit_bundle(
+                cwd=self.project_cwd(),
+                paths=["README.md"],
+                message="bad\nmessage",
+            )
+
+    def test_rejects_unsafe_commit_path(self) -> None:
+        with self.assertRaises(ValueError):
+            server.workspace_stage_commit_bundle(
+                cwd=self.project_cwd(),
+                paths=["../outside.md"],
+                message="Bad path",
+            )
 
 
 class PatchBundleRunnerTests(unittest.TestCase):
