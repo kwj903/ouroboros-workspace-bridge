@@ -44,6 +44,7 @@ APPLIED_DIR = COMMAND_BUNDLES_DIR / "applied"
 REJECTED_DIR = COMMAND_BUNDLES_DIR / "rejected"
 FAILED_DIR = COMMAND_BUNDLES_DIR / "failed"
 SUPERVISOR_SERVICES = ("review", "mcp", "ngrok")
+SUPERVISOR_RESTARTABLE_SERVICES = {"mcp", "ngrok"}
 
 HOST = os.environ.get("BUNDLE_REVIEW_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BUNDLE_REVIEW_PORT", "8790"))
@@ -852,6 +853,18 @@ def process_path_cell_html(value: object) -> str:
     return f'<code title="{escape(path)}">{escape(label)}</code>'
 
 
+def supervisor_restart_control_html(service: str) -> str:
+    if service not in SUPERVISOR_RESTARTABLE_SERVICES:
+        return '<span class="meta">terminal only</span>'
+
+    safe_service = escape(service)
+    return (
+        f'<form class="inline" method="post" action="/servers/processes/restart/{safe_service}">'
+        '<button class="secondary" type="submit">Restart</button>'
+        '</form>'
+    )
+
+
 def supervisor_processes_html(state: dict[str, object]) -> str:
     services = state.get("services")
     if not isinstance(services, list):
@@ -879,6 +892,7 @@ def supervisor_processes_html(state: dict[str, object]) -> str:
             f"<td><code>{escape(endpoint)}</code></td>"
             f"<td>{process_path_cell_html(item.get('log_file'))}</td>"
             f"<td>{process_path_cell_html(item.get('pid_file'))}</td>"
+            f"<td>{supervisor_restart_control_html(name)}</td>"
             "</tr>"
         )
 
@@ -890,7 +904,7 @@ def supervisor_processes_html(state: dict[str, object]) -> str:
         '<table class="data-table process-table">'
         "<thead><tr>"
         "<th>Service</th><th>PID</th><th>Alive</th><th>Managed</th>"
-        "<th>Reachable</th><th>Endpoint</th><th>Log path</th><th>PID file</th>"
+        "<th>Reachable</th><th>Endpoint</th><th>Log path</th><th>PID file</th><th>Controls</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
@@ -1181,7 +1195,7 @@ def app_shell(
       border-bottom: 0;
     }}
     .process-table {{
-      min-width: 920px;
+      min-width: 1020px;
       table-layout: fixed;
     }}
     .process-table th:nth-child(1),
@@ -1215,6 +1229,11 @@ def app_shell(
     .process-table td:nth-child(8) code {{
       word-break: break-word;
       overflow-wrap: anywhere;
+    }}
+    .process-table th:nth-child(9),
+    .process-table td:nth-child(9) {{
+      width: 112px;
+      white-space: nowrap;
     }}
     .badge {{
       display: inline-flex;
@@ -1276,6 +1295,11 @@ def app_shell(
       border-radius: 10px;
       border: 1px solid #888;
       cursor: pointer;
+    }}
+    .secondary {{
+      background: var(--surface-strong);
+      color: inherit;
+      border-color: var(--border);
     }}
     .approve {{
       background: #16a34a;
@@ -1377,6 +1401,25 @@ def run_runner(args: list[str]) -> subprocess.CompletedProcess[str]:
         shell=False,
         check=False,
     )
+
+
+def run_supervisor_restart(service: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["scripts/dev_session.sh", "restart", service],
+        cwd=str(PROJECT_ROOT),
+        env=os.environ.copy(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=60,
+        shell=False,
+        check=False,
+    )
+
+
+def is_local_client_address(value: str) -> bool:
+    return value == "::1" or value == "::ffff:127.0.0.1" or value.startswith("127.")
 
 
 def step_text_meta_html(step: dict[str, object], key: str, label: str) -> str:
@@ -1687,9 +1730,12 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
         <div class="stack">
           <div class="section-title">
             <h2>{escape(SERVER_TAB_LABELS[tab])}</h2>
-            <p class="meta">Read-only status for services managed by <code>scripts/dev_session.sh start</code>.</p>
+            <p class="meta">Status and limited controls for services managed by <code>scripts/dev_session.sh start</code>.</p>
           </div>
-          {read_only_notice}
+          <div class="notice">
+            <strong>제한된 제어</strong><br>
+            이 화면에서는 MCP/ngrok restart만 제공합니다. 전체 start/stop과 review restart는 터미널에서 수행합니다.
+          </div>
           <section class="card">
             <h3>Supervisor processes</h3>
             <p class="meta">
@@ -1702,14 +1748,14 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
           </section>
           <section class="card">
             <h3>CLI controls</h3>
-            <p class="meta">프로세스 제어는 아직 웹 UI에서 실행하지 않고 터미널에서 수행합니다.</p>
+            <p class="meta">전체 start/stop은 터미널에서 수행합니다. MCP/ngrok restart는 아래 표의 버튼으로도 실행할 수 있습니다.</p>
             <ul class="compact">
               <li>전체 세션 시작: <code>scripts/dev_session.sh start</code></li>
               <li>상태 확인: <code>scripts/dev_session.sh status</code></li>
               <li>MCP/ngrok 재시작: <code>scripts/dev_session.sh restart [mcp|ngrok]</code></li>
               <li>서비스 로그: <code>scripts/dev_session.sh logs [review|mcp|ngrok]</code></li>
               <li>전체 세션 종료: <code>scripts/dev_session.sh stop</code></li>
-              <li>UI start/stop/restart 버튼은 다음 단계에서 별도 안전장치를 설계한 뒤 추가합니다.</li>
+              <li>UI 버튼은 MCP/ngrok restart만 제공합니다. 전체 start/stop과 review restart는 터미널에서 수행합니다.</li>
             </ul>
           </section>
           <section class="card">
@@ -2101,6 +2147,55 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         parts = [part for part in parsed.path.split("/") if part]
+
+        if len(parts) == 4 and parts[:3] == ["servers", "processes", "restart"]:
+            service = parts[3]
+
+            if not is_local_client_address(str(self.client_address[0])):
+                self.send_html(
+                    "Forbidden",
+                    "<p>Local requests only.</p>",
+                    status=403,
+                    active_nav="servers",
+                    server_tab="processes",
+                )
+                return
+
+            if service not in SUPERVISOR_RESTARTABLE_SERVICES:
+                self.send_html(
+                    "지원하지 않는 서비스",
+                    "<p>Restart is supported only for mcp and ngrok.</p>",
+                    status=400,
+                    active_nav="servers",
+                    server_tab="processes",
+                )
+                return
+
+            completed = run_supervisor_restart(service)
+            if completed.returncode != 0:
+                body = f"""
+                <p><a href="/servers?tab=processes">← 프로세스로 돌아가기</a></p>
+                <h2>Restart failed: {escape(service)}</h2>
+                <details open>
+                  <summary>stdout</summary>
+                  <pre>{escape(completed.stdout)}</pre>
+                </details>
+                <details open>
+                  <summary>stderr</summary>
+                  <pre>{escape(completed.stderr)}</pre>
+                </details>
+                """
+                self.send_html(
+                    "Restart failed",
+                    body,
+                    status=500,
+                    active_nav="servers",
+                    server_tab="processes",
+                )
+                return
+
+            self.redirect("/servers?tab=processes")
+            return
 
         if len(parts) == 3 and parts[0] == "bundles" and parts[2] in {"approve", "reject"}:
             bundle_id = parts[1]

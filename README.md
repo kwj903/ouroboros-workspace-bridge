@@ -268,9 +268,8 @@ uv run python scripts/command_bundle_watcher.py
 `server.py` 또는 MCP tool schema를 변경한 경우에는 MCP server를 재시작하고 ChatGPT 앱에서 Refresh해야 합니다.
 review UI, watcher, README만 변경한 경우에는 보통 `scripts/dev_session.sh review` 세션만 재시작하면 되고 MCP server 재시작이나 ChatGPT 앱 Refresh는 필요하지 않습니다.
 
-현재 `/servers`는 보기 전용 관리 페이지이며 start/stop/restart 버튼은 제공하지 않습니다.
-프로세스 탭은 `scripts/dev_session.sh start`가 만든 pid/log 파일을 읽어 상태만 표시합니다.
-실제 프로세스 제어는 아직 웹 UI에서 실행하지 않고 터미널의 `scripts/dev_session.sh start`, `status`, `logs`, `stop` 명령으로 수행합니다.
+현재 `/servers` 관리 페이지의 프로세스 탭은 `scripts/dev_session.sh start`가 만든 pid/log 파일을 읽어 상태를 표시합니다.
+프로세스 탭은 제한적으로 MCP/ngrok restart 버튼을 제공하지만, 전체 start/stop과 review restart는 터미널의 `scripts/dev_session.sh start`, `status`, `restart`, `logs`, `stop` 명령으로 수행합니다.
 
 권장 실행 방식은 helper script를 사용하는 것입니다.
 
