@@ -9,11 +9,26 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from terminal_bridge.review_notifications import (
+    open_url,
+    parse_bool_env,
+    parse_notification_target,
+    parse_open_mode,
+    pending_url as notification_pending_url,
+    review_url as notification_review_url,
+    send_notification,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = PROJECT_ROOT / "scripts" / "command_bundle_runner.py"
@@ -150,6 +165,31 @@ def command_bundle_state() -> dict[str, object]:
     }
 
 
+def load_bundle_id(path: Path) -> str | None:
+    try:
+        record = read_json(path)
+    except Exception:
+        return path.stem
+
+    bundle_id = record.get("bundle_id")
+    if isinstance(bundle_id, str) and bundle_id:
+        return bundle_id
+
+    return path.stem
+
+
+def current_pending_bundle_ids() -> set[str]:
+    ids: set[str] = set()
+    if not PENDING_DIR.exists():
+        return ids
+
+    for path in sorted(PENDING_DIR.glob("cmd-*.json")):
+        bundle_id = load_bundle_id(path)
+        if bundle_id:
+            ids.add(bundle_id)
+    return ids
+
+
 def bundle_status_counts() -> dict[str, int]:
     counts = {
         "pending": 0,
@@ -247,6 +287,36 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
+def env_float(name: str, default: float) -> float:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        value = float(raw_value)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def review_base_url() -> str:
+    return os.environ.get("BUNDLE_REVIEW_BASE_URL", f"http://{HOST}:{PORT}")
+
+
+def embedded_watcher_config() -> dict[str, object]:
+    return {
+        "enabled": parse_bool_env(os.environ.get("BUNDLE_REVIEW_EMBEDDED_WATCHER"), default=True),
+        "poll_seconds": env_float("BUNDLE_WATCH_POLL_SECONDS", 1.5),
+        "open_mode": parse_open_mode(os.environ.get("BUNDLE_WATCH_OPEN_MODE")),
+        "notify_enabled": parse_bool_env(os.environ.get("BUNDLE_WATCH_NOTIFY"), default=True),
+        "notification_target": parse_notification_target(os.environ.get("BUNDLE_WATCH_NOTIFICATION_TARGET")),
+        "osascript_fallback": parse_bool_env(
+            os.environ.get("BUNDLE_WATCH_OSASCRIPT_FALLBACK"),
+            default=False,
+        ),
+        "base_url": review_base_url(),
+    }
+
+
 def normalize_ngrok_host(value: str) -> str:
     host = value.strip()
     host = host.removeprefix("https://").removeprefix("http://")
@@ -285,6 +355,7 @@ def server_state() -> dict[str, object]:
     review_host = os.environ.get("BUNDLE_REVIEW_HOST", HOST)
     review_port = env_int("BUNDLE_REVIEW_PORT", PORT)
     public_endpoint = public_mcp_endpoint_hint()
+    watcher_config = embedded_watcher_config()
 
     return {
         "review_server": {
@@ -318,7 +389,77 @@ def server_state() -> dict[str, object]:
             "configured": env_any_status(["NGROK_HOST", "NGROK_BASE_URL"]),
             "public_mcp_endpoint_hint": public_endpoint,
         },
+        "embedded_watcher": {
+            "enabled": watcher_config["enabled"],
+            "open_mode": watcher_config["open_mode"],
+            "notify_enabled": watcher_config["notify_enabled"],
+            "notification_target": watcher_config["notification_target"],
+            "poll_seconds": watcher_config["poll_seconds"],
+        },
     }
+
+
+def embedded_watcher_loop(
+    stop_event: threading.Event,
+    seen_pending_bundle_ids: set[str],
+    config: dict[str, object],
+) -> None:
+    base_url = str(config.get("base_url", review_base_url()))
+    open_mode = str(config.get("open_mode", "dashboard_once"))
+    notify_enabled = bool(config.get("notify_enabled", True))
+    notification_target = str(config.get("notification_target", "pending"))
+    poll_seconds = float(config.get("poll_seconds", 1.5))
+    osascript_fallback = bool(config.get("osascript_fallback", False))
+
+    while not stop_event.wait(poll_seconds):
+        for bundle_id in sorted(current_pending_bundle_ids()):
+            if bundle_id in seen_pending_bundle_ids:
+                continue
+
+            print(f"[review-ui] 새 승인 대기 번들: {bundle_id}")
+            if notify_enabled:
+                send_notification(
+                    base_url,
+                    bundle_id,
+                    notification_target,
+                    enable_osascript_fallback=osascript_fallback,
+                )
+            if open_mode == "bundle":
+                url = notification_review_url(base_url, bundle_id)
+                print(f"[review-ui] 승인 페이지 열기: {bundle_id}: {url}")
+                open_url(url)
+            seen_pending_bundle_ids.add(bundle_id)
+
+
+def start_embedded_watcher() -> tuple[threading.Event | None, threading.Thread | None]:
+    config = embedded_watcher_config()
+    if not bool(config["enabled"]):
+        print("[review-ui] Embedded watcher disabled.")
+        return None, None
+
+    base_url = str(config["base_url"])
+    open_mode = str(config["open_mode"])
+
+    if open_mode == "dashboard_once":
+        url = notification_pending_url(base_url)
+        print(f"[review-ui] 승인 대기 대시보드 열기: {url}")
+        open_url(url)
+
+    seen_pending_bundle_ids = current_pending_bundle_ids()
+    stop_event = threading.Event()
+    thread = threading.Thread(
+        target=embedded_watcher_loop,
+        args=(stop_event, seen_pending_bundle_ids, config),
+        name="command-bundle-embedded-watcher",
+        daemon=True,
+    )
+    thread.start()
+
+    print("[review-ui] Embedded watcher enabled.")
+    print(f"[review-ui] 브라우저 열기 모드: {open_mode}")
+    print(f"[review-ui] macOS 알림: {'켜짐' if config['notify_enabled'] else '꺼짐'}")
+    print(f"[review-ui] 알림 클릭 대상: {config['notification_target']}")
+    return stop_event, thread
 
 
 def escape(value: object) -> str:
@@ -1077,6 +1218,7 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
     environment = state.get("environment") if isinstance(state.get("environment"), dict) else {}
     mcp_server = state.get("mcp_server") if isinstance(state.get("mcp_server"), dict) else {}
     ngrok = state.get("ngrok") if isinstance(state.get("ngrok"), dict) else {}
+    embedded_watcher = state.get("embedded_watcher") if isinstance(state.get("embedded_watcher"), dict) else {}
 
     public_hint = ngrok.get("public_mcp_endpoint_hint")
     public_hint_value = f"<code>{escape(public_hint)}</code>" if public_hint else "없음"
@@ -1246,6 +1388,10 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
       <section class="card">
         <ul class="compact">
           <li><a href="/api/server-state"><code>/api/server-state</code></a> 로 현재 review UI 상태를 JSON으로 확인합니다.</li>
+          <li>Embedded watcher: {status_chip("enabled" if embedded_watcher.get("enabled") else "disabled", "ok" if embedded_watcher.get("enabled") else "neutral")}</li>
+          <li>Watcher open mode: <code>{escape(embedded_watcher.get("open_mode", ""))}</code></li>
+          <li>Notification target: <code>{escape(embedded_watcher.get("notification_target", ""))}</code></li>
+          <li>Watcher poll seconds: <code>{escape(embedded_watcher.get("poll_seconds", ""))}</code></li>
           <li><code>scripts/dev_session.sh doctor</code> 로 review 세션과 환경 상태를 점검합니다.</li>
           <li><code>server.py</code> 또는 tool schema를 바꾼 경우 MCP server 재시작 후 ChatGPT 앱에서 Refresh가 필요합니다.</li>
           <li>review UI, watcher, README만 바꾼 경우에는 review session만 다시 시작하면 되고 MCP server 재시작은 보통 필요하지 않습니다.</li>
@@ -1603,6 +1749,7 @@ def main() -> None:
 
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     url = f"http://{HOST}:{PORT}/pending"
+    watcher_stop_event, watcher_thread = start_embedded_watcher()
     print(f"명령 번들 승인 UI 실행 중: {url}")
     print("종료하려면 Ctrl-C를 누르세요.")
 
@@ -1611,6 +1758,10 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\n승인 UI를 종료합니다...")
     finally:
+        if watcher_stop_event is not None:
+            watcher_stop_event.set()
+        if watcher_thread is not None:
+            watcher_thread.join(timeout=2)
         server.server_close()
 
 

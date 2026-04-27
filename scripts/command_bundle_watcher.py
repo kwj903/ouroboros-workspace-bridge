@@ -3,12 +3,26 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
 import sys
 import time
 import urllib.request
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from terminal_bridge.review_notifications import (
+    build_terminal_notifier_command,
+    notification_url as _notification_url,
+    open_url,
+    parse_bool_env,
+    parse_notification_target,
+    parse_open_mode,
+    pending_url as _pending_url,
+    review_url as _review_url,
+    send_notification,
+)
 
 RUNTIME_ROOT = Path.home() / ".mcp_terminal_bridge" / "my-terminal-tool"
 PENDING_DIR = RUNTIME_ROOT / "command_bundles" / "pending"
@@ -19,75 +33,30 @@ OPEN_MODE = os.environ.get("BUNDLE_WATCH_OPEN_MODE")
 NOTIFY = os.environ.get("BUNDLE_WATCH_NOTIFY")
 NOTIFICATION_TARGET = os.environ.get("BUNDLE_WATCH_NOTIFICATION_TARGET")
 OSASCRIPT_FALLBACK = os.environ.get("BUNDLE_WATCH_OSASCRIPT_FALLBACK")
-VALID_OPEN_MODES = {"dashboard_once", "bundle", "none"}
-VALID_NOTIFICATION_TARGETS = {"bundle", "pending"}
-TRUE_VALUES = {"1", "true", "yes", "on"}
-FALSE_VALUES = {"", "0", "false", "no", "off"}
-
-_terminal_notifier_warning_printed = False
-
-
-def parse_open_mode(value: str | None) -> str:
-    mode = (value or "dashboard_once").strip().lower()
-    if mode not in VALID_OPEN_MODES:
-        return "dashboard_once"
-    return mode
 
 
 def parse_notify_flag(value: str | None) -> bool:
-    if value is None:
-        return True
-
-    normalized = value.strip().lower()
-    if normalized in TRUE_VALUES:
-        return True
-    if normalized in FALSE_VALUES:
-        return False
-    return False
+    return parse_bool_env(value, default=True)
 
 
 def parse_osascript_fallback_flag(value: str | None) -> bool:
-    if value is None:
-        return False
-
-    return value.strip().lower() in TRUE_VALUES
-
-
-def parse_notification_target(value: str | None) -> str:
-    target = (value or "bundle").strip().lower()
-    if target not in VALID_NOTIFICATION_TARGETS:
-        return "bundle"
-    return target
+    return parse_bool_env(value, default=False)
 
 
 def review_url(bundle_id: str) -> str:
-    return f"{REVIEW_BASE_URL.rstrip('/')}/bundles/{bundle_id}"
+    return _review_url(REVIEW_BASE_URL, bundle_id)
 
 
 def pending_url() -> str:
-    return f"{REVIEW_BASE_URL.rstrip('/')}/pending"
+    return _pending_url(REVIEW_BASE_URL)
 
 
 def notification_url(bundle_id: str, target: str, base_url: str = REVIEW_BASE_URL) -> str:
-    normalized_target = parse_notification_target(target)
-    base = base_url.rstrip("/")
-    if normalized_target == "pending":
-        return f"{base}/pending"
-    return f"{base}/bundles/{bundle_id}"
+    return _notification_url(base_url, bundle_id, target)
 
 
 def terminal_notifier_command(bundle_id: str, target: str, base_url: str = REVIEW_BASE_URL) -> list[str]:
-    return [
-        "terminal-notifier",
-        "-title",
-        "Workspace Terminal Bridge",
-        "-message",
-        f"승인 대기 번들: {bundle_id}",
-        "-open",
-        notification_url(bundle_id, target, base_url),
-        "-group",
-        "workspace-terminal-bridge",
-    ]
+    return build_terminal_notifier_command(base_url, bundle_id, target)
 
 
 def server_health_ok() -> bool:
@@ -98,53 +67,13 @@ def server_health_ok() -> bool:
         return False
 
 
-def open_url(url: str) -> None:
-    if sys.platform == "darwin":
-        subprocess.run(["open", url], check=False)
-    else:
-        import webbrowser
-
-        webbrowser.open(url)
-
-
-def osascript_notification_command(bundle_id: str) -> list[str]:
-    message = f"승인 대기 번들: {bundle_id}"
-    escaped_message = message.replace("\\", "\\\\").replace('"', '\\"')
-    escaped_title = "Workspace Terminal Bridge".replace("\\", "\\\\").replace('"', '\\"')
-    script = f'display notification "{escaped_message}" with title "{escaped_title}"'
-    return ["osascript", "-e", script]
-
-
 def notify_pending_bundle(bundle_id: str, target: str) -> None:
-    global _terminal_notifier_warning_printed
-
-    if sys.platform != "darwin":
-        return
-
-    if shutil.which("terminal-notifier"):
-        command = terminal_notifier_command(bundle_id, target)
-    elif parse_osascript_fallback_flag(OSASCRIPT_FALLBACK):
-        command = osascript_notification_command(bundle_id)
-    else:
-        if not _terminal_notifier_warning_printed:
-            print(
-                "Clickable macOS notifications require terminal-notifier. "
-                "Install with: brew install terminal-notifier",
-                file=sys.stderr,
-            )
-            _terminal_notifier_warning_printed = True
-        return
-
-    try:
-        subprocess.run(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=3,
-            check=False,
-        )
-    except Exception:
-        pass
+    send_notification(
+        REVIEW_BASE_URL,
+        bundle_id,
+        target,
+        enable_osascript_fallback=parse_osascript_fallback_flag(OSASCRIPT_FALLBACK),
+    )
 
 
 def load_bundle_id(path: Path) -> str | None:

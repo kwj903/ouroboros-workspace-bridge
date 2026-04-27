@@ -9,6 +9,7 @@ from pathlib import Path
 
 from scripts import command_bundle_review_server as review
 from scripts import command_bundle_watcher as watcher
+from terminal_bridge import review_notifications as notifications
 
 
 class ReviewServerHelperTests(unittest.TestCase):
@@ -88,6 +89,11 @@ class ReviewServerHelperTests(unittest.TestCase):
 
         self.assertEqual(state["pending_count"], 1)
         self.assertEqual(state["latest_pending_bundle_id"], "cmd-pending")
+
+    def test_current_pending_bundle_ids_reads_existing_pending(self) -> None:
+        self.write_bundle("pending", "cmd-existing", "2026-01-02T00:00:00+00:00")
+
+        self.assertEqual(review.current_pending_bundle_ids(), {"cmd-existing"})
 
     def test_bundle_status_counts(self) -> None:
         self.write_bundle("pending", "cmd-pending", "2026-01-01T00:00:00+00:00")
@@ -248,6 +254,13 @@ class ReviewServerHelperTests(unittest.TestCase):
             else:
                 os.environ["NGROK_HOST"] = original_host
 
+    def test_diagnostics_tab_shows_embedded_watcher_settings(self) -> None:
+        html = review.server_tab_content_html("diagnostics", review.server_state())
+
+        self.assertIn("Embedded watcher", html)
+        self.assertIn("Watcher open mode", html)
+        self.assertIn("Notification target", html)
+
     def test_primary_nav_html_uses_large_category_labels(self) -> None:
         html = review.primary_nav_html("history")
 
@@ -299,6 +312,43 @@ class ReviewServerHelperTests(unittest.TestCase):
 
 
 class WatcherHelperTests(unittest.TestCase):
+    def test_embedded_watcher_config_defaults(self) -> None:
+        names = (
+            "BUNDLE_REVIEW_EMBEDDED_WATCHER",
+            "BUNDLE_WATCH_OPEN_MODE",
+            "BUNDLE_WATCH_NOTIFY",
+            "BUNDLE_WATCH_NOTIFICATION_TARGET",
+        )
+        original = {name: os.environ.get(name) for name in names}
+        try:
+            for name in names:
+                os.environ.pop(name, None)
+
+            config = review.embedded_watcher_config()
+
+            self.assertTrue(config["enabled"])
+            self.assertEqual(config["open_mode"], "dashboard_once")
+            self.assertTrue(config["notify_enabled"])
+            self.assertEqual(config["notification_target"], "pending")
+        finally:
+            for name, value in original.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+    def test_parse_bool_env_for_embedded_watcher_flag(self) -> None:
+        self.assertTrue(notifications.parse_bool_env(None, default=True))
+        self.assertTrue(notifications.parse_bool_env("1", default=False))
+        self.assertTrue(notifications.parse_bool_env("true", default=False))
+        self.assertTrue(notifications.parse_bool_env("yes", default=False))
+        self.assertTrue(notifications.parse_bool_env("on", default=False))
+        self.assertFalse(notifications.parse_bool_env("", default=True))
+        self.assertFalse(notifications.parse_bool_env("0", default=True))
+        self.assertFalse(notifications.parse_bool_env("false", default=True))
+        self.assertFalse(notifications.parse_bool_env("no", default=True))
+        self.assertFalse(notifications.parse_bool_env("off", default=True))
+
     def test_parse_open_mode(self) -> None:
         self.assertEqual(watcher.parse_open_mode(None), "dashboard_once")
         self.assertEqual(watcher.parse_open_mode("bundle"), "bundle")
@@ -318,10 +368,10 @@ class WatcherHelperTests(unittest.TestCase):
         self.assertFalse(watcher.parse_notify_flag("off"))
 
     def test_parse_notification_target(self) -> None:
-        self.assertEqual(watcher.parse_notification_target(None), "bundle")
+        self.assertEqual(watcher.parse_notification_target(None), "pending")
         self.assertEqual(watcher.parse_notification_target("bundle"), "bundle")
         self.assertEqual(watcher.parse_notification_target("pending"), "pending")
-        self.assertEqual(watcher.parse_notification_target("bad-value"), "bundle")
+        self.assertEqual(watcher.parse_notification_target("bad-value"), "pending")
 
     def test_notification_url(self) -> None:
         base_url = "http://127.0.0.1:8790"
@@ -347,6 +397,18 @@ class WatcherHelperTests(unittest.TestCase):
         self.assertIn("http://127.0.0.1:8790/bundles/cmd-test", command)
         self.assertIn("-group", command)
         self.assertIn("workspace-terminal-bridge", command)
+
+    def test_terminal_notifier_command_omits_token_from_url(self) -> None:
+        command = notifications.build_terminal_notifier_command(
+            "http://127.0.0.1:8790?access_token=secret-token-value",
+            "cmd-test",
+            "pending",
+        )
+        serialized = " ".join(command)
+
+        self.assertIn("http://127.0.0.1:8790/pending", command)
+        self.assertNotIn("access_token", serialized)
+        self.assertNotIn("secret-token-value", serialized)
 
 
 if __name__ == "__main__":

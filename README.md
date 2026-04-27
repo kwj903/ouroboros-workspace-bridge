@@ -140,11 +140,13 @@ cd ~/workspace/Custom-Tools/GPT-Tools/my-terminal-tool
 scripts/dev_session.sh doctor
 ```
 
-로컬 승인 UI와 watcher 시작:
+로컬 승인 UI 시작:
 
 ```bash
 scripts/dev_session.sh review
 ```
+
+이 명령은 review server 하나를 foreground로 실행하고, 내부 embedded watcher가 pending bundle 감시와 알림을 담당합니다.
 
 MCP server와 ngrok은 별도 터미널에서 기존 script로 실행합니다.
 
@@ -189,11 +191,23 @@ https://<NGROK_HOST>/mcp?access_token=<TOKEN>
 
 토큰 값은 README, 로그, 채팅 응답에 출력하지 않습니다.
 
-watcher는 기본적으로 macOS 알림 클릭 대상을 `/pending`으로 설정해 실행합니다.
+embedded watcher는 기본적으로 macOS 알림 클릭 대상을 `/pending`으로 설정해 실행합니다.
 `terminal-notifier`가 설치되어 있으면 클릭 가능한 macOS 알림을 사용할 수 있습니다.
 
 ```bash
 brew install terminal-notifier
+```
+
+내장 watcher를 끄고 review server만 실행하려면 다음처럼 시작합니다.
+
+```bash
+BUNDLE_REVIEW_EMBEDDED_WATCHER=0 scripts/dev_session.sh review
+```
+
+기존 standalone watcher는 fallback/debug 용도로 유지합니다.
+
+```bash
+uv run python scripts/command_bundle_watcher.py
 ```
 
 `server.py` 또는 MCP tool schema를 변경한 경우에는 MCP server를 재시작하고 ChatGPT 앱에서 Refresh해야 합니다.
@@ -401,31 +415,35 @@ http://127.0.0.1:8790/pending
 
 ```bash
 uv run python scripts/command_bundle_review_server.py
-uv run python scripts/command_bundle_watcher.py
+uv run python scripts/command_bundle_watcher.py  # fallback/debug
 uv run python scripts/command_bundle_runner.py list
 uv run python scripts/command_bundle_runner.py preview <bundle_id>
 uv run python scripts/command_bundle_runner.py apply <bundle_id>
 ```
 
-권장 방식은 review server와 watcher를 함께 실행한 뒤 `/pending` 탭을 한 번 열어두는 것입니다.
+권장 방식은 `scripts/dev_session.sh review`로 review server를 실행하는 것입니다.
+review server의 embedded watcher가 pending bundle 감시, `/pending` dashboard 한 번 열기, macOS 알림 발송을 담당합니다.
 `/pending`은 long polling으로 새 pending bundle이 생길 때만 갱신되며, 새 bundle마다 브라우저 탭을 계속 만들지 않습니다.
 전체 이력과 실행 결과는 `http://127.0.0.1:8790/history`에서 확인합니다.
 `/history` 상단에는 status별 count와 최근 실패 번들 링크가 표시되며, bundle 상세 페이지에서 step별 stdout/stderr와 실패 step을 확인합니다.
 관리 정보는 `http://127.0.0.1:8790/servers`에서 보기 전용으로 확인합니다.
 
-watcher 기본값은 시작 시 `/pending` 대시보드를 한 번 여는 `dashboard_once` 모드입니다.
+embedded watcher 기본값은 시작 시 `/pending` 대시보드를 한 번 여는 `dashboard_once` 모드입니다.
 macOS 알림은 기본으로 켜져 있지만, 클릭 가능한 알림은 `terminal-notifier`가 설치되어 있을 때 동작합니다.
 
 ```bash
 brew install terminal-notifier
+BUNDLE_REVIEW_EMBEDDED_WATCHER=0 scripts/dev_session.sh review
+uv run python scripts/command_bundle_watcher.py
 BUNDLE_WATCH_NOTIFY=0 uv run python scripts/command_bundle_watcher.py
-BUNDLE_WATCH_NOTIFICATION_TARGET=pending uv run python scripts/command_bundle_watcher.py
+BUNDLE_WATCH_NOTIFICATION_TARGET=bundle uv run python scripts/command_bundle_watcher.py
 BUNDLE_WATCH_OPEN_MODE=bundle uv run python scripts/command_bundle_watcher.py
 ```
 
-`BUNDLE_WATCH_NOTIFICATION_TARGET=pending`은 알림 클릭 대상을 `/pending`으로 바꿉니다.
+기본 알림 클릭 대상은 `/pending`입니다. 특정 bundle 상세 페이지로 바로 열고 싶으면 `BUNDLE_WATCH_NOTIFICATION_TARGET=bundle`을 설정합니다.
 기존처럼 새 bundle마다 상세 탭을 자동으로 열고 싶으면 `BUNDLE_WATCH_OPEN_MODE=bundle`을 설정합니다.
 브라우저를 전혀 열지 않으려면 `BUNDLE_WATCH_OPEN_MODE=none`을 설정합니다.
+standalone `scripts/command_bundle_watcher.py`는 embedded watcher를 끈 상태에서 fallback/debug 용도로 직접 실행할 수 있습니다.
 
 ### 삭제/복구
 

@@ -15,7 +15,7 @@ Commands:
   help       Show this help.
   checklist  Print the recommended local development session checklist.
   doctor     Check local tools and required environment variables.
-  review     Run the local command bundle review server and watcher together.
+  review     Run the local command bundle review server with its embedded watcher.
 EOF
 }
 
@@ -89,73 +89,20 @@ doctor() {
   return "$exit_code"
 }
 
-is_background_job_running() {
-  local pid="$1"
-  jobs -pr | grep -qx "$pid"
-}
-
 review() {
-  local review_server_pid=""
-  local watcher_pid=""
-
-  cleanup() {
-    local exit_code=$?
-    trap - INT TERM EXIT
-
-    if [[ -n "$watcher_pid" ]] && kill -0 "$watcher_pid" 2>/dev/null; then
-      echo "Stopping watcher PID $watcher_pid..."
-      kill "$watcher_pid" 2>/dev/null || true
-    fi
-
-    if [[ -n "$review_server_pid" ]] && kill -0 "$review_server_pid" 2>/dev/null; then
-      echo "Stopping review server PID $review_server_pid..."
-      kill "$review_server_pid" 2>/dev/null || true
-    fi
-
-    if [[ -n "$watcher_pid" ]]; then
-      wait "$watcher_pid" 2>/dev/null || true
-    fi
-
-    if [[ -n "$review_server_pid" ]]; then
-      wait "$review_server_pid" 2>/dev/null || true
-    fi
-
-    exit "$exit_code"
-  }
-
-  trap cleanup INT TERM EXIT
-
   if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:8790 -sTCP:LISTEN >/dev/null 2>&1; then
     echo "[warn] Port 8790 already appears to be in use."
   fi
 
-  echo "Starting command bundle review server..."
-  uv run python scripts/command_bundle_review_server.py &
-  review_server_pid=$!
-  echo "Review server PID: $review_server_pid"
-
-  echo "Starting command bundle watcher..."
-  BUNDLE_WATCH_NOTIFICATION_TARGET="${BUNDLE_WATCH_NOTIFICATION_TARGET:-pending}" \
-    uv run python scripts/command_bundle_watcher.py &
-  watcher_pid=$!
-  echo "Watcher PID: $watcher_pid"
-  echo
+  echo "Starting command bundle review server with embedded watcher..."
+  echo "Embedded watcher: ${BUNDLE_REVIEW_EMBEDDED_WATCHER:-1}"
   echo "Review dashboard: http://127.0.0.1:8790/pending"
-  echo "Press Ctrl-C to stop the review server and watcher."
+  echo "Disable embedded watcher: BUNDLE_REVIEW_EMBEDDED_WATCHER=0 scripts/dev_session.sh review"
+  echo "Standalone watcher fallback: uv run python scripts/command_bundle_watcher.py"
+  echo "Press Ctrl-C to stop the review server."
+  echo
 
-  while true; do
-    sleep 1
-
-    if ! is_background_job_running "$review_server_pid"; then
-      echo "Review server exited."
-      exit 1
-    fi
-
-    if ! is_background_job_running "$watcher_pid"; then
-      echo "Watcher exited."
-      exit 1
-    fi
-  done
+  exec uv run python scripts/command_bundle_review_server.py
 }
 
 cmd="${1:-help}"
