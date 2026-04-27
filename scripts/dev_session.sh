@@ -44,27 +44,41 @@ Workspace Terminal Bridge development session checklist
 2. If MCP_ACCESS_TOKEN or NGROK_HOST is missing, create a private runtime env file:
    scripts/dev_session.sh configure
 
-3. Start the local approval UI:
-   scripts/dev_session.sh review
-
-   Or start the full local session in the background:
+3. Start the full local session in the background:
    scripts/dev_session.sh start
 
-4. Start the MCP server in another terminal:
-   scripts/run_server.sh
+4. Confirm review, MCP, and ngrok status:
+   scripts/dev_session.sh status
 
-5. Start ngrok in another terminal:
-   scripts/run_ngrok.sh
-
-6. Keep the review dashboard open:
+5. Keep the review dashboard open:
    http://127.0.0.1:8790/pending
 
-7. Configure the ChatGPT app MCP URL with this format:
+6. Use the management page for process status and limited restart controls:
+   http://127.0.0.1:8790/servers?tab=processes
+
+7. If server.py or MCP tool schemas change, restart MCP and Refresh the ChatGPT app:
+   scripts/dev_session.sh restart mcp
+
+8. If the ngrok tunnel needs to be reconnected, restart ngrok:
+   scripts/dev_session.sh restart ngrok
+
+9. Tail service logs when debugging:
+   scripts/dev_session.sh logs [review|mcp|ngrok]
+
+10. Stop the full local session when finished:
+   scripts/dev_session.sh stop
+
+Fallback/debug commands:
+  - Review server only in foreground: scripts/dev_session.sh review
+  - MCP server only: scripts/run_server.sh
+  - ngrok only: scripts/run_ngrok.sh
+
+ChatGPT app MCP URL format:
    https://<NGROK_HOST>/mcp?access_token=<TOKEN>
 
 Notes:
   - Token values are intentionally not printed by this helper.
-  - If server.py or MCP tool schemas change, restart the MCP server and Refresh the ChatGPT app.
+  - UI restart buttons are limited to MCP/ngrok. Full start/stop and review restart stay in the terminal.
   - If only the review UI, watcher, or README changes, MCP server restart and ChatGPT app Refresh are usually not needed.
 EOF
 }

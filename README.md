@@ -211,8 +211,8 @@ http://127.0.0.1:8790/api/history-state
 http://127.0.0.1:8790/servers
 ```
 
-관리 섹션에는 개요, 서버, 프로세스, 연결, 환경, 로컬 도구, 진단 탭이 있으며 현재 단계에서는 모두 보기 전용입니다.
-프로세스 탭에서는 `scripts/dev_session.sh start`가 관리하는 `review`, `mcp`, `ngrok` pid/alive/reachability/log path 상태를 확인할 수 있습니다. 이 화면은 상태만 읽으며 start/stop/restart를 실행하지 않습니다.
+관리 섹션에는 개요, 서버, 프로세스, 연결, 환경, 로컬 도구, 진단 탭이 있습니다.
+프로세스 탭에서는 `scripts/dev_session.sh start`가 관리하는 `review`, `mcp`, `ngrok` pid/alive/reachability/log path 상태를 확인할 수 있습니다. `mcp`와 `ngrok`은 Restart 버튼으로 제한적으로 재시작할 수 있으며, `review` restart와 전체 start/stop은 터미널에서 수행합니다.
 보기 전용 supervisor 요약 API는 다음 endpoint입니다.
 
 ```text
@@ -271,7 +271,13 @@ review UI, watcher, README만 변경한 경우에는 보통 `scripts/dev_session
 현재 `/servers` 관리 페이지의 프로세스 탭은 `scripts/dev_session.sh start`가 만든 pid/log 파일을 읽어 상태를 표시합니다.
 프로세스 탭은 제한적으로 MCP/ngrok restart 버튼을 제공하지만, 전체 start/stop과 review restart는 터미널의 `scripts/dev_session.sh start`, `status`, `restart`, `logs`, `stop` 명령으로 수행합니다.
 
-권장 실행 방식은 helper script를 사용하는 것입니다.
+전체 로컬 세션의 권장 실행 방식은 supervisor helper입니다.
+
+```bash
+scripts/dev_session.sh start
+```
+
+MCP server만 fallback/debug로 직접 실행해야 하는 경우에는 다음 helper script를 사용할 수 있습니다.
 
 ```bash
 scripts/run_server.sh
@@ -299,7 +305,7 @@ MCP_HOST=127.0.0.1 MCP_PORT=8787 uv run python server.py
 
 ## ngrok 연결
 
-권장 실행 방식은 helper script입니다.
+전체 로컬 세션에서는 `scripts/dev_session.sh start`가 ngrok까지 함께 시작합니다. ngrok만 fallback/debug로 직접 실행해야 하는 경우에는 다음 helper script를 사용할 수 있습니다.
 
 ```bash
 scripts/run_ngrok.sh
