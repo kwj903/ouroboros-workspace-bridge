@@ -14,6 +14,10 @@ Usage:
   scripts/dev_session.sh configure
   scripts/dev_session.sh doctor
   scripts/dev_session.sh review
+  scripts/dev_session.sh start
+  scripts/dev_session.sh status
+  scripts/dev_session.sh stop
+  scripts/dev_session.sh logs [review|mcp|ngrok]
 
 Commands:
   help       Show this help.
@@ -21,6 +25,10 @@ Commands:
   configure  Interactively create a private runtime session.env file.
   doctor     Check local tools and required environment variables.
   review     Run the local command bundle review server with its embedded watcher.
+  start      Start review, MCP server, and ngrok in the background.
+  status     Show supervisor-managed service status.
+  stop       Stop supervisor-managed services by pid file.
+  logs       Tail a supervisor-managed service log.
 EOF
 }
 
@@ -36,6 +44,9 @@ Workspace Terminal Bridge development session checklist
 
 3. Start the local approval UI:
    scripts/dev_session.sh review
+
+   Or start the full local session in the background:
+   scripts/dev_session.sh start
 
 4. Start the MCP server in another terminal:
    scripts/run_server.sh
@@ -108,6 +119,444 @@ doctor() {
   fi
 
   return "$exit_code"
+}
+
+process_dir() {
+  printf "%s/processes" "$RUNTIME_ROOT"
+}
+
+service_pid_file() {
+  printf "%s/%s.pid" "$(process_dir)" "$1"
+}
+
+service_log_file() {
+  printf "%s/%s.log" "$(process_dir)" "$1"
+}
+
+is_known_service() {
+  case "$1" in
+    review | mcp | ngrok)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_pid_alive() {
+  local pid="$1"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+collect_descendant_pids() {
+  local parent="$1"
+  local child
+
+  command -v pgrep >/dev/null 2>&1 || return 0
+
+  while IFS= read -r child; do
+    [[ -n "$child" ]] || continue
+    printf "%s\n" "$child"
+    collect_descendant_pids "$child"
+  done < <(pgrep -P "$parent" 2>/dev/null || true)
+}
+
+managed_process_tree_pids() {
+  local root_pid="$1"
+  collect_descendant_pids "$root_pid"
+  printf "%s\n" "$root_pid"
+}
+
+any_pid_alive() {
+  local pid
+  for pid in "$@"; do
+    if is_pid_alive "$pid"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+python_launcher() {
+  if [[ -x ".venv/bin/python" ]]; then
+    printf "%s" ".venv/bin/python"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+
+  command -v python
+}
+
+launch_background_service() {
+  local log_file="$1"
+  shift
+
+  local launcher
+  launcher="$(python_launcher)"
+
+  "$launcher" - "$log_file" "$@" <<'PY'
+import subprocess
+import sys
+
+log_path = sys.argv[1]
+command = sys.argv[2:]
+
+with open(log_path, "ab", buffering=0) as log:
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        close_fds=True,
+        start_new_session=True,
+    )
+
+print(process.pid)
+PY
+}
+
+read_service_pid() {
+  local service="$1"
+  local pid_file
+  pid_file="$(service_pid_file "$service")"
+
+  if [[ ! -f "$pid_file" ]]; then
+    return 1
+  fi
+
+  local pid
+  pid="$(tr -d '[:space:]' < "$pid_file")"
+  [[ -n "$pid" ]] || return 1
+  printf "%s" "$pid"
+}
+
+cleanup_stale_pid() {
+  local service="$1"
+  local pid_file
+  local pid
+  pid_file="$(service_pid_file "$service")"
+
+  if [[ ! -f "$pid_file" ]]; then
+    return 0
+  fi
+
+  pid="$(tr -d '[:space:]' < "$pid_file")"
+  if ! is_pid_alive "$pid"; then
+    rm -f "$pid_file"
+  fi
+}
+
+service_port() {
+  case "$1" in
+    review)
+      printf "%s" "${BUNDLE_REVIEW_PORT:-8790}"
+      ;;
+    mcp)
+      printf "%s" "${MCP_PORT:-8787}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_host() {
+  case "$1" in
+    review)
+      printf "%s" "${BUNDLE_REVIEW_HOST:-127.0.0.1}"
+      ;;
+    mcp)
+      printf "%s" "${MCP_HOST:-127.0.0.1}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+tcp_reachable() {
+  local host="$1"
+  local port="$2"
+
+  if [[ -z "$host" || -z "$port" ]]; then
+    return 1
+  fi
+
+  (echo >"/dev/tcp/$host/$port") >/dev/null 2>&1
+}
+
+service_reachable() {
+  local service="$1"
+  local host
+  local port
+
+  case "$service" in
+    review | mcp)
+      host="$(service_host "$service")"
+      port="$(service_port "$service")"
+      tcp_reachable "$host" "$port"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+review_base_url() {
+  printf "http://%s:%s" "${BUNDLE_REVIEW_HOST:-127.0.0.1}" "${BUNDLE_REVIEW_PORT:-8790}"
+}
+
+review_dashboard_url() {
+  printf "%s/pending" "$(review_base_url)"
+}
+
+open_review_ui_once() {
+  local base_url
+  local url
+  base_url="$(review_base_url)"
+  url="$(review_dashboard_url)"
+
+  echo "Opening review dashboard: $url"
+
+  if [[ -x scripts/focus_review_url.py ]]; then
+    uv run python scripts/focus_review_url.py "$url" "$base_url" >/dev/null 2>&1 || true
+  elif [[ "$(uname -s)" == "Darwin" ]]; then
+    open "$url" >/dev/null 2>&1 || true
+  else
+    python3 -m webbrowser "$url" >/dev/null 2>&1 || true
+  fi
+}
+
+start_service() {
+  local service="$1"
+  local pid_file
+  local log_file
+  local pid
+  local -a command
+
+  is_known_service "$service" || {
+    echo "[error] unknown service: $service"
+    return 2
+  }
+
+  mkdir -p "$(process_dir)"
+  chmod 700 "$RUNTIME_ROOT" "$(process_dir)" 2>/dev/null || true
+
+  cleanup_stale_pid "$service"
+
+  pid_file="$(service_pid_file "$service")"
+  log_file="$(service_log_file "$service")"
+
+  if pid="$(read_service_pid "$service" 2>/dev/null)" && is_pid_alive "$pid"; then
+    echo "[reuse] $service pid=$pid log=$log_file"
+    return 0
+  fi
+
+  if service_reachable "$service"; then
+    echo "[warn] $service is reachable but not supervisor-managed; not starting duplicate. log=$log_file"
+    return 0
+  fi
+
+  {
+    echo
+    echo "== $(date -u '+%Y-%m-%dT%H:%M:%SZ') starting $service =="
+  } >> "$log_file"
+
+  case "$service" in
+    review)
+      if [[ -x ".venv/bin/python" ]]; then
+        command=(".venv/bin/python" "scripts/command_bundle_review_server.py")
+      else
+        command=("uv" "run" "python" "scripts/command_bundle_review_server.py")
+      fi
+      if [[ "${BUNDLE_WATCH_OPEN_MODE:-dashboard_once}" == "dashboard_once" ]]; then
+        pid="$(BUNDLE_WATCH_OPEN_MODE=none launch_background_service "$log_file" "${command[@]}")"
+      else
+        pid="$(launch_background_service "$log_file" "${command[@]}")"
+      fi
+      ;;
+    mcp)
+      pid="$(launch_background_service "$log_file" scripts/run_server.sh)"
+      ;;
+    ngrok)
+      pid="$(launch_background_service "$log_file" scripts/run_ngrok.sh)"
+      ;;
+  esac
+
+  printf "%s\n" "$pid" > "$pid_file"
+  echo "[start] $service pid=$pid log=$log_file"
+
+  sleep 0.4
+  if ! is_pid_alive "$pid"; then
+    rm -f "$pid_file"
+    echo "[warn] $service exited quickly; see log=$log_file"
+  fi
+}
+
+stop_service() {
+  local service="$1"
+  local pid_file
+  local pid
+  local pids=()
+  local tree_pid
+  local stopped=0
+
+  is_known_service "$service" || {
+    echo "[error] unknown service: $service"
+    return 2
+  }
+
+  pid_file="$(service_pid_file "$service")"
+
+  if ! pid="$(read_service_pid "$service" 2>/dev/null)"; then
+    echo "[stop] $service not managed"
+    return 0
+  fi
+
+  if ! is_pid_alive "$pid"; then
+    rm -f "$pid_file"
+    echo "[stop] $service stale pid removed"
+    return 0
+  fi
+
+  echo "[stop] $service pid=$pid"
+  while IFS= read -r tree_pid; do
+    [[ -n "$tree_pid" ]] || continue
+    pids+=("$tree_pid")
+  done < <(managed_process_tree_pids "$pid")
+
+  if [[ "${#pids[@]}" -eq 0 ]]; then
+    pids=("$pid")
+  fi
+
+  kill -TERM "-$pid" 2>/dev/null || kill -TERM "${pids[@]}" 2>/dev/null || true
+
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if ! any_pid_alive "${pids[@]}"; then
+      stopped=1
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [[ "$stopped" == "1" ]]; then
+    rm -f "$pid_file"
+    echo "[ok] $service stopped"
+  else
+    echo "[warn] $service still running after TERM; pid file kept: $pid_file"
+  fi
+}
+
+print_service_status() {
+  local service="$1"
+  local pid_file
+  local log_file
+  local pid=""
+  local state="no"
+  local reachability=""
+
+  pid_file="$(service_pid_file "$service")"
+  log_file="$(service_log_file "$service")"
+
+  if [[ -f "$pid_file" ]]; then
+    pid="$(tr -d '[:space:]' < "$pid_file")"
+    if is_pid_alive "$pid"; then
+      state="yes"
+    else
+      state="stale"
+    fi
+  fi
+
+  if [[ "$service" == "review" || "$service" == "mcp" ]]; then
+    local host
+    local port
+    host="$(service_host "$service")"
+    port="$(service_port "$service")"
+    if tcp_reachable "$host" "$port"; then
+      reachability=" reachable=yes ${host}:${port}"
+    else
+      reachability=" reachable=no ${host}:${port}"
+    fi
+  fi
+
+  echo "$service pid=${pid:-none} alive=$state log=$log_file$reachability"
+}
+
+tail_service_log() {
+  local service="${1:-}"
+  local log_file
+
+  if [[ -z "$service" ]]; then
+    echo "Usage: scripts/dev_session.sh logs [review|mcp|ngrok]"
+    echo
+    for item in review mcp ngrok; do
+      echo "$item: $(service_log_file "$item")"
+    done
+    return 2
+  fi
+
+  is_known_service "$service" || {
+    echo "[error] unknown service: $service"
+    return 2
+  }
+
+  log_file="$(service_log_file "$service")"
+  if [[ ! -f "$log_file" ]]; then
+    echo "[warn] log file does not exist yet: $log_file"
+    return 0
+  fi
+
+  tail -n 80 -f "$log_file"
+}
+
+start_session() {
+  load_session_env
+
+  mkdir -p "$(process_dir)"
+  chmod 700 "$RUNTIME_ROOT" "$(process_dir)" 2>/dev/null || true
+
+  echo "Starting Workspace Terminal Bridge local session"
+  echo "Process directory: $(process_dir)"
+  echo
+
+  start_service review
+  start_service mcp
+  start_service ngrok
+  echo
+  open_review_ui_once
+  echo
+  status_session
+}
+
+status_session() {
+  load_session_env
+
+  echo "Workspace Terminal Bridge service status"
+  echo "Process directory: $(process_dir)"
+  echo
+  for service in review mcp ngrok; do
+    print_service_status "$service"
+  done
+}
+
+stop_session() {
+  load_session_env
+
+  echo "Stopping Workspace Terminal Bridge local session"
+  for service in ngrok mcp review; do
+    stop_service "$service"
+  done
+}
+
+logs_session() {
+  load_session_env
+  tail_service_log "${1:-}"
 }
 
 configure() {
@@ -217,6 +666,18 @@ case "$cmd" in
     ;;
   review)
     review
+    ;;
+  start)
+    start_session
+    ;;
+  status)
+    status_session
+    ;;
+  stop)
+    stop_session
+    ;;
+  logs)
+    logs_session "${2:-}"
     ;;
   *)
     print_help >&2

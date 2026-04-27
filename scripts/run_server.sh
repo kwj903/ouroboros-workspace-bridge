@@ -22,4 +22,9 @@ EOF
 fi
 
 export MCP_HOST MCP_PORT NGROK_HOST
-uv run python server.py
+
+if [[ -x ".venv/bin/python" ]]; then
+  exec .venv/bin/python server.py
+fi
+
+exec uv run python server.py
