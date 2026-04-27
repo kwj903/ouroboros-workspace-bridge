@@ -53,6 +53,7 @@ my-terminal-tool/
 │   ├── command_bundle_review_server.py
 │   ├── command_bundle_runner.py
 │   ├── command_bundle_watcher.py
+│   ├── dev_session.sh
 │   ├── run_ngrok.sh
 │   ├── run_server.sh
 │   └── smoke_check.py
@@ -71,6 +72,7 @@ my-terminal-tool/
 │   └── tasks.py
 ├── tests/
 │   ├── test_refactored_helpers.py
+│   ├── test_review_ui_helpers.py
 │   └── test_safety.py
 ├── main.py
 ├── pyproject.toml
@@ -127,6 +129,56 @@ dependencies = [
 ```bash
 cd ~/workspace/Custom-Tools/GPT-Tools/my-terminal-tool
 ```
+
+## 개발 세션 운영
+
+Phase 1의 권장 작업 세션은 기존 서버 실행 흐름을 유지하면서, 점검과 로컬 승인 UI 실행만 helper로 표준화합니다.
+
+작업 전 점검:
+
+```bash
+scripts/dev_session.sh doctor
+```
+
+로컬 승인 UI와 watcher 시작:
+
+```bash
+scripts/dev_session.sh review
+```
+
+MCP server와 ngrok은 별도 터미널에서 기존 script로 실행합니다.
+
+```bash
+scripts/run_server.sh
+scripts/run_ngrok.sh
+```
+
+승인 대기 대시보드는 다음 주소를 한 번 열어두고 사용합니다.
+
+```text
+http://127.0.0.1:8790/pending
+```
+
+ChatGPT 앱 MCP URL 형식은 다음과 같습니다.
+
+```text
+https://<NGROK_HOST>/mcp?access_token=<TOKEN>
+```
+
+토큰 값은 README, 로그, 채팅 응답에 출력하지 않습니다.
+
+watcher는 기본적으로 macOS 알림 클릭 대상을 `/pending`으로 설정해 실행합니다.
+`terminal-notifier`가 설치되어 있으면 클릭 가능한 macOS 알림을 사용할 수 있습니다.
+
+```bash
+brew install terminal-notifier
+```
+
+`server.py` 또는 MCP tool schema를 변경한 경우에는 MCP server를 재시작하고 ChatGPT 앱에서 Refresh해야 합니다.
+review UI, watcher, README만 변경한 경우에는 보통 `scripts/dev_session.sh review` 세션만 재시작하면 되고 MCP server 재시작이나 ChatGPT 앱 Refresh는 필요하지 않습니다.
+
+장기 목표는 `/servers` 상태 탭, pid/log 기반 server manager, one-command session start를 제공하는 것입니다.
+이번 Phase 1에서는 서버 관리 UI나 전체 background supervisor를 구현하지 않습니다.
 
 권장 실행 방식은 helper script를 사용하는 것입니다.
 
