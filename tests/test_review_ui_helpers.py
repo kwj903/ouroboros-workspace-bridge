@@ -415,15 +415,22 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn(">review.pid</code>", html)
         self.assertIn(f'title="{root / "processes" / "review.log"}"', html)
         self.assertIn("/servers/session/stop/confirm", html)
+        self.assertIn("/servers/session/restart/confirm", html)
 
-    def test_full_session_stop_pages_render(self) -> None:
-        confirm_html = review.full_session_stop_confirm_html()
+    def test_full_session_stop_and_restart_pages_render(self) -> None:
+        stop_confirm_html = review.full_session_stop_confirm_html()
         stopping_html = review.full_session_stopping_html()
+        restart_confirm_html = review.full_session_restart_confirm_html()
+        restarting_html = review.full_session_restarting_html()
 
-        self.assertIn("/servers/session/stop", confirm_html)
-        self.assertIn("Stop full session", confirm_html)
+        self.assertIn("/servers/session/stop", stop_confirm_html)
+        self.assertIn("Stop full session", stop_confirm_html)
         self.assertIn("scripts/dev_session.sh start", stopping_html)
         self.assertIn("Full session stop requested", stopping_html)
+        self.assertIn("/servers/session/restart", restart_confirm_html)
+        self.assertIn("Restart full session", restart_confirm_html)
+        self.assertIn("scripts/dev_session.sh restart-session", restart_confirm_html)
+        self.assertIn("Full session restart requested", restarting_html)
 
     def test_processes_tab_renders_running_service_controls(self) -> None:
         html = review.supervisor_processes_html(

@@ -1526,6 +1526,68 @@ def full_session_stopping_html() -> str:
     """
 
 
+def schedule_full_session_restart(delay_seconds: float = 0.4) -> None:
+    def run_restart() -> None:
+        time.sleep(delay_seconds)
+        subprocess.run(
+            ["scripts/dev_session.sh", "restart-session"],
+            cwd=str(PROJECT_ROOT),
+            env=os.environ.copy(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=90,
+            shell=False,
+            check=False,
+        )
+
+    threading.Thread(target=run_restart, name="delayed-session-restart", daemon=True).start()
+
+
+def full_session_restart_confirm_html() -> str:
+    return """
+    <div class="stack">
+      <div class="notice">
+        <strong>전체 세션 재시작 확인</strong><br>
+        이 작업은 review UI, MCP server, ngrok을 모두 재시작합니다. 브라우저의 현재 review UI 연결이 잠시 끊길 수 있습니다.
+      </div>
+      <section class="card">
+        <h2>Restart full local session?</h2>
+        <p class="meta">
+          실행 명령: <code>scripts/dev_session.sh restart-session</code><br>
+          재시작 후 review UI가 다시 올라오면 <code>/servers?tab=processes</code>를 새로고침하세요.
+        </p>
+        <div class="button-row">
+          <form class="inline" method="post" action="/servers/session/restart">
+            <button class="approve" type="submit">Restart full session</button>
+          </form>
+          <a class="subnav-link" href="/servers?tab=processes">취소</a>
+        </div>
+      </section>
+    </div>
+    """
+
+
+def full_session_restarting_html() -> str:
+    return """
+    <div class="stack">
+      <div class="notice">
+        <strong>Full session restart requested</strong><br>
+        review UI, MCP server, ngrok이 곧 재시작됩니다.
+      </div>
+      <section class="card">
+        <h2>세션 재시작 중</h2>
+        <p class="meta">
+          이 페이지가 열린 뒤 잠시 후 review UI 연결이 끊겼다가 다시 살아나는 것이 정상입니다.<br>
+          몇 초 후 아래 주소를 다시 여세요.
+        </p>
+        <pre>http://127.0.0.1:8790/servers?tab=processes</pre>
+      </section>
+    </div>
+    """
+
+
 def step_text_meta_html(step: dict[str, object], key: str, label: str) -> str:
     ref_value = step.get(f"{key}_ref")
     chars_value = step.get(f"{key}_chars")
@@ -1896,9 +1958,12 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
           <section class="card">
             <h3>Full session</h3>
             <p class="meta">
-              전체 session start/stop은 review server 자기 자신을 포함하므로 별도 확인 페이지를 거칩니다.
+              전체 session stop/restart는 review server 자기 자신을 포함하므로 별도 확인 페이지를 거칩니다.
             </p>
-            <p><a class="subnav-link" href="/servers/session/stop/confirm">Stop full session...</a></p>
+            <p>
+              <a class="subnav-link" href="/servers/session/stop/confirm">Stop full session...</a>
+              <a class="subnav-link" href="/servers/session/restart/confirm">Restart full session...</a>
+            </p>
           </section>
           <p><a href="/api/supervisor-state"><code>/api/supervisor-state</code></a> 에서 같은 상태를 JSON으로 확인합니다.</p>
         </div>
@@ -2186,6 +2251,16 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/servers/session/restart/confirm":
+            self.send_html(
+                "전체 세션 재시작 확인",
+                full_session_restart_confirm_html(),
+                active_nav="servers",
+                subtitle="review UI, MCP server, ngrok을 모두 재시작하기 전에 확인합니다.",
+                server_tab="processes",
+            )
+            return
+
         if parsed.path == "/servers":
             params = parse_qs(parsed.query)
             current_tab = normalize_server_tab(params.get("tab", ["overview"])[0])
@@ -2321,6 +2396,27 @@ class Handler(BaseHTTPRequestHandler):
                 full_session_stopping_html(),
                 active_nav="servers",
                 subtitle="전체 로컬 세션 종료를 요청했습니다.",
+                server_tab="processes",
+            )
+            return
+
+        if parts == ["servers", "session", "restart"]:
+            if not is_local_client_address(str(self.client_address[0])):
+                self.send_html(
+                    "Forbidden",
+                    "<p>Local requests only.</p>",
+                    status=403,
+                    active_nav="servers",
+                    server_tab="processes",
+                )
+                return
+
+            schedule_full_session_restart()
+            self.send_html(
+                "세션 재시작 중",
+                full_session_restarting_html(),
+                active_nav="servers",
+                subtitle="전체 로컬 세션 재시작을 요청했습니다.",
                 server_tab="processes",
             )
             return
