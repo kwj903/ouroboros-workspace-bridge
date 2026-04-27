@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -16,7 +17,14 @@ REVIEW_BASE_URL = os.environ.get("BUNDLE_REVIEW_BASE_URL", "http://127.0.0.1:879
 POLL_SECONDS = float(os.environ.get("BUNDLE_WATCH_POLL_SECONDS", "1.5"))
 OPEN_MODE = os.environ.get("BUNDLE_WATCH_OPEN_MODE")
 NOTIFY = os.environ.get("BUNDLE_WATCH_NOTIFY")
+NOTIFICATION_TARGET = os.environ.get("BUNDLE_WATCH_NOTIFICATION_TARGET")
+OSASCRIPT_FALLBACK = os.environ.get("BUNDLE_WATCH_OSASCRIPT_FALLBACK")
 VALID_OPEN_MODES = {"dashboard_once", "bundle", "none"}
+VALID_NOTIFICATION_TARGETS = {"bundle", "pending"}
+TRUE_VALUES = {"1", "true", "yes", "on"}
+FALSE_VALUES = {"", "0", "false", "no", "off"}
+
+_terminal_notifier_warning_printed = False
 
 
 def parse_open_mode(value: str | None) -> str:
@@ -27,8 +35,29 @@ def parse_open_mode(value: str | None) -> str:
 
 
 def parse_notify_flag(value: str | None) -> bool:
-    normalized = (value if value is not None else "1").strip().lower()
-    return normalized not in {"0", "false", "no", "off"}
+    if value is None:
+        return True
+
+    normalized = value.strip().lower()
+    if normalized in TRUE_VALUES:
+        return True
+    if normalized in FALSE_VALUES:
+        return False
+    return False
+
+
+def parse_osascript_fallback_flag(value: str | None) -> bool:
+    if value is None:
+        return False
+
+    return value.strip().lower() in TRUE_VALUES
+
+
+def parse_notification_target(value: str | None) -> str:
+    target = (value or "bundle").strip().lower()
+    if target not in VALID_NOTIFICATION_TARGETS:
+        return "bundle"
+    return target
 
 
 def review_url(bundle_id: str) -> str:
@@ -37,6 +66,28 @@ def review_url(bundle_id: str) -> str:
 
 def pending_url() -> str:
     return f"{REVIEW_BASE_URL.rstrip('/')}/pending"
+
+
+def notification_url(bundle_id: str, target: str, base_url: str = REVIEW_BASE_URL) -> str:
+    normalized_target = parse_notification_target(target)
+    base = base_url.rstrip("/")
+    if normalized_target == "pending":
+        return f"{base}/pending"
+    return f"{base}/bundles/{bundle_id}"
+
+
+def terminal_notifier_command(bundle_id: str, target: str, base_url: str = REVIEW_BASE_URL) -> list[str]:
+    return [
+        "terminal-notifier",
+        "-title",
+        "Workspace Terminal Bridge",
+        "-message",
+        f"승인 대기 번들: {bundle_id}",
+        "-open",
+        notification_url(bundle_id, target, base_url),
+        "-group",
+        "workspace-terminal-bridge",
+    ]
 
 
 def server_health_ok() -> bool:
@@ -56,18 +107,37 @@ def open_url(url: str) -> None:
         webbrowser.open(url)
 
 
-def notify_pending_bundle(bundle_id: str) -> None:
-    if sys.platform != "darwin":
-        return
-
+def osascript_notification_command(bundle_id: str) -> list[str]:
     message = f"승인 대기 번들: {bundle_id}"
     escaped_message = message.replace("\\", "\\\\").replace('"', '\\"')
     escaped_title = "Workspace Terminal Bridge".replace("\\", "\\\\").replace('"', '\\"')
     script = f'display notification "{escaped_message}" with title "{escaped_title}"'
+    return ["osascript", "-e", script]
+
+
+def notify_pending_bundle(bundle_id: str, target: str) -> None:
+    global _terminal_notifier_warning_printed
+
+    if sys.platform != "darwin":
+        return
+
+    if shutil.which("terminal-notifier"):
+        command = terminal_notifier_command(bundle_id, target)
+    elif parse_osascript_fallback_flag(OSASCRIPT_FALLBACK):
+        command = osascript_notification_command(bundle_id)
+    else:
+        if not _terminal_notifier_warning_printed:
+            print(
+                "Clickable macOS notifications require terminal-notifier. "
+                "Install with: brew install terminal-notifier",
+                file=sys.stderr,
+            )
+            _terminal_notifier_warning_printed = True
+        return
 
     try:
         subprocess.run(
-            ["osascript", "-e", script],
+            command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=3,
@@ -103,12 +173,14 @@ def main() -> None:
     PENDING_DIR.mkdir(parents=True, exist_ok=True)
     open_mode = parse_open_mode(OPEN_MODE)
     notify_enabled = parse_notify_flag(NOTIFY)
+    notification_target = parse_notification_target(NOTIFICATION_TARGET)
     seen: set[str] = set() if open_mode == "bundle" else current_pending_bundle_ids()
 
     print(f"승인 대기 명령 번들 감시 중: {PENDING_DIR}")
     print(f"승인 UI 주소: {REVIEW_BASE_URL}")
     print(f"브라우저 열기 모드: {open_mode}")
     print(f"macOS 알림: {'켜짐' if notify_enabled else '꺼짐'}")
+    print(f"알림 클릭 대상: {notification_target}")
     print("종료하려면 Ctrl-C를 누르세요.")
 
     if not server_health_ok():
@@ -132,7 +204,7 @@ def main() -> None:
 
                 print(f"새 승인 대기 번들: {bundle_id}")
                 if notify_enabled:
-                    notify_pending_bundle(bundle_id)
+                    notify_pending_bundle(bundle_id, notification_target)
                 if open_mode == "bundle":
                     url = review_url(bundle_id)
                     print(f"승인 페이지 열기: {bundle_id}: {url}")

@@ -96,9 +96,45 @@ class WatcherHelperTests(unittest.TestCase):
     def test_parse_notify_flag(self) -> None:
         self.assertTrue(watcher.parse_notify_flag(None))
         self.assertTrue(watcher.parse_notify_flag("1"))
+        self.assertTrue(watcher.parse_notify_flag("true"))
+        self.assertTrue(watcher.parse_notify_flag("yes"))
+        self.assertTrue(watcher.parse_notify_flag("on"))
+        self.assertFalse(watcher.parse_notify_flag(""))
         self.assertFalse(watcher.parse_notify_flag("0"))
         self.assertFalse(watcher.parse_notify_flag("false"))
+        self.assertFalse(watcher.parse_notify_flag("no"))
         self.assertFalse(watcher.parse_notify_flag("off"))
+
+    def test_parse_notification_target(self) -> None:
+        self.assertEqual(watcher.parse_notification_target(None), "bundle")
+        self.assertEqual(watcher.parse_notification_target("bundle"), "bundle")
+        self.assertEqual(watcher.parse_notification_target("pending"), "pending")
+        self.assertEqual(watcher.parse_notification_target("bad-value"), "bundle")
+
+    def test_notification_url(self) -> None:
+        base_url = "http://127.0.0.1:8790"
+
+        self.assertEqual(
+            watcher.notification_url("cmd-test", "bundle", base_url),
+            "http://127.0.0.1:8790/bundles/cmd-test",
+        )
+        self.assertEqual(
+            watcher.notification_url("cmd-test", "pending", base_url),
+            "http://127.0.0.1:8790/pending",
+        )
+
+    def test_terminal_notifier_command(self) -> None:
+        command = watcher.terminal_notifier_command(
+            "cmd-test",
+            "bundle",
+            "http://127.0.0.1:8790",
+        )
+
+        self.assertEqual(command[0], "terminal-notifier")
+        self.assertIn("-open", command)
+        self.assertIn("http://127.0.0.1:8790/bundles/cmd-test", command)
+        self.assertIn("-group", command)
+        self.assertIn("workspace-terminal-bridge", command)
 
 
 if __name__ == "__main__":

@@ -336,9 +336,18 @@ uv run python scripts/command_bundle_runner.py apply <bundle_id>
 전체 이력은 `http://127.0.0.1:8790/bundles`에서 확인합니다.
 
 watcher 기본값은 시작 시 `/pending` 대시보드를 한 번 여는 `dashboard_once` 모드입니다.
-기존처럼 새 bundle마다 상세 탭을 열고 싶으면 `BUNDLE_WATCH_OPEN_MODE=bundle`을 설정합니다.
+macOS 알림은 기본으로 켜져 있지만, 클릭 가능한 알림은 `terminal-notifier`가 설치되어 있을 때 동작합니다.
+
+```bash
+brew install terminal-notifier
+BUNDLE_WATCH_NOTIFY=0 uv run python scripts/command_bundle_watcher.py
+BUNDLE_WATCH_NOTIFICATION_TARGET=pending uv run python scripts/command_bundle_watcher.py
+BUNDLE_WATCH_OPEN_MODE=bundle uv run python scripts/command_bundle_watcher.py
+```
+
+`BUNDLE_WATCH_NOTIFICATION_TARGET=pending`은 알림 클릭 대상을 `/pending`으로 바꿉니다.
+기존처럼 새 bundle마다 상세 탭을 자동으로 열고 싶으면 `BUNDLE_WATCH_OPEN_MODE=bundle`을 설정합니다.
 브라우저를 전혀 열지 않으려면 `BUNDLE_WATCH_OPEN_MODE=none`을 설정합니다.
-macOS 알림을 끄려면 `BUNDLE_WATCH_NOTIFY=0`을 설정합니다.
 
 ### 삭제/복구
 
