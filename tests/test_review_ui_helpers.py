@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import socket
 import tempfile
 import unittest
 from pathlib import Path
@@ -84,6 +86,144 @@ class ReviewServerHelperTests(unittest.TestCase):
 
         self.assertEqual(state["pending_count"], 1)
         self.assertEqual(state["latest_pending_bundle_id"], "cmd-pending")
+
+    def test_env_status_hides_values(self) -> None:
+        original = os.environ.get("MCP_ACCESS_TOKEN")
+        try:
+            os.environ["MCP_ACCESS_TOKEN"] = "secret-token-value"
+            self.assertEqual(review.env_status("MCP_ACCESS_TOKEN"), "set")
+
+            del os.environ["MCP_ACCESS_TOKEN"]
+            self.assertEqual(review.env_status("MCP_ACCESS_TOKEN"), "missing")
+        finally:
+            if original is None:
+                os.environ.pop("MCP_ACCESS_TOKEN", None)
+            else:
+                os.environ["MCP_ACCESS_TOKEN"] = original
+
+    def test_public_mcp_endpoint_hint_omits_token(self) -> None:
+        original_host = os.environ.get("NGROK_HOST")
+        original_base_url = os.environ.get("NGROK_BASE_URL")
+        try:
+            os.environ["NGROK_HOST"] = "example.ngrok-free.app?access_token=secret"
+            os.environ["NGROK_BASE_URL"] = "https://ignored.example/mcp?access_token=secret"
+
+            self.assertEqual(review.public_mcp_endpoint_hint(), "https://example.ngrok-free.app/mcp")
+            self.assertNotIn("access_token", review.public_mcp_endpoint_hint() or "")
+            self.assertNotIn("secret", review.public_mcp_endpoint_hint() or "")
+        finally:
+            if original_host is None:
+                os.environ.pop("NGROK_HOST", None)
+            else:
+                os.environ["NGROK_HOST"] = original_host
+
+            if original_base_url is None:
+                os.environ.pop("NGROK_BASE_URL", None)
+            else:
+                os.environ["NGROK_BASE_URL"] = original_base_url
+
+    def test_normalize_server_tab(self) -> None:
+        self.assertEqual(review.normalize_server_tab(None), "overview")
+        self.assertEqual(review.normalize_server_tab("services"), "services")
+        self.assertEqual(review.normalize_server_tab("bad-value"), "overview")
+
+    def test_tcp_port_reachable_false_for_invalid_or_unused_port(self) -> None:
+        self.assertFalse(review.tcp_port_reachable("127.0.0.1", 0))
+
+        sock = socket.socket()
+        try:
+            sock.bind(("127.0.0.1", 0))
+            unused_port = int(sock.getsockname()[1])
+        finally:
+            sock.close()
+
+        self.assertFalse(review.tcp_port_reachable("127.0.0.1", unused_port, timeout_seconds=0.05))
+
+    def test_server_state_does_not_include_token_value(self) -> None:
+        original_token = os.environ.get("MCP_ACCESS_TOKEN")
+        try:
+            os.environ["MCP_ACCESS_TOKEN"] = "secret-token-value"
+            serialized = json.dumps(review.server_state(), ensure_ascii=False)
+
+            self.assertIn('"mcp_access_token": "set"', serialized)
+            self.assertNotIn("secret-token-value", serialized)
+            self.assertNotIn("access_token=", serialized)
+        finally:
+            if original_token is None:
+                os.environ.pop("MCP_ACCESS_TOKEN", None)
+            else:
+                os.environ["MCP_ACCESS_TOKEN"] = original_token
+
+    def test_server_tab_content_omits_token_value(self) -> None:
+        original_token = os.environ.get("MCP_ACCESS_TOKEN")
+        original_host = os.environ.get("NGROK_HOST")
+        try:
+            os.environ["MCP_ACCESS_TOKEN"] = "secret-token-value"
+            os.environ["NGROK_HOST"] = "example.ngrok-free.app?access_token=secret-token-value"
+            html = review.server_tab_content_html("connection", review.server_state())
+
+            self.assertIn("https://&lt;NGROK_HOST&gt;/mcp?access_token=&lt;TOKEN&gt;", html)
+            self.assertNotIn("secret-token-value", html)
+            self.assertNotIn("example.ngrok-free.app?access_token", html)
+        finally:
+            if original_token is None:
+                os.environ.pop("MCP_ACCESS_TOKEN", None)
+            else:
+                os.environ["MCP_ACCESS_TOKEN"] = original_token
+
+            if original_host is None:
+                os.environ.pop("NGROK_HOST", None)
+            else:
+                os.environ["NGROK_HOST"] = original_host
+
+    def test_primary_nav_html_uses_large_category_labels(self) -> None:
+        html = review.primary_nav_html("history")
+
+        self.assertIn("승인", html)
+        self.assertIn("이력/결과", html)
+        self.assertIn("관리", html)
+        self.assertIn('aria-current="page"', html)
+
+    def test_management_nav_html_contains_internal_tab_labels(self) -> None:
+        html = review.management_nav_html("overview")
+
+        for label in ("개요", "서버", "연결", "환경", "로컬 도구", "진단"):
+            self.assertIn(label, html)
+
+    def test_environment_tab_omits_token_and_renders_long_label(self) -> None:
+        original_token = os.environ.get("MCP_ACCESS_TOKEN")
+        try:
+            os.environ["MCP_ACCESS_TOKEN"] = "secret-token-value"
+            html = review.server_tab_content_html("environment", review.server_state())
+
+            self.assertIn("NGROK_HOST/NGROK_BASE_URL", html)
+            self.assertIn("MCP_ACCESS_TOKEN", html)
+            self.assertIn("set", html)
+            self.assertNotIn("secret-token-value", html)
+        finally:
+            if original_token is None:
+                os.environ.pop("MCP_ACCESS_TOKEN", None)
+            else:
+                os.environ["MCP_ACCESS_TOKEN"] = original_token
+
+    def test_status_badge_includes_text_label(self) -> None:
+        html = review.status_badge("reachable", "ok")
+
+        self.assertIn("reachable", html)
+        self.assertIn("badge ok", html)
+
+    def test_app_shell_includes_sidebar_brand_and_management_nav(self) -> None:
+        html = review.app_shell(
+            "관리",
+            "<p>body</p>",
+            active_nav="servers",
+            server_tab="environment",
+        ).decode("utf-8")
+
+        self.assertIn("Workspace Terminal Bridge", html)
+        self.assertIn("Local MCP review panel", html)
+        self.assertIn("환경", html)
+        self.assertIn('aria-current="page"', html)
 
 
 class WatcherHelperTests(unittest.TestCase):

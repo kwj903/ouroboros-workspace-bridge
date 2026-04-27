@@ -5,6 +5,8 @@ import html
 import hashlib
 import json
 import os
+import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -28,6 +30,15 @@ PORT = int(os.environ.get("BUNDLE_REVIEW_PORT", "8790"))
 EVENT_POLL_SECONDS = 0.5
 EVENT_TIMEOUT_SECONDS = 25.0
 VALID_STATUS_FILTERS = {"all", "pending", "applied", "failed", "rejected"}
+VALID_SERVER_TABS = {"overview", "services", "connection", "environment", "tools", "diagnostics"}
+SERVER_TAB_LABELS = {
+    "overview": "개요",
+    "services": "서버",
+    "connection": "연결",
+    "environment": "환경",
+    "tools": "로컬 도구",
+    "diagnostics": "진단",
+}
 
 
 def now_iso() -> str:
@@ -55,6 +66,13 @@ def normalize_status_filter(value: str | None) -> str:
     if status not in VALID_STATUS_FILTERS:
         return "all"
     return status
+
+
+def normalize_server_tab(value: str | None) -> str:
+    tab = (value or "overview").strip().lower()
+    if tab not in VALID_SERVER_TABS:
+        return "overview"
+    return tab
 
 
 def list_bundles(status_filter: str = "all") -> list[dict[str, object]]:
@@ -132,6 +150,102 @@ def command_bundle_state() -> dict[str, object]:
     }
 
 
+def command_exists(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def env_status(name: str) -> str:
+    return "set" if os.environ.get(name) else "missing"
+
+
+def env_any_status(names: list[str]) -> str:
+    return "set" if any(os.environ.get(name) for name in names) else "missing"
+
+
+def env_int(name: str, default: int) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        return default
+
+
+def normalize_ngrok_host(value: str) -> str:
+    host = value.strip()
+    host = host.removeprefix("https://").removeprefix("http://")
+    host = host.split("/", 1)[0]
+    host = host.split("?", 1)[0]
+    host = host.split("#", 1)[0]
+    return host
+
+
+def public_mcp_endpoint_hint() -> str | None:
+    raw_host = os.environ.get("NGROK_HOST") or os.environ.get("NGROK_BASE_URL")
+    if not raw_host:
+        return None
+
+    host = normalize_ngrok_host(raw_host)
+    if host == "":
+        return None
+
+    return f"https://{host}/mcp"
+
+
+def tcp_port_reachable(host: str, port: int, timeout_seconds: float = 0.5) -> bool:
+    if port < 1 or port > 65535:
+        return False
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False
+
+
+def server_state() -> dict[str, object]:
+    mcp_host = os.environ.get("MCP_HOST", "127.0.0.1")
+    mcp_port = env_int("MCP_PORT", 8787)
+    review_host = os.environ.get("BUNDLE_REVIEW_HOST", HOST)
+    review_port = env_int("BUNDLE_REVIEW_PORT", PORT)
+    public_endpoint = public_mcp_endpoint_hint()
+
+    return {
+        "review_server": {
+            "status": "running",
+            "url": f"http://{review_host}:{review_port}/pending",
+            "pid": os.getpid(),
+        },
+        "review_dashboard": {
+            "pending_url": "/pending",
+            "history_url": "/bundles?status=all",
+        },
+        "tools": {
+            "uv": command_exists("uv"),
+            "ngrok": command_exists("ngrok"),
+            "terminal_notifier": command_exists("terminal-notifier"),
+        },
+        "environment": {
+            "mcp_access_token": env_status("MCP_ACCESS_TOKEN"),
+            "ngrok_host": env_any_status(["NGROK_HOST", "NGROK_BASE_URL"]),
+            "mcp_host": mcp_host,
+            "mcp_port": mcp_port,
+            "bundle_review_host": review_host,
+            "bundle_review_port": review_port,
+        },
+        "mcp_server": {
+            "reachable": tcp_port_reachable(mcp_host, mcp_port),
+            "url": f"http://{mcp_host}:{mcp_port}/mcp",
+        },
+        "ngrok": {
+            "installed": command_exists("ngrok"),
+            "configured": env_any_status(["NGROK_HOST", "NGROK_BASE_URL"]),
+            "public_mcp_endpoint_hint": public_endpoint,
+        },
+    }
+
+
 def escape(value: object) -> str:
     return html.escape(str(value), quote=True)
 
@@ -175,13 +289,98 @@ def status_filter_links_html(current: str) -> str:
     for status in ("all", "pending", "applied", "failed", "rejected"):
         label = labels[status]
         if status == current:
-            links.append(f"<strong>{escape(label)}</strong>")
+            links.append(
+                f'<span class="subnav-link is-active" aria-current="page">{escape(label)}</span>'
+            )
         else:
-            links.append(f'<a href="/bundles?status={escape(status)}">{escape(label)}</a>')
-    return '<p class="meta">필터: ' + " · ".join(links) + "</p>"
+            links.append(
+                f'<a class="subnav-link" href="/bundles?status={escape(status)}">{escape(label)}</a>'
+            )
+    return '<div class="subnav"><span class="meta-label">필터</span>' + "".join(links) + "</div>"
 
 
-def page(title: str, body: str) -> bytes:
+def primary_nav_html(active: str) -> str:
+    items = (
+        ("pending", "/pending", "승인"),
+        ("history", "/history", "이력/결과"),
+        ("servers", "/servers", "관리"),
+    )
+    links: list[str] = []
+    for key, href, label in items:
+        classes = ["nav-link"]
+        aria = ""
+        if key == active:
+            classes.append("is-active")
+            aria = ' aria-current="page"'
+        links.append(
+            f'<a class="{" ".join(classes)}" href="{escape(href)}"{aria}>{escape(label)}</a>'
+        )
+    return '<nav class="nav">' + "".join(links) + "</nav>"
+
+
+def management_nav_html(current_tab: str) -> str:
+    current_tab = normalize_server_tab(current_tab)
+    links: list[str] = []
+    for tab in ("overview", "services", "connection", "environment", "tools", "diagnostics"):
+        classes = ["side-link"]
+        aria = ""
+        if tab == current_tab:
+            classes.append("is-active")
+            aria = ' aria-current="page"'
+        links.append(
+            f'<a class="{" ".join(classes)}" href="/servers?tab={escape(tab)}"{aria}>'
+            f"{escape(SERVER_TAB_LABELS[tab])}</a>"
+        )
+    return '<div class="side-nav">' + "".join(links) + "</div>"
+
+
+def status_badge(label: str, tone: str) -> str:
+    allowed_tones = {"ok", "warn", "danger", "neutral"}
+    safe_tone = tone if tone in allowed_tones else "neutral"
+    return f'<span class="badge {escape(safe_tone)}">{escape(label)}</span>'
+
+
+def status_chip(label: str, tone: str) -> str:
+    return status_badge(label, tone)
+
+
+def bool_chip(value: object, true_label: str = "예", false_label: str = "아니오") -> str:
+    return status_chip(true_label if bool(value) else false_label, "ok" if bool(value) else "warn")
+
+
+def set_missing_chip(value: object) -> str:
+    return status_chip("set" if value == "set" else "missing", "ok" if value == "set" else "warn")
+
+
+def kv_row_html(
+    label: str,
+    value: object,
+    *,
+    code_value: bool = False,
+    value_is_html: bool = False,
+) -> str:
+    if value_is_html:
+        content = str(value)
+    elif code_value:
+        content = f"<code>{escape(value)}</code>"
+    else:
+        content = escape(value)
+
+    return (
+        '<div class="kv-row">'
+        f'<div class="kv-label">{escape(label)}</div>'
+        f'<div class="kv-value">{content}</div>'
+        "</div>"
+    )
+
+
+def app_shell(
+    title: str,
+    body: str,
+    active_nav: str,
+    subtitle: str = "",
+    server_tab: str | None = None,
+) -> bytes:
     html_text = f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -191,56 +390,372 @@ def page(title: str, body: str) -> bytes:
     :root {{
       color-scheme: light dark;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --surface: rgba(127, 127, 127, 0.08);
+      --surface-strong: rgba(127, 127, 127, 0.12);
+      --border: rgba(127, 127, 127, 0.24);
+      --accent: #2563eb;
+      --accent-soft: rgba(37, 99, 235, 0.12);
+      --success: #15803d;
+      --warning: #b45309;
+      --danger: #dc2626;
     }}
     body {{
-      max-width: 960px;
-      margin: 32px auto;
-      padding: 0 20px;
-      line-height: 1.5;
+      margin: 0 auto;
+      padding: 0;
+      line-height: 1.6;
+      background:
+        linear-gradient(180deg, rgba(127, 127, 127, 0.05), transparent 260px);
     }}
-    a {{ color: #2563eb; text-decoration: none; }}
-    a:hover {{ text-decoration: underline; }}
-    .card {{
-      border: 1px solid #d0d7de;
-      border-radius: 12px;
-      padding: 16px;
-      margin: 16px 0;
+    :focus-visible {{
+      outline: 3px solid rgba(37, 99, 235, 0.45);
+      outline-offset: 3px;
     }}
-    .meta {{
-      color: #667085;
+    .app-shell {{
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      min-height: 100vh;
+    }}
+    .sidebar {{
+      border-right: 1px solid var(--border);
+      padding: 28px 20px;
+      background: rgba(127, 127, 127, 0.05);
+    }}
+    .brand {{
+      display: grid;
+      gap: 4px;
+      margin-bottom: 24px;
+    }}
+    .brand-title {{
+      font-size: 18px;
+      font-weight: 800;
+      line-height: 1.25;
+    }}
+    .brand-subtitle {{
+      color: inherit;
+      opacity: 0.72;
       font-size: 14px;
+    }}
+    .sidebar-section {{
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }}
+    .sidebar-label {{
+      color: inherit;
+      opacity: 0.62;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }}
+    .main-content {{
+      min-width: 0;
+      padding: 32px min(5vw, 56px) 56px;
+    }}
+    .content-inner {{
+      display: grid;
+      gap: 22px;
+      max-width: 1040px;
+    }}
+    .page-header {{
+      display: grid;
+      gap: 8px;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: clamp(1.8rem, 3vw, 2.35rem);
+      line-height: 1.2;
+    }}
+    h2, h3 {{
+      margin-top: 0;
+    }}
+    a {{
+      color: var(--accent);
+      text-decoration: none;
+    }}
+    a:hover {{
+      text-decoration: underline;
+    }}
+    .nav {{
+      display: grid;
+      gap: 8px;
+    }}
+    .nav-link {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: inherit;
+      font-weight: 700;
+    }}
+    .nav-link:hover,
+    .nav-link.is-active {{
+      text-decoration: none;
+    }}
+    .nav-link.is-active {{
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-color: rgba(37, 99, 235, 0.28);
+    }}
+    .subnav {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 12px 0 18px;
+    }}
+    .subnav-link {{
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: inherit;
+      font-size: 14px;
+      font-weight: 600;
+    }}
+    .subnav-link.is-active {{
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-color: rgba(37, 99, 235, 0.28);
+    }}
+    .meta,
+    .meta-label {{
+      opacity: 0.78;
+      font-size: 14px;
+    }}
+    .card,
+    .metric,
+    .notice {{
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--surface);
+    }}
+    .card {{
+      padding: 20px;
+      margin: 0;
+    }}
+    .metric {{
+      padding: 18px;
+    }}
+    .notice {{
+      padding: 16px 18px;
+    }}
+    .stack {{
+      display: grid;
+      gap: 16px;
+    }}
+    .card-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+    }}
+    .section-title {{
+      display: grid;
+      gap: 6px;
+      margin-bottom: 4px;
+    }}
+    .side-nav {{
+      display: grid;
+      gap: 8px;
+    }}
+    .side-link {{
+      display: block;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: inherit;
+      font-weight: 600;
+    }}
+    .side-link:hover,
+    .side-link.is-active {{
+      text-decoration: none;
+    }}
+    .side-link.is-active {{
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-color: rgba(37, 99, 235, 0.28);
+    }}
+    .kv {{
+      display: grid;
+      gap: 0;
+    }}
+    .kv-row {{
+      display: grid;
+      grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+      padding: 12px 0;
+      border-top: 1px solid var(--border);
+    }}
+    .kv-row:first-child {{
+      border-top: 0;
+      padding-top: 0;
+    }}
+    .kv-label {{
+      font-weight: 700;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }}
+    .kv-value {{
+      min-width: 0;
+      display: flex;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 8px;
+      overflow-wrap: anywhere;
+    }}
+    .badge {{
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      max-width: 100%;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 13px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }}
+    .badge.ok {{
+      color: var(--success);
+      background: rgba(21, 128, 61, 0.12);
+      border-color: rgba(21, 128, 61, 0.18);
+    }}
+    .badge.warn {{
+      color: var(--warning);
+      background: rgba(180, 83, 9, 0.12);
+      border-color: rgba(180, 83, 9, 0.2);
+    }}
+    .badge.danger {{
+      color: var(--danger);
+      background: rgba(220, 38, 38, 0.12);
+      border-color: rgba(220, 38, 38, 0.2);
+    }}
+    .badge.neutral {{
+      background: var(--surface-strong);
+      border-color: var(--border);
+    }}
+    .button-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }}
+    form.inline {{
+      display: inline;
     }}
     code, pre {{
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }}
+    code {{
+      word-break: break-all;
+    }}
     pre {{
-      background: rgba(127, 127, 127, 0.12);
-      border-radius: 8px;
-      padding: 12px;
+      background: var(--surface-strong);
+      border-radius: 12px;
+      padding: 14px;
       overflow-x: auto;
+      margin: 0;
     }}
     button {{
-      font-size: 16px;
+      font-size: 15px;
+      font-weight: 700;
       padding: 10px 14px;
-      border-radius: 8px;
+      border-radius: 10px;
       border: 1px solid #888;
       cursor: pointer;
-      margin-right: 8px;
     }}
-    .approve {{ background: #16a34a; color: white; border-color: #16a34a; }}
-    .reject {{ background: #dc2626; color: white; border-color: #dc2626; }}
-    .pending {{ color: #ca8a04; font-weight: 700; }}
-    .applied {{ color: #16a34a; font-weight: 700; }}
-    .failed, .rejected {{ color: #dc2626; font-weight: 700; }}
+    .approve {{
+      background: #16a34a;
+      color: white;
+      border-color: #16a34a;
+    }}
+    .reject {{
+      background: #dc2626;
+      color: white;
+      border-color: #dc2626;
+    }}
+    .pending {{
+      color: #ca8a04;
+      font-weight: 700;
+    }}
+    .applied {{
+      color: #16a34a;
+      font-weight: 700;
+    }}
+    .failed, .rejected {{
+      color: #dc2626;
+      font-weight: 700;
+    }}
+    ul.compact {{
+      margin: 0;
+      padding: 0 20px;
+    }}
+    @media (max-width: 860px) {{
+      .app-shell {{
+        grid-template-columns: 1fr;
+      }}
+      .sidebar {{
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+        padding: 20px 16px;
+      }}
+      .main-content {{
+        padding: 24px 16px 48px;
+      }}
+      .nav,
+      .side-nav {{
+        display: flex;
+        flex-wrap: wrap;
+      }}
+      .nav-link,
+      .side-link {{
+        width: fit-content;
+      }}
+      .kv-row {{
+        grid-template-columns: 1fr;
+        gap: 6px;
+      }}
+    }}
   </style>
 </head>
 <body>
-  <h1>{escape(title)}</h1>
-  {body}
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-title">Workspace Terminal Bridge</div>
+        <div class="brand-subtitle">Local MCP review panel</div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Main</div>
+        {primary_nav_html(active_nav)}
+      </div>
+      {f'<div class="sidebar-section"><div class="sidebar-label">Management</div>{management_nav_html(server_tab)}</div>' if server_tab else ''}
+    </aside>
+    <main class="main-content">
+      <div class="content-inner">
+        <div class="page-header">
+          <h1>{escape(title)}</h1>
+          {f'<p class="meta">{escape(subtitle)}</p>' if subtitle else ''}
+        </div>
+        {body}
+      </div>
+    </main>
+  </div>
 </body>
 </html>
 """
     return html_text.encode("utf-8")
+
+
+def page(title: str, body: str, active_nav: str = "", subtitle: str = "", server_tab: str | None = None) -> bytes:
+    return app_shell(title, body, active_nav=active_nav, subtitle=subtitle, server_tab=server_tab)
 
 
 def run_runner(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -379,6 +894,201 @@ def result_html(result: object) -> str:
     """
 
 
+def bool_status(value: object) -> str:
+    return "installed" if bool(value) else "missing"
+
+
+def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
+    tab = normalize_server_tab(tab)
+    review_server = state.get("review_server") if isinstance(state.get("review_server"), dict) else {}
+    review_dashboard = state.get("review_dashboard") if isinstance(state.get("review_dashboard"), dict) else {}
+    tools = state.get("tools") if isinstance(state.get("tools"), dict) else {}
+    environment = state.get("environment") if isinstance(state.get("environment"), dict) else {}
+    mcp_server = state.get("mcp_server") if isinstance(state.get("mcp_server"), dict) else {}
+    ngrok = state.get("ngrok") if isinstance(state.get("ngrok"), dict) else {}
+
+    public_hint = ngrok.get("public_mcp_endpoint_hint")
+    public_hint_value = f"<code>{escape(public_hint)}</code>" if public_hint else "없음"
+    pending_url = str(review_dashboard.get("pending_url", "/pending"))
+    history_url = str(review_dashboard.get("history_url", "/bundles?status=all"))
+    review_url = str(review_server.get("url", ""))
+    mcp_url = str(mcp_server.get("url", ""))
+    mcp_reachable = bool(mcp_server.get("reachable"))
+    token_format = "https://<NGROK_HOST>/mcp?access_token=<TOKEN>"
+    read_only_notice = (
+        '<div class="notice">'
+        "<strong>보기 전용</strong><br>"
+        "이번 단계에서는 start/stop/restart 버튼을 제공하지 않습니다."
+        "</div>"
+    )
+
+    if tab == "overview":
+        return f"""
+        <div class="stack">
+          <div class="section-title">
+            <h2>{escape(SERVER_TAB_LABELS[tab])}</h2>
+            <p class="meta">관리 페이지의 핵심 상태와 바로 가기를 한눈에 봅니다.</p>
+          </div>
+          <div class="card-grid">
+            <section class="metric">
+              <div class="meta">Review server</div>
+              <h3>{status_chip("running" if review_server.get("status") == "running" else "unknown", "ok" if review_server.get("status") == "running" else "neutral")}</h3>
+              <p class="meta">승인 UI 프로세스와 review dashboard 응답 상태</p>
+            </section>
+            <section class="metric">
+              <div class="meta">MCP server</div>
+              <h3>{status_chip("reachable" if mcp_reachable else "not reachable", "ok" if mcp_reachable else "warn")}</h3>
+              <p class="meta">Local MCP endpoint TCP reachability</p>
+            </section>
+            <section class="metric">
+              <div class="meta">ngrok</div>
+              <h3>{set_missing_chip(ngrok.get("configured", "missing"))}</h3>
+              <p class="meta">공개 MCP endpoint 구성을 위한 host/base URL 상태</p>
+            </section>
+            <section class="metric">
+              <div class="meta">terminal-notifier</div>
+              <h3>{bool_chip(tools.get("terminal_notifier", False), "installed", "missing")}</h3>
+              <p class="meta">clickable notification 사용 가능 여부</p>
+            </section>
+          </div>
+          <section class="card">
+            <h3>빠른 이동</h3>
+            <p><a href="{escape(pending_url)}">승인 대기 보기</a> · <a href="{escape(history_url)}">이력/결과 보기</a></p>
+            <div class="kv">
+              {kv_row_html("Public MCP endpoint 후보", public_hint_value, value_is_html=True)}
+              {kv_row_html("Local MCP endpoint", mcp_url, code_value=True)}
+            </div>
+          </section>
+        </div>
+        """
+
+    if tab == "services":
+        return f"""
+        <div class="stack">
+          <div class="section-title">
+            <h2>{escape(SERVER_TAB_LABELS[tab])}</h2>
+            <p class="meta">Review UI, MCP server, ngrok 노출 정보를 보기 전용으로 확인합니다.</p>
+          </div>
+          {read_only_notice}
+          <section class="card">
+            <h3>Review server</h3>
+            <div class="kv">
+              {kv_row_html("Status", status_chip(str(review_server.get("status", "unknown")), "ok" if review_server.get("status") == "running" else "neutral"), value_is_html=True)}
+              {kv_row_html("URL", f'<a href="{escape(review_url)}">{escape(review_url)}</a>', value_is_html=True)}
+              {kv_row_html("PID", str(review_server.get("pid", "")), code_value=True)}
+            </div>
+          </section>
+          <section class="card">
+            <h3>MCP server</h3>
+            <div class="kv">
+              {kv_row_html("TCP reachable", status_chip("reachable" if mcp_reachable else "not reachable", "ok" if mcp_reachable else "warn"), value_is_html=True)}
+              {kv_row_html("Local endpoint", mcp_url, code_value=True)}
+            </div>
+          </section>
+          <section class="card">
+            <h3>ngrok</h3>
+            <div class="kv">
+              {kv_row_html("Installed", bool_chip(ngrok.get("installed", False), "installed", "missing"), value_is_html=True)}
+              {kv_row_html("Configured", set_missing_chip(ngrok.get("configured", "missing")), value_is_html=True)}
+              {kv_row_html("Public endpoint hint", public_hint_value, value_is_html=True)}
+            </div>
+          </section>
+        </div>
+        """
+
+    if tab == "connection":
+        return f"""
+        <div class="stack">
+          <div class="section-title">
+            <h2>{escape(SERVER_TAB_LABELS[tab])}</h2>
+            <p class="meta">ChatGPT 앱에 연결할 때 필요한 MCP endpoint 형식만 정리합니다.</p>
+          </div>
+          <section class="card">
+            <div class="kv">
+              {kv_row_html("Local MCP endpoint", mcp_url, code_value=True)}
+              {kv_row_html("Public MCP endpoint 후보", public_hint_value, value_is_html=True)}
+              {kv_row_html("ChatGPT MCP URL 형식", token_format, code_value=True)}
+              {kv_row_html("MCP server reachability", status_chip("reachable" if mcp_reachable else "not reachable", "ok" if mcp_reachable else "warn"), value_is_html=True)}
+            </div>
+          </section>
+          <div class="notice">
+            <strong>토큰 값은 여기 표시하지 않습니다.</strong><br>
+            ChatGPT 앱에는 <code>{escape(token_format)}</code> 형식만 사용하고 실제 <code>&lt;TOKEN&gt;</code> 값은 개인 secrets에서 관리합니다.
+          </div>
+        </div>
+        """
+
+    if tab == "environment":
+        return f"""
+        <div class="stack">
+          <div class="section-title">
+            <h2>{escape(SERVER_TAB_LABELS[tab])}</h2>
+            <p class="meta">연결에 필요한 환경 변수가 설정되었는지 값 노출 없이 상태만 보여줍니다.</p>
+          </div>
+          <section class="card">
+            <div class="kv">
+              {kv_row_html("MCP_ACCESS_TOKEN", set_missing_chip(environment.get("mcp_access_token", "missing")), value_is_html=True)}
+              {kv_row_html("NGROK_HOST/NGROK_BASE_URL", set_missing_chip(environment.get("ngrok_host", "missing")), value_is_html=True)}
+              {kv_row_html("MCP_HOST", str(environment.get("mcp_host", "")), code_value=True)}
+              {kv_row_html("MCP_PORT", str(environment.get("mcp_port", "")), code_value=True)}
+              {kv_row_html("BUNDLE_REVIEW_HOST", str(environment.get("bundle_review_host", "")), code_value=True)}
+              {kv_row_html("BUNDLE_REVIEW_PORT", str(environment.get("bundle_review_port", "")), code_value=True)}
+            </div>
+          </section>
+        </div>
+        """
+
+    if tab == "tools":
+        notifier_installed = bool(tools.get("terminal_notifier", False))
+        notifier_note = (
+            '<div class="notice"><strong>clickable notification 사용 가능</strong><br>'
+            "watcher가 macOS 알림 클릭으로 review UI를 열 수 있습니다."
+            "</div>"
+            if notifier_installed
+            else '<div class="notice"><strong>terminal-notifier가 없습니다.</strong><br>'
+            "clickable notification을 쓰려면 <code>brew install terminal-notifier</code>를 실행하세요."
+            "</div>"
+        )
+        return f"""
+        <div class="stack">
+          <div class="section-title">
+            <h2>{escape(SERVER_TAB_LABELS[tab])}</h2>
+            <p class="meta">로컬 세션 운영에 필요한 기본 도구 설치 여부를 봅니다.</p>
+          </div>
+          <section class="card">
+            <div class="kv">
+              {kv_row_html("uv", bool_chip(tools.get("uv", False), "installed", "missing"), value_is_html=True)}
+              {kv_row_html("ngrok", bool_chip(tools.get("ngrok", False), "installed", "missing"), value_is_html=True)}
+              {kv_row_html("terminal-notifier", bool_chip(notifier_installed, "installed", "missing"), value_is_html=True)}
+            </div>
+          </section>
+          {notifier_note}
+        </div>
+        """
+
+    return f"""
+    <div class="stack">
+      <div class="section-title">
+        <h2>{escape(SERVER_TAB_LABELS['diagnostics'])}</h2>
+        <p class="meta">문제 발생 시 가장 먼저 확인할 링크와 재시작 기준을 정리합니다.</p>
+      </div>
+      <section class="card">
+        <ul class="compact">
+          <li><a href="/api/server-state"><code>/api/server-state</code></a> 로 현재 review UI 상태를 JSON으로 확인합니다.</li>
+          <li><code>scripts/dev_session.sh doctor</code> 로 review 세션과 환경 상태를 점검합니다.</li>
+          <li><code>server.py</code> 또는 tool schema를 바꾼 경우 MCP server 재시작 후 ChatGPT 앱에서 Refresh가 필요합니다.</li>
+          <li>review UI, watcher, README만 바꾼 경우에는 review session만 다시 시작하면 되고 MCP server 재시작은 보통 필요하지 않습니다.</li>
+        </ul>
+      </section>
+    </div>
+    """
+
+
+def server_state_html(state: dict[str, object], current_tab: str) -> str:
+    current_tab = normalize_server_tab(current_tab)
+    return server_tab_content_html(current_tab, state)
+
+
 def bundle_summary_html(record: dict[str, object]) -> str:
     steps = record.get("steps")
     if not isinstance(steps, list):
@@ -399,8 +1109,16 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         print(f"[review-ui] {self.address_string()} - {fmt % args}")
 
-    def send_html(self, title: str, body: str, status: int = 200) -> None:
-        payload = page(title, body)
+    def send_html(
+        self,
+        title: str,
+        body: str,
+        status: int = 200,
+        active_nav: str = "",
+        subtitle: str = "",
+        server_tab: str | None = None,
+    ) -> None:
+        payload = page(title, body, active_nav=active_nav, subtitle=subtitle, server_tab=server_tab)
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
@@ -427,6 +1145,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/state":
             self.send_json(command_bundle_state())
+            return
+
+        if parsed.path == "/api/server-state":
+            self.send_json(server_state())
             return
 
         if parsed.path == "/api/events":
@@ -462,12 +1184,14 @@ class Handler(BaseHTTPRequestHandler):
                         위험도: <code>{escape(risk_label(record.get("risk", "")))}</code><br>
                         수정: {escape(record.get("updated_at", ""))}
                       </p>
-                      <form method="post" action="/bundles/{escape(bundle_id)}/approve" style="display:inline">
+                      <div class="button-row">
+                      <form class="inline" method="post" action="/bundles/{escape(bundle_id)}/approve">
                         <button class="approve" type="submit">승인하고 실행</button>
                       </form>
-                      <form method="post" action="/bundles/{escape(bundle_id)}/reject" style="display:inline">
+                      <form class="inline" method="post" action="/bundles/{escape(bundle_id)}/reject">
                         <button class="reject" type="submit">거절</button>
                       </form>
+                      </div>
                     </div>
                     """
                 )
@@ -508,14 +1232,31 @@ class Handler(BaseHTTPRequestHandler):
             """
 
             body = (
-                "<p><a href='/bundles?status=all'>전체 이력 보기</a></p>"
+                "<p><a href='/history'>전체 이력 보기</a></p>"
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
                 + pending_script
             )
-            self.send_html("승인 대기 번들", body)
+            self.send_html(
+                "승인",
+                body,
+                active_nav="pending",
+                subtitle="ChatGPT가 만든 pending bundle을 검토하고 승인합니다.",
+            )
             return
 
-        if parsed.path in {"/", "/bundles"}:
+        if parsed.path == "/servers":
+            params = parse_qs(parsed.query)
+            current_tab = normalize_server_tab(params.get("tab", ["overview"])[0])
+            self.send_html(
+                "관리",
+                server_state_html(server_state(), current_tab),
+                active_nav="servers",
+                subtitle="로컬 MCP review 환경의 상태를 보기 전용으로 확인합니다.",
+                server_tab=current_tab,
+            )
+            return
+
+        if parsed.path in {"/", "/bundles", "/history"}:
             params = parse_qs(parsed.query)
             status_filter = normalize_status_filter(params.get("status", ["all"])[0])
             rows = list_bundles(status_filter)
@@ -539,13 +1280,15 @@ class Handler(BaseHTTPRequestHandler):
                 )
 
             self.send_html(
-                "명령 번들 목록",
+                "이력/결과",
                 (
-                    "<p><a href='/pending'>승인 대기 대시보드</a> · "
-                    "<a href='/bundles?status=all'>새로고침</a></p>"
+                    "<p><a href='/pending'>승인 대기 보기</a> · "
+                    "<a href='/history'>새로고침</a></p>"
                     + status_filter_links_html(status_filter)
                     + ("\n".join(cards) if cards else "<p>번들이 없습니다.</p>")
                 ),
+                active_nav="history",
+                subtitle="적용, 실패, 거절, 대기 중인 bundle 이력을 확인합니다.",
             )
             return
 
@@ -554,7 +1297,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 path, record = find_bundle(bundle_id)
             except FileNotFoundError as exc:
-                self.send_html("찾을 수 없음", f"<pre>{escape(exc)}</pre>", status=404)
+                self.send_html("찾을 수 없음", f"<pre>{escape(exc)}</pre>", status=404, active_nav="history")
                 return
 
             status = str(record.get("status", "unknown"))
@@ -564,12 +1307,14 @@ class Handler(BaseHTTPRequestHandler):
             controls = ""
             if status == "pending":
                 controls = f"""
-                <form method="post" action="/bundles/{escape(bundle_id)}/approve" style="display:inline">
-                  <button class="approve" type="submit">승인하고 실행</button>
-                </form>
-                <form method="post" action="/bundles/{escape(bundle_id)}/reject" style="display:inline">
-                  <button class="reject" type="submit">거절</button>
-                </form>
+                <div class="button-row">
+                  <form class="inline" method="post" action="/bundles/{escape(bundle_id)}/approve">
+                    <button class="approve" type="submit">승인하고 실행</button>
+                  </form>
+                  <form class="inline" method="post" action="/bundles/{escape(bundle_id)}/reject">
+                    <button class="reject" type="submit">거절</button>
+                  </form>
+                </div>
                 """
 
             result_block = ""
@@ -579,7 +1324,7 @@ class Handler(BaseHTTPRequestHandler):
                 result_block += f"<h2>오류</h2><pre>{escape(error)}</pre>"
 
             body = f"""
-            <p><a href="/pending">← 승인 대기로 돌아가기</a> · <a href="/bundles?status=all">전체 목록</a></p>
+            <p><a href="/pending">← 승인으로 돌아가기</a> · <a href="/history">전체 목록</a></p>
             <div class="card">
               <p class="meta">
                 ID: <code>{escape(bundle_id)}</code><br>
@@ -597,7 +1342,13 @@ class Handler(BaseHTTPRequestHandler):
             {bundle_summary_html(record)}
             {result_block}
             """
-            self.send_html(str(record.get("title", bundle_id)), body)
+            active_nav = "pending" if status == "pending" else "history"
+            self.send_html(
+                str(record.get("title", bundle_id)),
+                body,
+                active_nav=active_nav,
+                subtitle="bundle 단계, 실행 결과, 원본 JSON을 확인합니다.",
+            )
             return
 
         if parsed.path == "/health":
@@ -642,7 +1393,7 @@ class Handler(BaseHTTPRequestHandler):
                   <pre>{escape(json.dumps(output, ensure_ascii=False, indent=2))}</pre>
                 </details>
                 """
-                self.send_html("실행기 오류", body, status=500)
+                self.send_html("실행기 오류", body, status=500, active_nav="pending")
                 return
 
             if action == "approve":
@@ -668,7 +1419,7 @@ class Handler(BaseHTTPRequestHandler):
                     <h3>오류</h3>
                     <pre>{escape(updated_record.get("error", ""))}</pre>
                     """
-                    self.send_html("번들 실행 실패", body, status=500)
+                    self.send_html("번들 실행 실패", body, status=500, active_nav="history")
                     return
 
             self.redirect("/pending")

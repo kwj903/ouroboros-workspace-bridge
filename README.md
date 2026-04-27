@@ -132,7 +132,7 @@ cd ~/workspace/Custom-Tools/GPT-Tools/my-terminal-tool
 
 ## 개발 세션 운영
 
-Phase 1의 권장 작업 세션은 기존 서버 실행 흐름을 유지하면서, 점검과 로컬 승인 UI 실행만 helper로 표준화합니다.
+권장 작업 세션은 기존 MCP server/ngrok 실행 흐름을 유지하면서, 점검과 로컬 승인 UI 실행을 helper로 표준화합니다.
 
 작업 전 점검:
 
@@ -153,11 +153,20 @@ scripts/run_server.sh
 scripts/run_ngrok.sh
 ```
 
+로컬 review UI는 `승인 / 이력·결과 / 관리` 3개 주요 섹션으로 구성됩니다.
 승인 대기 대시보드는 다음 주소를 한 번 열어두고 사용합니다.
 
 ```text
 http://127.0.0.1:8790/pending
 ```
+
+관리 섹션은 다음 주소에서 확인합니다.
+
+```text
+http://127.0.0.1:8790/servers
+```
+
+관리 섹션에는 개요, 서버, 연결, 환경, 로컬 도구, 진단 탭이 있으며 현재 단계에서는 모두 보기 전용입니다.
 
 ChatGPT 앱 MCP URL 형식은 다음과 같습니다.
 
@@ -177,8 +186,9 @@ brew install terminal-notifier
 `server.py` 또는 MCP tool schema를 변경한 경우에는 MCP server를 재시작하고 ChatGPT 앱에서 Refresh해야 합니다.
 review UI, watcher, README만 변경한 경우에는 보통 `scripts/dev_session.sh review` 세션만 재시작하면 되고 MCP server 재시작이나 ChatGPT 앱 Refresh는 필요하지 않습니다.
 
-장기 목표는 `/servers` 상태 탭, pid/log 기반 server manager, one-command session start를 제공하는 것입니다.
-이번 Phase 1에서는 서버 관리 UI나 전체 background supervisor를 구현하지 않습니다.
+현재 `/servers`는 보기 전용 관리 페이지이며 start/stop/restart 버튼은 제공하지 않습니다.
+향후 pid/log 기반 server manager와 one-command session start로 확장할 계획입니다.
+이번 단계에서는 서버 관리 UI의 실행 제어와 전체 background supervisor를 구현하지 않습니다.
 
 권장 실행 방식은 helper script를 사용하는 것입니다.
 
@@ -385,7 +395,8 @@ uv run python scripts/command_bundle_runner.py apply <bundle_id>
 
 권장 방식은 review server와 watcher를 함께 실행한 뒤 `/pending` 탭을 한 번 열어두는 것입니다.
 `/pending`은 long polling으로 새 pending bundle이 생길 때만 갱신되며, 새 bundle마다 브라우저 탭을 계속 만들지 않습니다.
-전체 이력은 `http://127.0.0.1:8790/bundles`에서 확인합니다.
+전체 이력과 실행 결과는 `http://127.0.0.1:8790/history`에서 확인합니다.
+관리 정보는 `http://127.0.0.1:8790/servers`에서 보기 전용으로 확인합니다.
 
 watcher 기본값은 시작 시 `/pending` 대시보드를 한 번 여는 `dashboard_once` 모드입니다.
 macOS 알림은 기본으로 켜져 있지만, 클릭 가능한 알림은 `terminal-notifier`가 설치되어 있을 때 동작합니다.
