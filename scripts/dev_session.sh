@@ -19,6 +19,7 @@ Usage:
   scripts/dev_session.sh start-service [mcp|ngrok]
   scripts/dev_session.sh stop-service [mcp|ngrok]
   scripts/dev_session.sh restart [mcp|ngrok]
+  scripts/dev_session.sh restart-session
   scripts/dev_session.sh stop
   scripts/dev_session.sh logs [review|mcp|ngrok]
 
@@ -35,6 +36,8 @@ Commands:
   stop-service
              Stop one supervisor-managed service. Supported: mcp, ngrok.
   restart    Restart a supervisor-managed service. Supported: mcp, ngrok.
+  restart-session
+             Restart the full local session through a detached helper.
   stop       Stop supervisor-managed services by pid file.
   logs       Tail a supervisor-managed service log.
 EOF
@@ -629,6 +632,32 @@ restart_service() {
   start_service "$service"
 }
 
+restart_session() {
+  load_session_env
+
+  mkdir -p "$(process_dir)"
+  chmod 700 "$RUNTIME_ROOT" "$(process_dir)" 2>/dev/null || true
+
+  local log_file
+  log_file="$(process_dir)/restart-session.log"
+
+  echo "Restarting Workspace Terminal Bridge full local session"
+  echo "Restart helper log: $log_file"
+  echo "The current review UI may disconnect briefly."
+
+  (
+    sleep 0.8
+    {
+      echo
+      echo "== $(date -u '+%Y-%m-%dT%H:%M:%SZ') restart-session =="
+      scripts/dev_session.sh stop
+      scripts/dev_session.sh start
+    } >> "$log_file" 2>&1
+  ) >/dev/null 2>&1 &
+
+  echo "[ok] restart helper scheduled"
+}
+
 stop_session() {
   load_session_env
 
@@ -765,6 +794,9 @@ case "$cmd" in
     ;;
   restart)
     restart_service "${2:-}"
+    ;;
+  restart-session)
+    restart_session
     ;;
   stop)
     stop_session
