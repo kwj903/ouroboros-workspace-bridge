@@ -17,6 +17,7 @@ from terminal_bridge.review_notifications import (
     notification_url as _notification_url,
     open_url,
     parse_bool_env,
+    parse_notification_click_action,
     parse_notification_target,
     parse_open_mode,
     pending_url as _pending_url,
@@ -32,6 +33,7 @@ POLL_SECONDS = float(os.environ.get("BUNDLE_WATCH_POLL_SECONDS", "1.5"))
 OPEN_MODE = os.environ.get("BUNDLE_WATCH_OPEN_MODE")
 NOTIFY = os.environ.get("BUNDLE_WATCH_NOTIFY")
 NOTIFICATION_TARGET = os.environ.get("BUNDLE_WATCH_NOTIFICATION_TARGET")
+NOTIFICATION_CLICK_ACTION = os.environ.get("BUNDLE_WATCH_NOTIFICATION_CLICK_ACTION")
 OSASCRIPT_FALLBACK = os.environ.get("BUNDLE_WATCH_OSASCRIPT_FALLBACK")
 
 
@@ -55,8 +57,13 @@ def notification_url(bundle_id: str, target: str, base_url: str = REVIEW_BASE_UR
     return _notification_url(base_url, bundle_id, target)
 
 
-def terminal_notifier_command(bundle_id: str, target: str, base_url: str = REVIEW_BASE_URL) -> list[str]:
-    return build_terminal_notifier_command(base_url, bundle_id, target)
+def terminal_notifier_command(
+    bundle_id: str,
+    target: str,
+    base_url: str = REVIEW_BASE_URL,
+    click_action: str = "focus",
+) -> list[str]:
+    return build_terminal_notifier_command(base_url, bundle_id, target, click_action)
 
 
 def server_health_ok() -> bool:
@@ -67,11 +74,12 @@ def server_health_ok() -> bool:
         return False
 
 
-def notify_pending_bundle(bundle_id: str, target: str) -> None:
+def notify_pending_bundle(bundle_id: str, target: str, click_action: str) -> None:
     send_notification(
         REVIEW_BASE_URL,
         bundle_id,
         target,
+        click_action=click_action,
         enable_osascript_fallback=parse_osascript_fallback_flag(OSASCRIPT_FALLBACK),
     )
 
@@ -103,6 +111,7 @@ def main() -> None:
     open_mode = parse_open_mode(OPEN_MODE)
     notify_enabled = parse_notify_flag(NOTIFY)
     notification_target = parse_notification_target(NOTIFICATION_TARGET)
+    notification_click_action = parse_notification_click_action(NOTIFICATION_CLICK_ACTION)
     seen: set[str] = set() if open_mode == "bundle" else current_pending_bundle_ids()
 
     print(f"승인 대기 명령 번들 감시 중: {PENDING_DIR}")
@@ -110,6 +119,7 @@ def main() -> None:
     print(f"브라우저 열기 모드: {open_mode}")
     print(f"macOS 알림: {'켜짐' if notify_enabled else '꺼짐'}")
     print(f"알림 클릭 대상: {notification_target}")
+    print(f"알림 클릭 동작: {notification_click_action}")
     print("종료하려면 Ctrl-C를 누르세요.")
 
     if not server_health_ok():
@@ -133,7 +143,7 @@ def main() -> None:
 
                 print(f"새 승인 대기 번들: {bundle_id}")
                 if notify_enabled:
-                    notify_pending_bundle(bundle_id, notification_target)
+                    notify_pending_bundle(bundle_id, notification_target, notification_click_action)
                 if open_mode == "bundle":
                     url = review_url(bundle_id)
                     print(f"승인 페이지 열기: {bundle_id}: {url}")

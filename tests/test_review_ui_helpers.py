@@ -260,6 +260,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("Embedded watcher", html)
         self.assertIn("Watcher open mode", html)
         self.assertIn("Notification target", html)
+        self.assertIn("Notification click action", html)
 
     def test_primary_nav_html_uses_large_category_labels(self) -> None:
         html = review.primary_nav_html("history")
@@ -318,6 +319,7 @@ class WatcherHelperTests(unittest.TestCase):
             "BUNDLE_WATCH_OPEN_MODE",
             "BUNDLE_WATCH_NOTIFY",
             "BUNDLE_WATCH_NOTIFICATION_TARGET",
+            "BUNDLE_WATCH_NOTIFICATION_CLICK_ACTION",
         )
         original = {name: os.environ.get(name) for name in names}
         try:
@@ -330,6 +332,7 @@ class WatcherHelperTests(unittest.TestCase):
             self.assertEqual(config["open_mode"], "dashboard_once")
             self.assertTrue(config["notify_enabled"])
             self.assertEqual(config["notification_target"], "pending")
+            self.assertEqual(config["notification_click_action"], "focus")
         finally:
             for name, value in original.items():
                 if value is None:
@@ -373,6 +376,12 @@ class WatcherHelperTests(unittest.TestCase):
         self.assertEqual(watcher.parse_notification_target("pending"), "pending")
         self.assertEqual(watcher.parse_notification_target("bad-value"), "pending")
 
+    def test_parse_notification_click_action(self) -> None:
+        self.assertEqual(watcher.parse_notification_click_action(None), "focus")
+        self.assertEqual(watcher.parse_notification_click_action("focus"), "focus")
+        self.assertEqual(watcher.parse_notification_click_action("open"), "open")
+        self.assertEqual(watcher.parse_notification_click_action("bad-value"), "focus")
+
     def test_notification_url(self) -> None:
         base_url = "http://127.0.0.1:8790"
 
@@ -384,8 +393,16 @@ class WatcherHelperTests(unittest.TestCase):
             watcher.notification_url("cmd-test", "pending", base_url),
             "http://127.0.0.1:8790/pending",
         )
+        self.assertEqual(
+            notifications.notification_url(
+                "http://127.0.0.1:8790?access_token=secret-token-value",
+                "cmd-test",
+                "pending",
+            ),
+            "http://127.0.0.1:8790/pending",
+        )
 
-    def test_terminal_notifier_command(self) -> None:
+    def test_terminal_notifier_command_focus_action(self) -> None:
         command = watcher.terminal_notifier_command(
             "cmd-test",
             "bundle",
@@ -393,10 +410,25 @@ class WatcherHelperTests(unittest.TestCase):
         )
 
         self.assertEqual(command[0], "terminal-notifier")
-        self.assertIn("-open", command)
-        self.assertIn("http://127.0.0.1:8790/bundles/cmd-test", command)
+        self.assertIn("-execute", command)
+        execute_value = command[command.index("-execute") + 1]
+        self.assertIn("scripts/focus_review_url.py", execute_value)
+        self.assertIn("http://127.0.0.1:8790/bundles/cmd-test", execute_value)
+        self.assertIn("http://127.0.0.1:8790", execute_value)
         self.assertIn("-group", command)
         self.assertIn("workspace-terminal-bridge", command)
+
+    def test_terminal_notifier_command_open_action(self) -> None:
+        command = watcher.terminal_notifier_command(
+            "cmd-test",
+            "bundle",
+            "http://127.0.0.1:8790",
+            "open",
+        )
+
+        self.assertIn("-open", command)
+        self.assertIn("http://127.0.0.1:8790/bundles/cmd-test", command)
+        self.assertNotIn("-execute", command)
 
     def test_terminal_notifier_command_omits_token_from_url(self) -> None:
         command = notifications.build_terminal_notifier_command(
@@ -406,7 +438,7 @@ class WatcherHelperTests(unittest.TestCase):
         )
         serialized = " ".join(command)
 
-        self.assertIn("http://127.0.0.1:8790/pending", command)
+        self.assertIn("http://127.0.0.1:8790/pending", serialized)
         self.assertNotIn("access_token", serialized)
         self.assertNotIn("secret-token-value", serialized)
 

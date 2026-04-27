@@ -193,9 +193,16 @@ https://<NGROK_HOST>/mcp?access_token=<TOKEN>
 
 embedded watcher는 기본적으로 macOS 알림 클릭 대상을 `/pending`으로 설정해 실행합니다.
 `terminal-notifier`가 설치되어 있으면 클릭 가능한 macOS 알림을 사용할 수 있습니다.
+알림 클릭 동작 기본값은 `focus`이며, Brave Browser, Google Chrome, Safari, Microsoft Edge에서 기존 review UI 탭을 찾아 포커스하고 없으면 새 탭으로 엽니다.
 
 ```bash
 brew install terminal-notifier
+```
+
+기존 `terminal-notifier -open` 방식으로 되돌리려면 다음처럼 시작합니다.
+
+```bash
+BUNDLE_WATCH_NOTIFICATION_CLICK_ACTION=open scripts/dev_session.sh review
 ```
 
 내장 watcher를 끄고 review server만 실행하려면 다음처럼 시작합니다.
@@ -430,10 +437,13 @@ review server의 embedded watcher가 pending bundle 감시, `/pending` dashboard
 
 embedded watcher 기본값은 시작 시 `/pending` 대시보드를 한 번 여는 `dashboard_once` 모드입니다.
 macOS 알림은 기본으로 켜져 있지만, 클릭 가능한 알림은 `terminal-notifier`가 설치되어 있을 때 동작합니다.
+알림 클릭 동작은 기본적으로 `focus`입니다. 기존 review UI 탭이 있으면 해당 탭으로 포커스/이동하고, 없으면 새 탭을 엽니다.
+기존 `terminal-notifier -open` 방식이 필요하면 `BUNDLE_WATCH_NOTIFICATION_CLICK_ACTION=open`을 설정합니다.
 
 ```bash
 brew install terminal-notifier
 BUNDLE_REVIEW_EMBEDDED_WATCHER=0 scripts/dev_session.sh review
+BUNDLE_WATCH_NOTIFICATION_CLICK_ACTION=open scripts/dev_session.sh review
 uv run python scripts/command_bundle_watcher.py
 BUNDLE_WATCH_NOTIFY=0 uv run python scripts/command_bundle_watcher.py
 BUNDLE_WATCH_NOTIFICATION_TARGET=bundle uv run python scripts/command_bundle_watcher.py
@@ -444,6 +454,12 @@ BUNDLE_WATCH_OPEN_MODE=bundle uv run python scripts/command_bundle_watcher.py
 기존처럼 새 bundle마다 상세 탭을 자동으로 열고 싶으면 `BUNDLE_WATCH_OPEN_MODE=bundle`을 설정합니다.
 브라우저를 전혀 열지 않으려면 `BUNDLE_WATCH_OPEN_MODE=none`을 설정합니다.
 standalone `scripts/command_bundle_watcher.py`는 embedded watcher를 끈 상태에서 fallback/debug 용도로 직접 실행할 수 있습니다.
+
+알림 클릭 focus helper는 수동으로도 확인할 수 있습니다.
+
+```bash
+uv run python scripts/focus_review_url.py http://127.0.0.1:8790/pending http://127.0.0.1:8790
+```
 
 ### 삭제/복구
 

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 VALID_OPEN_MODES = {"dashboard_once", "bundle", "none"}
 VALID_NOTIFICATION_TARGETS = {"bundle", "pending"}
+VALID_NOTIFICATION_CLICK_ACTIONS = {"focus", "open"}
 TRUE_VALUES = {"1", "true", "yes", "on"}
 FALSE_VALUES = {"", "0", "false", "no", "off"}
 
@@ -39,6 +42,13 @@ def parse_notification_target(value: str | None) -> str:
     return target
 
 
+def parse_notification_click_action(value: str | None) -> str:
+    action = (value or "focus").strip().lower()
+    if action not in VALID_NOTIFICATION_CLICK_ACTIONS:
+        return "focus"
+    return action
+
+
 def sanitize_base_url(base_url: str) -> str:
     raw = (base_url or "http://127.0.0.1:8790").strip()
     parts = urlsplit(raw)
@@ -64,15 +74,43 @@ def notification_url(base_url: str, bundle_id: str, target: str) -> str:
     return review_url(base_url, bundle_id)
 
 
-def build_terminal_notifier_command(base_url: str, bundle_id: str, target: str) -> list[str]:
+def focus_script_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "scripts" / "focus_review_url.py"
+
+
+def build_focus_execute_command(base_url: str, bundle_id: str, target: str) -> str:
+    target_url = notification_url(base_url, bundle_id, target)
+    clean_base_url = sanitize_base_url(base_url)
+    parts = [
+        sys.executable,
+        str(focus_script_path()),
+        target_url,
+        clean_base_url,
+    ]
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def build_terminal_notifier_command(
+    base_url: str,
+    bundle_id: str,
+    target: str,
+    click_action: str = "focus",
+) -> list[str]:
+    action = parse_notification_click_action(click_action)
+    target_url = notification_url(base_url, bundle_id, target)
+    action_args = (
+        ["-execute", build_focus_execute_command(base_url, bundle_id, target)]
+        if action == "focus"
+        else ["-open", target_url]
+    )
+
     return [
         "terminal-notifier",
         "-title",
         "Workspace Terminal Bridge",
         "-message",
         f"승인 대기 번들: {bundle_id}",
-        "-open",
-        notification_url(base_url, bundle_id, target),
+        *action_args,
         "-group",
         "workspace-terminal-bridge",
     ]
@@ -100,6 +138,7 @@ def send_notification(
     bundle_id: str,
     target: str,
     *,
+    click_action: str = "focus",
     enable_osascript_fallback: bool = False,
 ) -> bool:
     global _terminal_notifier_warning_printed
@@ -108,7 +147,7 @@ def send_notification(
         return False
 
     if shutil.which("terminal-notifier"):
-        command = build_terminal_notifier_command(base_url, bundle_id, target)
+        command = build_terminal_notifier_command(base_url, bundle_id, target, click_action)
     elif enable_osascript_fallback:
         command = osascript_notification_command(bundle_id)
     else:

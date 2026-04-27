@@ -23,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from terminal_bridge.review_notifications import (
     open_url,
     parse_bool_env,
+    parse_notification_click_action,
     parse_notification_target,
     parse_open_mode,
     pending_url as notification_pending_url,
@@ -309,6 +310,9 @@ def embedded_watcher_config() -> dict[str, object]:
         "open_mode": parse_open_mode(os.environ.get("BUNDLE_WATCH_OPEN_MODE")),
         "notify_enabled": parse_bool_env(os.environ.get("BUNDLE_WATCH_NOTIFY"), default=True),
         "notification_target": parse_notification_target(os.environ.get("BUNDLE_WATCH_NOTIFICATION_TARGET")),
+        "notification_click_action": parse_notification_click_action(
+            os.environ.get("BUNDLE_WATCH_NOTIFICATION_CLICK_ACTION")
+        ),
         "osascript_fallback": parse_bool_env(
             os.environ.get("BUNDLE_WATCH_OSASCRIPT_FALLBACK"),
             default=False,
@@ -394,6 +398,7 @@ def server_state() -> dict[str, object]:
             "open_mode": watcher_config["open_mode"],
             "notify_enabled": watcher_config["notify_enabled"],
             "notification_target": watcher_config["notification_target"],
+            "notification_click_action": watcher_config["notification_click_action"],
             "poll_seconds": watcher_config["poll_seconds"],
         },
     }
@@ -408,6 +413,7 @@ def embedded_watcher_loop(
     open_mode = str(config.get("open_mode", "dashboard_once"))
     notify_enabled = bool(config.get("notify_enabled", True))
     notification_target = str(config.get("notification_target", "pending"))
+    notification_click_action = str(config.get("notification_click_action", "focus"))
     poll_seconds = float(config.get("poll_seconds", 1.5))
     osascript_fallback = bool(config.get("osascript_fallback", False))
 
@@ -422,6 +428,7 @@ def embedded_watcher_loop(
                     base_url,
                     bundle_id,
                     notification_target,
+                    click_action=notification_click_action,
                     enable_osascript_fallback=osascript_fallback,
                 )
             if open_mode == "bundle":
@@ -459,6 +466,7 @@ def start_embedded_watcher() -> tuple[threading.Event | None, threading.Thread |
     print(f"[review-ui] 브라우저 열기 모드: {open_mode}")
     print(f"[review-ui] macOS 알림: {'켜짐' if config['notify_enabled'] else '꺼짐'}")
     print(f"[review-ui] 알림 클릭 대상: {config['notification_target']}")
+    print(f"[review-ui] 알림 클릭 동작: {config['notification_click_action']}")
     return stop_event, thread
 
 
@@ -1391,6 +1399,7 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
           <li>Embedded watcher: {status_chip("enabled" if embedded_watcher.get("enabled") else "disabled", "ok" if embedded_watcher.get("enabled") else "neutral")}</li>
           <li>Watcher open mode: <code>{escape(embedded_watcher.get("open_mode", ""))}</code></li>
           <li>Notification target: <code>{escape(embedded_watcher.get("notification_target", ""))}</code></li>
+          <li>Notification click action: <code>{escape(embedded_watcher.get("notification_click_action", ""))}</code></li>
           <li>Watcher poll seconds: <code>{escape(embedded_watcher.get("poll_seconds", ""))}</code></li>
           <li><code>scripts/dev_session.sh doctor</code> 로 review 세션과 환경 상태를 점검합니다.</li>
           <li><code>server.py</code> 또는 tool schema를 바꾼 경우 MCP server 재시작 후 ChatGPT 앱에서 Refresh가 필요합니다.</li>
