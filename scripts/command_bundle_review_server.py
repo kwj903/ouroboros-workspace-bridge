@@ -854,13 +854,14 @@ def process_path_cell_html(value: object) -> str:
     return f'<code title="{escape(path)}">{escape(label)}</code>'
 
 
-def supervisor_control_html(service: str) -> str:
+def supervisor_control_html(service: str, state: str) -> str:
     if service not in SUPERVISOR_RESTARTABLE_SERVICES:
         return '<span class="meta">terminal only</span>'
 
     safe_service = escape(service)
+    actions = (("stop", "Stop"), ("restart", "Restart")) if state == "yes" else (("start", "Start"),)
     buttons = []
-    for action, label in (("start", "Start"), ("stop", "Stop"), ("restart", "Restart")):
+    for action, label in actions:
         buttons.append(
             f'<form class="inline" method="post" action="/servers/processes/{action}/{safe_service}">'
             f'<button class="secondary" type="submit">{label}</button>'
@@ -896,7 +897,7 @@ def supervisor_processes_html(state: dict[str, object]) -> str:
             f"<td><code>{escape(endpoint)}</code></td>"
             f"<td>{process_path_cell_html(item.get('log_file'))}</td>"
             f"<td>{process_path_cell_html(item.get('pid_file'))}</td>"
-            f"<td>{supervisor_control_html(name)}</td>"
+            f"<td>{supervisor_control_html(name, alive_state)}</td>"
             "</tr>"
         )
 

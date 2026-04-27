@@ -402,11 +402,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("scripts/dev_session.sh status", html)
         self.assertIn("scripts/dev_session.sh restart [mcp|ngrok]", html)
         self.assertIn('/servers/processes/start/mcp', html)
-        self.assertIn('/servers/processes/stop/mcp', html)
-        self.assertIn('/servers/processes/restart/mcp', html)
         self.assertIn('/servers/processes/start/ngrok', html)
-        self.assertIn('/servers/processes/stop/ngrok', html)
-        self.assertIn('/servers/processes/restart/ngrok', html)
         self.assertNotIn('/servers/processes/restart/review', html)
         self.assertNotIn('/servers/processes/start/review', html)
         self.assertNotIn('/servers/processes/stop/review', html)
@@ -418,6 +414,29 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn(">review.log</code>", html)
         self.assertIn(">review.pid</code>", html)
         self.assertIn(f'title="{root / "processes" / "review.log"}"', html)
+
+    def test_processes_tab_renders_running_service_controls(self) -> None:
+        html = review.supervisor_processes_html(
+            {
+                "services": [
+                    {
+                        "name": "mcp",
+                        "pid": 12345,
+                        "state": "yes",
+                        "managed_state": "yes",
+                        "reachable": True,
+                        "host": "127.0.0.1",
+                        "port": 8787,
+                        "log_file": "/tmp/mcp.log",
+                        "pid_file": "/tmp/mcp.pid",
+                    }
+                ]
+            }
+        )
+
+        self.assertIn('/servers/processes/stop/mcp', html)
+        self.assertIn('/servers/processes/restart/mcp', html)
+        self.assertNotIn('/servers/processes/start/mcp', html)
 
     def test_processes_tab_renders_action_success_notice(self) -> None:
         root = Path(self.tmp.name) / "runtime"
