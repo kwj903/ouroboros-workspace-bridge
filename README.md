@@ -152,7 +152,23 @@ scripts/dev_session.sh configure
 토큰 값은 입력 중 화면에 표시하지 않으며 README, 로그, git tracked 파일에 저장하지 않습니다.
 `NGROK_HOST`는 사람마다 다를 수 있으므로 환경 변수 또는 `session.env`에서 관리합니다.
 
-로컬 승인 UI 시작:
+전체 로컬 세션 시작은 다음 한 명령을 권장합니다.
+
+```bash
+scripts/dev_session.sh start
+```
+
+이 명령은 review server, MCP server, ngrok을 백그라운드로 실행하고 `~/.mcp_terminal_bridge/my-terminal-tool/processes` 아래 pid/log 파일로 관리합니다. 같은 명령을 다시 실행하면 이미 살아 있는 supervisor-managed process를 재사용하고 중복 실행하지 않습니다.
+
+세션 상태, 로그, 종료는 다음 명령으로 확인합니다.
+
+```bash
+scripts/dev_session.sh status
+scripts/dev_session.sh logs [review|mcp|ngrok]
+scripts/dev_session.sh stop
+```
+
+기존처럼 review server 하나만 foreground로 실행하려면 다음 명령을 사용할 수 있습니다.
 
 ```bash
 scripts/dev_session.sh review
@@ -161,7 +177,7 @@ scripts/dev_session.sh review
 이 명령은 review server 하나를 foreground로 실행하고, 내부 embedded watcher가 pending bundle 감시와 알림을 담당합니다.
 이미 8790 포트가 사용 중이면 기존 review server가 떠 있는 것으로 보고 시작을 중단하며, 기존 프로세스 종료 명령을 안내합니다.
 
-MCP server와 ngrok은 별도 터미널에서 기존 script로 실행합니다.
+MCP server와 ngrok을 수동으로 각각 실행해야 하는 fallback/debug 상황에서는 기존 script를 사용할 수 있습니다.
 
 ```bash
 scripts/run_server.sh
@@ -252,9 +268,8 @@ uv run python scripts/command_bundle_watcher.py
 review UI, watcher, README만 변경한 경우에는 보통 `scripts/dev_session.sh review` 세션만 재시작하면 되고 MCP server 재시작이나 ChatGPT 앱 Refresh는 필요하지 않습니다.
 
 현재 `/servers`는 보기 전용 관리 페이지이며 start/stop/restart 버튼은 제공하지 않습니다.
-이력·결과 개선 단계에서도 start/stop/restart 버튼은 제공하지 않습니다.
-향후 pid/log 기반 server manager와 one-command session start로 확장할 계획입니다.
-이번 단계에서는 서버 관리 UI의 실행 제어와 전체 background supervisor를 구현하지 않습니다.
+프로세스 탭은 `scripts/dev_session.sh start`가 만든 pid/log 파일을 읽어 상태만 표시합니다.
+실제 프로세스 제어는 아직 웹 UI에서 실행하지 않고 터미널의 `scripts/dev_session.sh start`, `status`, `logs`, `stop` 명령으로 수행합니다.
 
 권장 실행 방식은 helper script를 사용하는 것입니다.
 

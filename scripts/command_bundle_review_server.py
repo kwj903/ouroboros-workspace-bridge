@@ -1692,6 +1692,17 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
             </div>
           </section>
           <section class="card">
+            <h3>CLI controls</h3>
+            <p class="meta">프로세스 제어는 아직 웹 UI에서 실행하지 않고 터미널에서 수행합니다.</p>
+            <ul class="compact">
+              <li>전체 세션 시작: <code>scripts/dev_session.sh start</code></li>
+              <li>상태 확인: <code>scripts/dev_session.sh status</code></li>
+              <li>서비스 로그: <code>scripts/dev_session.sh logs [review|mcp|ngrok]</code></li>
+              <li>전체 세션 종료: <code>scripts/dev_session.sh stop</code></li>
+              <li>UI start/stop/restart 버튼은 다음 단계에서 별도 안전장치를 설계한 뒤 추가합니다.</li>
+            </ul>
+          </section>
+          <section class="card">
             {supervisor_processes_html(supervisor)}
           </section>
           <p><a href="/api/supervisor-state"><code>/api/supervisor-state</code></a> 에서 같은 상태를 JSON으로 확인합니다.</p>
