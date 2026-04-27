@@ -16,6 +16,8 @@ Usage:
   scripts/dev_session.sh review
   scripts/dev_session.sh start
   scripts/dev_session.sh status
+  scripts/dev_session.sh start-service [mcp|ngrok]
+  scripts/dev_session.sh stop-service [mcp|ngrok]
   scripts/dev_session.sh restart [mcp|ngrok]
   scripts/dev_session.sh stop
   scripts/dev_session.sh logs [review|mcp|ngrok]
@@ -28,6 +30,10 @@ Commands:
   review     Run the local command bundle review server with its embedded watcher.
   start      Start review, MCP server, and ngrok in the background.
   status     Show supervisor-managed service status.
+  start-service
+             Start one supervisor-managed service. Supported: mcp, ngrok.
+  stop-service
+             Stop one supervisor-managed service. Supported: mcp, ngrok.
   restart    Restart a supervisor-managed service. Supported: mcp, ngrok.
   stop       Stop supervisor-managed services by pid file.
   logs       Tail a supervisor-managed service log.
@@ -567,29 +573,56 @@ status_session() {
   done
 }
 
+require_single_service() {
+  local service="${1:-}"
+  local action="$2"
+
+  case "$service" in
+    mcp | ngrok)
+      return 0
+      ;;
+    "")
+      echo "Usage: scripts/dev_session.sh $action [mcp|ngrok]" >&2
+      return 2
+      ;;
+    review)
+      echo "[error] review is intentionally not supported by scripts/dev_session.sh $action." >&2
+      echo "        Use scripts/dev_session.sh start/stop from a terminal for the full session instead." >&2
+      return 2
+      ;;
+    *)
+      echo "[error] unknown or unsupported service for $action: $service" >&2
+      echo "Usage: scripts/dev_session.sh $action [mcp|ngrok]" >&2
+      return 2
+      ;;
+  esac
+}
+
+start_single_service() {
+  local service="${1:-}"
+
+  load_session_env
+  require_single_service "$service" "start-service" || return "$?"
+
+  echo "Starting Workspace Terminal Bridge service: $service"
+  start_service "$service"
+}
+
+stop_single_service() {
+  local service="${1:-}"
+
+  load_session_env
+  require_single_service "$service" "stop-service" || return "$?"
+
+  echo "Stopping Workspace Terminal Bridge service: $service"
+  stop_service "$service"
+}
+
 restart_service() {
   local service="${1:-}"
 
   load_session_env
-
-  case "$service" in
-    mcp | ngrok)
-      ;;
-    "")
-      echo "Usage: scripts/dev_session.sh restart [mcp|ngrok]" >&2
-      return 2
-      ;;
-    review)
-      echo "[error] review restart is intentionally not supported by this command." >&2
-      echo "        Use scripts/dev_session.sh stop && scripts/dev_session.sh start from a terminal instead." >&2
-      return 2
-      ;;
-    *)
-      echo "[error] unknown or unsupported restart service: $service" >&2
-      echo "Usage: scripts/dev_session.sh restart [mcp|ngrok]" >&2
-      return 2
-      ;;
-  esac
+  require_single_service "$service" "restart" || return "$?"
 
   echo "Restarting Workspace Terminal Bridge service: $service"
   stop_service "$service"
@@ -723,6 +756,12 @@ case "$cmd" in
     ;;
   status)
     status_session
+    ;;
+  start-service)
+    start_single_service "${2:-}"
+    ;;
+  stop-service)
+    stop_single_service "${2:-}"
     ;;
   restart)
     restart_service "${2:-}"
