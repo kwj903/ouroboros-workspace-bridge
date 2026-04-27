@@ -150,6 +150,81 @@ def command_bundle_state() -> dict[str, object]:
     }
 
 
+def bundle_status_counts() -> dict[str, int]:
+    counts = {
+        "pending": 0,
+        "applied": 0,
+        "failed": 0,
+        "rejected": 0,
+        "all": 0,
+    }
+
+    for record in list_bundles("all"):
+        status = str(record.get("status", record.get("_directory_status", "unknown")))
+        if status in counts and status != "all":
+            counts[status] += 1
+        counts["all"] += 1
+
+    return counts
+
+
+def latest_bundle_id(status: str) -> str | None:
+    rows = list_bundles(status)
+    if not rows:
+        return None
+    bundle_id = rows[0].get("bundle_id")
+    return str(bundle_id) if bundle_id else None
+
+
+def latest_updated_at() -> str | None:
+    rows = list_bundles("all")
+    if not rows:
+        return None
+    updated_at = rows[0].get("updated_at")
+    return str(updated_at) if updated_at else None
+
+
+def step_result_status(step: dict[str, object]) -> str:
+    if "exit_code" not in step or step.get("exit_code") is None:
+        return "unknown"
+    return "success" if step.get("exit_code") == 0 else "failed"
+
+
+def short_error(value: object, max_chars: int = 160) -> str:
+    text = str(value or "").strip()
+    if max_chars < 1:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "…"
+
+
+def summarize_bundle_result(record: dict[str, object]) -> dict[str, object]:
+    steps = record.get("steps")
+    result = record.get("result")
+    result_steps: list[dict[str, object]] = []
+
+    if isinstance(result, dict) and isinstance(result.get("steps"), list):
+        result_steps = [step for step in result["steps"] if isinstance(step, dict)]
+
+    failed_step_count = sum(1 for step in result_steps if step_result_status(step) == "failed")
+
+    return {
+        "command_count": len(steps) if isinstance(steps, list) else 0,
+        "result_step_count": len(result_steps),
+        "failed_step_count": failed_step_count,
+        "error_summary": short_error(record.get("error")),
+    }
+
+
+def history_state() -> dict[str, object]:
+    return {
+        "counts": bundle_status_counts(),
+        "latest_failed_bundle_id": latest_bundle_id("failed"),
+        "latest_updated_at": latest_updated_at(),
+    }
+
+
 def command_exists(name: str) -> bool:
     return shutil.which(name) is not None
 
@@ -539,8 +614,26 @@ def app_shell(
       padding: 20px;
       margin: 0;
     }}
+    .card.is-failed {{
+      border-color: rgba(220, 38, 38, 0.36);
+      background: rgba(220, 38, 38, 0.07);
+    }}
     .metric {{
       padding: 18px;
+    }}
+    .metric-link {{
+      display: block;
+      color: inherit;
+    }}
+    .metric-link:hover {{
+      text-decoration: none;
+      border-color: rgba(37, 99, 235, 0.32);
+    }}
+    .metric-value {{
+      font-size: 28px;
+      font-weight: 800;
+      line-height: 1.1;
+      margin: 8px 0 4px;
     }}
     .notice {{
       padding: 16px 18px;
@@ -833,11 +926,21 @@ def step_summary_html(step: dict[str, object], idx: int) -> str:
     """
 
 
+def result_status_badge(status: str) -> str:
+    if status == "success":
+        return status_badge("success", "ok")
+    if status == "failed":
+        return status_badge("failed", "danger")
+    return status_badge("unknown", "neutral")
+
+
 def result_step_html(step: dict[str, object], idx: int) -> str:
     stdout = str(step.get("stdout", ""))
     stderr = str(step.get("stderr", ""))
     exit_code = step.get("exit_code")
     exit_value = "" if exit_code is None else str(exit_code)
+    status = step_result_status(step)
+    card_class = "card is-failed" if status == "failed" else "card"
 
     stdout_block = ""
     if stdout:
@@ -858,14 +961,82 @@ def result_step_html(step: dict[str, object], idx: int) -> str:
         """
 
     return f"""
-    <div class="card">
+    <div class="{card_class}">
       <h3>{idx}. {escape(step.get("name", ""))}</h3>
       <p class="meta">
         작업 종류: <code>{escape(step.get("type", ""))}</code><br>
+        상태: {result_status_badge(status)}<br>
         exit_code: <code>{escape(exit_value)}</code>
       </p>
       {stdout_block}
       {stderr_block}
+    </div>
+    """
+
+
+def history_summary_html(state: dict[str, object]) -> str:
+    counts = state.get("counts") if isinstance(state.get("counts"), dict) else {}
+    latest_failed = state.get("latest_failed_bundle_id")
+
+    def count_card(label: str, count_key: str, href: str, tone: str = "neutral") -> str:
+        count = int(counts.get(count_key, 0))
+        return f"""
+        <a class="metric metric-link" href="{escape(href)}">
+          <div class="meta">{escape(label)}</div>
+          <div class="metric-value">{escape(count)}</div>
+          {status_badge(count_key, tone)}
+        </a>
+        """
+
+    failed_block = (
+        f'<a href="/bundles/{escape(latest_failed)}">최근 실패 번들 보기</a>'
+        if latest_failed
+        else f"{status_badge('실패 번들 없음', 'ok')}"
+    )
+
+    return f"""
+    <section class="stack">
+      <div class="card-grid">
+        {count_card("승인 대기", "pending", "/pending", "warn")}
+        {count_card("적용 완료", "applied", "/history?status=applied", "ok")}
+        {count_card("실패", "failed", "/history?status=failed", "danger")}
+        {count_card("거절됨", "rejected", "/history?status=rejected", "neutral")}
+        {count_card("전체", "all", "/history?status=all", "neutral")}
+      </div>
+      <div class="notice">
+        <strong>실패 빠른 접근</strong><br>
+        {failed_block}
+      </div>
+    </section>
+    """
+
+
+def bundle_card_html(record: dict[str, object]) -> str:
+    bundle_id = str(record.get("bundle_id", ""))
+    status = str(record.get("status", "unknown"))
+    summary = summarize_bundle_result(record)
+    error_summary = str(summary.get("error_summary", ""))
+    failed_class = " is-failed" if status == "failed" else ""
+    error_block = (
+        f'<p class="meta"><strong>오류 요약:</strong> {escape(error_summary)}</p>'
+        if error_summary
+        else ""
+    )
+
+    return f"""
+    <div class="card{failed_class}">
+      <h2><a href="/bundles/{escape(bundle_id)}">{escape(record.get("title", ""))}</a></h2>
+      <p class="meta">
+        ID: <code>{escape(bundle_id)}</code><br>
+        작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
+        상태: <span class="{escape(status)}">{escape(status_label(status))}</span><br>
+        위험도: <code>{escape(risk_label(record.get("risk", "")))}</code><br>
+        단계 수: <code>{escape(summary.get("command_count", 0))}</code><br>
+        결과 step 수: <code>{escape(summary.get("result_step_count", 0))}</code><br>
+        실패 step 수: <code>{escape(summary.get("failed_step_count", 0))}</code><br>
+        수정: {escape(record.get("updated_at", ""))}
+      </p>
+      {error_block}
     </div>
     """
 
@@ -1151,6 +1322,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(server_state())
             return
 
+        if parsed.path == "/api/history-state":
+            self.send_json(history_state())
+            return
+
         if parsed.path == "/api/events":
             params = parse_qs(parsed.query)
             since = params.get("since", [""])[0]
@@ -1260,29 +1435,13 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query)
             status_filter = normalize_status_filter(params.get("status", ["all"])[0])
             rows = list_bundles(status_filter)
-            cards = []
-            for record in rows:
-                bundle_id = str(record.get("bundle_id", ""))
-                status = str(record.get("status", "unknown"))
-                cards.append(
-                    f"""
-                    <div class="card">
-                      <h2><a href="/bundles/{escape(bundle_id)}">{escape(record.get("title", ""))}</a></h2>
-                      <p class="meta">
-                        ID: <code>{escape(bundle_id)}</code><br>
-                        작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
-                        상태: <span class="{escape(status)}">{escape(status_label(status))}</span><br>
-                        위험도: <code>{escape(risk_label(record.get("risk", "")))}</code><br>
-                        수정: {escape(record.get("updated_at", ""))}
-                      </p>
-                    </div>
-                    """
-                )
+            cards = [bundle_card_html(record) for record in rows]
 
             self.send_html(
                 "이력/결과",
                 (
-                    "<p><a href='/pending'>승인 대기 보기</a> · "
+                    history_summary_html(history_state())
+                    + "<p><a href='/pending'>승인 대기 보기</a> · "
                     "<a href='/history'>새로고침</a></p>"
                     + status_filter_links_html(status_filter)
                     + ("\n".join(cards) if cards else "<p>번들이 없습니다.</p>")
@@ -1323,8 +1482,18 @@ class Handler(BaseHTTPRequestHandler):
             if error:
                 result_block += f"<h2>오류</h2><pre>{escape(error)}</pre>"
 
+            bundle_error_block = ""
+            if error:
+                bundle_error_block = f"""
+                <div class="notice">
+                  <strong>Bundle error</strong><br>
+                  {escape(short_error(error, 300))}
+                </div>
+                """
+
             body = f"""
             <p><a href="/pending">← 승인으로 돌아가기</a> · <a href="/history">전체 목록</a></p>
+            {bundle_error_block}
             <div class="card">
               <p class="meta">
                 ID: <code>{escape(bundle_id)}</code><br>

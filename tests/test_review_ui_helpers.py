@@ -41,21 +41,23 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def write_bundle(self, status: str, bundle_id: str, updated_at: str) -> None:
-        path = getattr(review, f"{status.upper()}_DIR") / f"{bundle_id}.json"
-        path.write_text(
-            json.dumps(
-                {
-                    "bundle_id": bundle_id,
-                    "title": bundle_id,
-                    "cwd": ".",
-                    "status": status,
-                    "risk": "medium",
-                    "updated_at": updated_at,
-                    "steps": [],
-                }
-            ),
-            encoding="utf-8",
+        self.write_bundle_record(
+            status,
+            {
+                "bundle_id": bundle_id,
+                "title": bundle_id,
+                "cwd": ".",
+                "status": status,
+                "risk": "medium",
+                "updated_at": updated_at,
+                "steps": [],
+            },
         )
+
+    def write_bundle_record(self, status: str, record: dict[str, object]) -> None:
+        bundle_id = str(record["bundle_id"])
+        path = getattr(review, f"{status.upper()}_DIR") / f"{bundle_id}.json"
+        path.write_text(json.dumps(record), encoding="utf-8")
 
     def test_list_bundles_filters_by_status(self) -> None:
         self.write_bundle("pending", "cmd-pending", "2026-01-02T00:00:00+00:00")
@@ -86,6 +88,76 @@ class ReviewServerHelperTests(unittest.TestCase):
 
         self.assertEqual(state["pending_count"], 1)
         self.assertEqual(state["latest_pending_bundle_id"], "cmd-pending")
+
+    def test_bundle_status_counts(self) -> None:
+        self.write_bundle("pending", "cmd-pending", "2026-01-01T00:00:00+00:00")
+        self.write_bundle("applied", "cmd-applied", "2026-01-02T00:00:00+00:00")
+        self.write_bundle("failed", "cmd-failed", "2026-01-03T00:00:00+00:00")
+        self.write_bundle("rejected", "cmd-rejected", "2026-01-04T00:00:00+00:00")
+
+        counts = review.bundle_status_counts()
+
+        self.assertEqual(counts["pending"], 1)
+        self.assertEqual(counts["applied"], 1)
+        self.assertEqual(counts["failed"], 1)
+        self.assertEqual(counts["rejected"], 1)
+        self.assertEqual(counts["all"], 4)
+
+    def test_latest_bundle_id_and_updated_at(self) -> None:
+        self.write_bundle("failed", "cmd-old-failed", "2026-01-01T00:00:00+00:00")
+        self.write_bundle("failed", "cmd-new-failed", "2026-01-03T00:00:00+00:00")
+        self.write_bundle("applied", "cmd-newest", "2026-01-04T00:00:00+00:00")
+
+        self.assertEqual(review.latest_bundle_id("failed"), "cmd-new-failed")
+        self.assertEqual(review.latest_updated_at(), "2026-01-04T00:00:00+00:00")
+
+    def test_step_result_status(self) -> None:
+        self.assertEqual(review.step_result_status({"exit_code": 0}), "success")
+        self.assertEqual(review.step_result_status({"exit_code": 1}), "failed")
+        self.assertEqual(review.step_result_status({}), "unknown")
+        self.assertEqual(review.step_result_status({"exit_code": None}), "unknown")
+
+    def test_summarize_bundle_result_counts_failed_steps(self) -> None:
+        summary = review.summarize_bundle_result(
+            {
+                "steps": [{"name": "one"}, {"name": "two"}],
+                "result": {
+                    "steps": [
+                        {"name": "one", "exit_code": 0},
+                        {"name": "two", "exit_code": 2},
+                        {"name": "three"},
+                    ]
+                },
+                "error": "One or more bundle steps failed.",
+            }
+        )
+
+        self.assertEqual(summary["command_count"], 2)
+        self.assertEqual(summary["result_step_count"], 3)
+        self.assertEqual(summary["failed_step_count"], 1)
+        self.assertEqual(summary["error_summary"], "One or more bundle steps failed.")
+
+    def test_short_error_truncates_long_strings(self) -> None:
+        error = review.short_error("x" * 200, max_chars=20)
+
+        self.assertLessEqual(len(error), 20)
+        self.assertTrue(error.endswith("…"))
+
+    def test_history_state_omits_token_values(self) -> None:
+        original_token = os.environ.get("MCP_ACCESS_TOKEN")
+        try:
+            os.environ["MCP_ACCESS_TOKEN"] = "secret-token-value"
+            self.write_bundle("failed", "cmd-failed", "2026-01-03T00:00:00+00:00")
+            serialized = json.dumps(review.history_state(), ensure_ascii=False)
+
+            self.assertIn('"latest_failed_bundle_id": "cmd-failed"', serialized)
+            self.assertNotIn("secret-token-value", serialized)
+            self.assertNotIn("access_token", serialized)
+        finally:
+            if original_token is None:
+                os.environ.pop("MCP_ACCESS_TOKEN", None)
+            else:
+                os.environ["MCP_ACCESS_TOKEN"] = original_token
 
     def test_env_status_hides_values(self) -> None:
         original = os.environ.get("MCP_ACCESS_TOKEN")

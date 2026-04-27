@@ -160,6 +160,19 @@ scripts/run_ngrok.sh
 http://127.0.0.1:8790/pending
 ```
 
+이력·결과 화면에서는 status별 count, 최근 실패 번들, bundle별 step/result/error 요약을 확인할 수 있습니다.
+
+```text
+http://127.0.0.1:8790/history
+```
+
+bundle 상세 페이지에서는 step별 status, stdout/stderr details, 실패 step, Raw result를 확인할 수 있습니다.
+보기 전용 history 요약 API는 다음 endpoint입니다.
+
+```text
+http://127.0.0.1:8790/api/history-state
+```
+
 관리 섹션은 다음 주소에서 확인합니다.
 
 ```text
@@ -187,6 +200,7 @@ brew install terminal-notifier
 review UI, watcher, README만 변경한 경우에는 보통 `scripts/dev_session.sh review` 세션만 재시작하면 되고 MCP server 재시작이나 ChatGPT 앱 Refresh는 필요하지 않습니다.
 
 현재 `/servers`는 보기 전용 관리 페이지이며 start/stop/restart 버튼은 제공하지 않습니다.
+이력·결과 개선 단계에서도 start/stop/restart 버튼은 제공하지 않습니다.
 향후 pid/log 기반 server manager와 one-command session start로 확장할 계획입니다.
 이번 단계에서는 서버 관리 UI의 실행 제어와 전체 background supervisor를 구현하지 않습니다.
 
@@ -396,6 +410,7 @@ uv run python scripts/command_bundle_runner.py apply <bundle_id>
 권장 방식은 review server와 watcher를 함께 실행한 뒤 `/pending` 탭을 한 번 열어두는 것입니다.
 `/pending`은 long polling으로 새 pending bundle이 생길 때만 갱신되며, 새 bundle마다 브라우저 탭을 계속 만들지 않습니다.
 전체 이력과 실행 결과는 `http://127.0.0.1:8790/history`에서 확인합니다.
+`/history` 상단에는 status별 count와 최근 실패 번들 링크가 표시되며, bundle 상세 페이지에서 step별 stdout/stderr와 실패 step을 확인합니다.
 관리 정보는 `http://127.0.0.1:8790/servers`에서 보기 전용으로 확인합니다.
 
 watcher 기본값은 시작 시 `/pending` 대시보드를 한 번 여는 `dashboard_once` 모드입니다.
