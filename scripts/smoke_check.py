@@ -66,6 +66,34 @@ def check_local_python() -> None:
     require_success("py_compile", result)
 
 
+def check_script_entrypoint_imports() -> None:
+    scripts = [
+        "scripts/command_bundle_review_server.py",
+        "scripts/command_bundle_watcher.py",
+    ]
+
+    for script in scripts:
+        snippet = f"""
+import runpy
+import sys
+from pathlib import Path
+
+project_root = Path.cwd().resolve()
+script_path = (project_root / {script!r}).resolve()
+script_dir = str(script_path.parent)
+
+sys.path = [script_dir] + [
+    item for item in sys.path
+    if item not in ("", str(project_root), str(script_path.parent))
+]
+
+runpy.run_path(str(script_path), run_name="__smoke_import__")
+print("script entrypoint import OK: {script}")
+""".strip()
+        result = run_command([sys.executable, "-c", snippet], timeout=30)
+        require_success(f"script entrypoint import {script}", result)
+
+
 def check_unit_tests() -> None:
     result = run_command([sys.executable, "-m", "unittest", "discover", "-s", "tests"], timeout=60)
     require_success("unit tests", result)
@@ -139,6 +167,7 @@ def main() -> int:
 
     checks = [
         ("py_compile", lambda: check_local_python()),
+        ("script entrypoint imports", lambda: check_script_entrypoint_imports()),
         ("unit tests", lambda: check_unit_tests()),
         ("git diff --check", lambda: check_git_diff()),
     ]

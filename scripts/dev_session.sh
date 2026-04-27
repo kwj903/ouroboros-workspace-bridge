@@ -91,7 +91,12 @@ doctor() {
 
 review() {
   if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:8790 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "[warn] Port 8790 already appears to be in use."
+    echo "[error] Port 8790 is already in use."
+    echo "Stop the existing review server first:"
+    echo "  lsof -tiTCP:8790 -sTCP:LISTEN | xargs kill"
+    echo "Then run:"
+    echo "  scripts/dev_session.sh review"
+    return 1
   fi
 
   echo "Starting command bundle review server with embedded watcher..."

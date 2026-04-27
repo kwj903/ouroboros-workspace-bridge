@@ -147,6 +147,7 @@ scripts/dev_session.sh review
 ```
 
 이 명령은 review server 하나를 foreground로 실행하고, 내부 embedded watcher가 pending bundle 감시와 알림을 담당합니다.
+이미 8790 포트가 사용 중이면 기존 review server가 떠 있는 것으로 보고 시작을 중단하며, 기존 프로세스 종료 명령을 안내합니다.
 
 MCP server와 ngrok은 별도 터미널에서 기존 script로 실행합니다.
 
