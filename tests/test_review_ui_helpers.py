@@ -401,6 +401,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("scripts/dev_session.sh start", html)
         self.assertIn(str(root / "processes"), html)
         self.assertIn("/api/supervisor-state", html)
+        self.assertIn("data-table process-table", html)
 
     def test_environment_tab_omits_token_and_renders_long_label(self) -> None:
         original_token = os.environ.get("MCP_ACCESS_TOKEN")

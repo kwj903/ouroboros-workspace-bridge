@@ -878,7 +878,7 @@ def supervisor_processes_html(state: dict[str, object]) -> str:
 
     return (
         '<div class="table-wrap">'
-        '<table class="data-table">'
+        '<table class="data-table process-table">'
         "<thead><tr>"
         "<th>Service</th><th>PID</th><th>Alive</th><th>Managed</th>"
         "<th>Reachable</th><th>Endpoint</th><th>Log path</th><th>PID file</th>"
@@ -1170,6 +1170,42 @@ def app_shell(
     }}
     .data-table tbody tr:last-child td {{
       border-bottom: 0;
+    }}
+    .process-table {{
+      min-width: 1080px;
+      table-layout: fixed;
+    }}
+    .process-table th:nth-child(1),
+    .process-table td:nth-child(1) {{
+      width: 88px;
+    }}
+    .process-table th:nth-child(2),
+    .process-table td:nth-child(2) {{
+      width: 72px;
+      white-space: nowrap;
+    }}
+    .process-table th:nth-child(3),
+    .process-table td:nth-child(3),
+    .process-table th:nth-child(4),
+    .process-table td:nth-child(4),
+    .process-table th:nth-child(5),
+    .process-table td:nth-child(5) {{
+      width: 108px;
+      white-space: nowrap;
+    }}
+    .process-table th:nth-child(6),
+    .process-table td:nth-child(6) {{
+      width: 116px;
+    }}
+    .process-table td:nth-child(2) code,
+    .process-table td:nth-child(6) code {{
+      word-break: normal;
+      white-space: nowrap;
+    }}
+    .process-table td:nth-child(7) code,
+    .process-table td:nth-child(8) code {{
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }}
     .badge {{
       display: inline-flex;
