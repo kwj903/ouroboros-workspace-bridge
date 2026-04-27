@@ -164,6 +164,7 @@ scripts/dev_session.sh start
 
 ```bash
 scripts/dev_session.sh status
+scripts/dev_session.sh restart [mcp|ngrok]
 scripts/dev_session.sh logs [review|mcp|ngrok]
 scripts/dev_session.sh stop
 ```

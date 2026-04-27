@@ -1706,6 +1706,7 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
             <ul class="compact">
               <li>전체 세션 시작: <code>scripts/dev_session.sh start</code></li>
               <li>상태 확인: <code>scripts/dev_session.sh status</code></li>
+              <li>MCP/ngrok 재시작: <code>scripts/dev_session.sh restart [mcp|ngrok]</code></li>
               <li>서비스 로그: <code>scripts/dev_session.sh logs [review|mcp|ngrok]</code></li>
               <li>전체 세션 종료: <code>scripts/dev_session.sh stop</code></li>
               <li>UI start/stop/restart 버튼은 다음 단계에서 별도 안전장치를 설계한 뒤 추가합니다.</li>

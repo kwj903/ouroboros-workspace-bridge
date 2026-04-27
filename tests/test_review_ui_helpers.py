@@ -400,6 +400,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("Supervisor processes", html)
         self.assertIn("scripts/dev_session.sh start", html)
         self.assertIn("scripts/dev_session.sh status", html)
+        self.assertIn("scripts/dev_session.sh restart [mcp|ngrok]", html)
         self.assertIn("scripts/dev_session.sh logs [review|mcp|ngrok]", html)
         self.assertIn("scripts/dev_session.sh stop", html)
         self.assertIn(str(root / "processes"), html)
