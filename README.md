@@ -217,7 +217,7 @@ http://127.0.0.1:8790/servers
 ```
 
 관리 섹션에는 개요, 서버, 프로세스, 연결, 환경, 로컬 도구, 진단 탭이 있습니다.
-프로세스 탭에서는 `scripts/dev_session.sh start`가 관리하는 `review`, `mcp`, `ngrok` pid/alive/reachability/log path 상태를 확인할 수 있습니다. `mcp`와 `ngrok`은 Restart 버튼으로 제한적으로 재시작할 수 있으며, `review` restart와 전체 start/stop은 터미널에서 수행합니다.
+프로세스 탭에서는 `scripts/dev_session.sh start`가 관리하는 `review`, `mcp`, `ngrok` pid/alive/reachability/log path 상태를 확인할 수 있습니다. `mcp`와 `ngrok`은 상태에 따라 Start, Stop, Restart 버튼을 제공하며, 전체 session stop/restart는 확인 페이지를 거쳐 실행합니다. `review` 개별 start/stop/restart는 UI 자기 자신이므로 제공하지 않습니다.
 보기 전용 supervisor 요약 API는 다음 endpoint입니다.
 
 ```text

@@ -59,11 +59,16 @@ Workspace Terminal Bridge development session checklist
 4. Confirm review, MCP, and ngrok status:
    scripts/dev_session.sh status
 
-5. Keep the review dashboard open:
+5. Use the review dashboard for command bundle approval:
    http://127.0.0.1:8790/pending
 
-6. Use the management page for process status and limited restart controls:
+6. Use the process management page for local session operations:
    http://127.0.0.1:8790/servers?tab=processes
+
+   UI controls:
+     - MCP/ngrok start, stop, restart
+     - Full session stop with confirmation
+     - Full session restart with confirmation
 
 7. If server.py or MCP tool schemas change, restart MCP and Refresh the ChatGPT app:
    scripts/dev_session.sh restart mcp
@@ -71,10 +76,13 @@ Workspace Terminal Bridge development session checklist
 8. If the ngrok tunnel needs to be reconnected, restart ngrok:
    scripts/dev_session.sh restart ngrok
 
-9. Tail service logs when debugging:
+9. If the full session behaves unexpectedly, restart the full supervisor session:
+   scripts/dev_session.sh restart-session
+
+10. Tail service logs when debugging:
    scripts/dev_session.sh logs [review|mcp|ngrok]
 
-10. Stop the full local session when finished:
+11. Stop the full local session when finished:
    scripts/dev_session.sh stop
 
 Fallback/debug commands:
@@ -87,7 +95,7 @@ ChatGPT app MCP URL format:
 
 Notes:
   - Token values are intentionally not printed by this helper.
-  - UI restart buttons are limited to MCP/ngrok. Full start/stop and review restart stay in the terminal.
+  - Full session stop/restart may briefly disconnect the review UI; refresh after it comes back.
   - If only the review UI, watcher, or README changes, MCP server restart and ChatGPT app Refresh are usually not needed.
 EOF
 }
