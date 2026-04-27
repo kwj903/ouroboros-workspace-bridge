@@ -23,11 +23,13 @@ class ReviewServerHelperTests(unittest.TestCase):
             review.REJECTED_DIR,
             review.FAILED_DIR,
         )
+        self.original_audit_log = review.AUDIT_LOG
 
         review.PENDING_DIR = root / "pending"
         review.APPLIED_DIR = root / "applied"
         review.REJECTED_DIR = root / "rejected"
         review.FAILED_DIR = root / "failed"
+        review.AUDIT_LOG = root / "audit.jsonl"
 
         for directory in review.bundle_dirs():
             directory.mkdir(parents=True, exist_ok=True)
@@ -39,6 +41,7 @@ class ReviewServerHelperTests(unittest.TestCase):
             review.REJECTED_DIR,
             review.FAILED_DIR,
         ) = self.original_dirs
+        review.AUDIT_LOG = self.original_audit_log
         self.tmp.cleanup()
 
     def write_bundle(self, status: str, bundle_id: str, updated_at: str) -> None:
@@ -59,6 +62,15 @@ class ReviewServerHelperTests(unittest.TestCase):
         bundle_id = str(record["bundle_id"])
         path = getattr(review, f"{status.upper()}_DIR") / f"{bundle_id}.json"
         path.write_text(json.dumps(record), encoding="utf-8")
+
+    def write_audit_lines(self, *items: object) -> None:
+        lines = []
+        for item in items:
+            if isinstance(item, str):
+                lines.append(item)
+            else:
+                lines.append(json.dumps(item, ensure_ascii=False))
+        review.AUDIT_LOG.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def test_list_bundles_filters_by_status(self) -> None:
         self.write_bundle("pending", "cmd-pending", "2026-01-02T00:00:00+00:00")
@@ -165,6 +177,61 @@ class ReviewServerHelperTests(unittest.TestCase):
             else:
                 os.environ["MCP_ACCESS_TOKEN"] = original_token
 
+    def test_audit_state_returns_empty_events_when_log_missing(self) -> None:
+        state = review.audit_state()
+
+        self.assertEqual(state["count"], 0)
+        self.assertEqual(state["events"], [])
+
+    def test_recent_audit_events_skips_broken_json_lines(self) -> None:
+        self.write_audit_lines(
+            '{"bad json"',
+            {
+                "ts": "2026-01-01T00:00:00+00:00",
+                "event": "stage_action_bundle",
+                "bundle_id": "cmd-good",
+                "title": "Good bundle",
+            },
+        )
+
+        state = review.audit_state()
+
+        self.assertEqual(state["count"], 1)
+        self.assertEqual(state["events"][0]["bundle_id"], "cmd-good")
+
+    def test_audit_event_summary_html_escapes_values(self) -> None:
+        html = review.audit_event_summary_html(
+            {
+                "bundle_id": "cmd-test",
+                "title": "<script>alert(1)</script>",
+                "cwd": ".",
+            }
+        )
+
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+        self.assertNotIn("<script>", html)
+
+    def test_audit_command_summary_truncates_long_lists(self) -> None:
+        summary = review.summarize_audit_command(["uv", "run", "python", "-m", "unittest", "discover", "-s"])
+
+        self.assertEqual(summary, "uv run python -m unittest discover ...")
+
+    def test_audit_state_redacts_token_like_values(self) -> None:
+        self.write_audit_lines(
+            {
+                "ts": "2026-01-01T00:00:00+00:00",
+                "event": "command",
+                "title": "secret-token-value",
+                "command": ["curl", "https://example.invalid/mcp?access_token=secret-token-value"],
+            }
+        )
+
+        serialized = json.dumps(review.audit_state(), ensure_ascii=False)
+
+        self.assertIn("[redacted]", serialized)
+        self.assertNotIn("secret-token-value", serialized)
+        self.assertNotIn("access_token", serialized)
+
     def test_env_status_hides_values(self) -> None:
         original = os.environ.get("MCP_ACCESS_TOKEN")
         try:
@@ -261,6 +328,8 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("Watcher open mode", html)
         self.assertIn("Notification target", html)
         self.assertIn("Notification click action", html)
+        self.assertIn("최근 로컬 작업 이벤트", html)
+        self.assertIn("/api/audit-state", html)
 
     def test_primary_nav_html_uses_large_category_labels(self) -> None:
         html = review.primary_nav_html("history")

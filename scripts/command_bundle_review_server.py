@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -36,6 +37,7 @@ RUNNER = PROJECT_ROOT / "scripts" / "command_bundle_runner.py"
 
 RUNTIME_ROOT = Path.home() / ".mcp_terminal_bridge" / "my-terminal-tool"
 COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
+AUDIT_LOG = RUNTIME_ROOT / "audit.jsonl"
 PENDING_DIR = COMMAND_BUNDLES_DIR / "pending"
 APPLIED_DIR = COMMAND_BUNDLES_DIR / "applied"
 REJECTED_DIR = COMMAND_BUNDLES_DIR / "rejected"
@@ -263,6 +265,94 @@ def history_state() -> dict[str, object]:
         "counts": bundle_status_counts(),
         "latest_failed_bundle_id": latest_bundle_id("failed"),
         "latest_updated_at": latest_updated_at(),
+    }
+
+
+SENSITIVE_TEXT_MARKERS = (
+    "access_token",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer",
+)
+
+
+def safe_audit_text(value: object, max_chars: int = 180) -> str | None:
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if text == "":
+        return None
+
+    lowered = text.lower()
+    if any(marker in lowered for marker in SENSITIVE_TEXT_MARKERS):
+        return "[redacted]"
+
+    return short_error(text, max_chars=max_chars)
+
+
+def summarize_audit_command(value: object) -> str | None:
+    if isinstance(value, list):
+        parts = [safe_audit_text(item, max_chars=80) or "" for item in value[:6]]
+        if len(value) > 6:
+            parts.append("...")
+        summary = " ".join(part for part in parts if part)
+        return summary or None
+
+    return safe_audit_text(value, max_chars=180)
+
+
+def sanitize_audit_event(record: dict[str, object]) -> dict[str, object]:
+    return {
+        "ts": safe_audit_text(record.get("ts")),
+        "event": safe_audit_text(record.get("event")),
+        "bundle_id": safe_audit_text(record.get("bundle_id")),
+        "title": safe_audit_text(record.get("title")),
+        "cwd": safe_audit_text(record.get("cwd")),
+        "risk": safe_audit_text(record.get("risk")),
+        "exit_code": record.get("exit_code") if type(record.get("exit_code")) is int else None,
+        "truncated": record.get("truncated") if type(record.get("truncated")) is bool else None,
+        "command": summarize_audit_command(record.get("command")),
+    }
+
+
+def recent_audit_events(limit: int = 20) -> list[dict[str, object]]:
+    if limit < 1 or not AUDIT_LOG.exists():
+        return []
+
+    lines: deque[str] = deque(maxlen=limit * 4)
+    try:
+        with AUDIT_LOG.open("r", encoding="utf-8") as f:
+            for line in f:
+                lines.append(line)
+    except OSError:
+        return []
+
+    events: list[dict[str, object]] = []
+    for line in reversed(lines):
+        if len(events) >= limit:
+            break
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        events.append(sanitize_audit_event(record))
+
+    return events
+
+
+def audit_state() -> dict[str, object]:
+    events = recent_audit_events(20)
+    return {
+        "count": len(events),
+        "events": events,
     }
 
 
@@ -598,6 +688,51 @@ def kv_row_html(
     )
 
 
+def audit_event_summary_html(event: dict[str, object]) -> str:
+    parts: list[str] = []
+
+    for key, label in (
+        ("bundle_id", "bundle"),
+        ("title", "title"),
+        ("cwd", "cwd"),
+        ("command", "command"),
+        ("risk", "risk"),
+        ("exit_code", "exit"),
+        ("truncated", "truncated"),
+    ):
+        value = event.get(key)
+        if value is None or value == "":
+            continue
+        parts.append(f"<span><strong>{escape(label)}:</strong> {escape(value)}</span>")
+
+    return " · ".join(parts) if parts else '<span class="meta">요약 없음</span>'
+
+
+def recent_audit_events_html(limit: int = 10) -> str:
+    events = recent_audit_events(limit)
+    if not events:
+        return '<p class="meta">최근 audit event가 없습니다.</p>'
+
+    rows = []
+    for event in events:
+        rows.append(
+            "<tr>"
+            f"<td><code>{escape(event.get('ts') or '')}</code></td>"
+            f"<td>{escape(event.get('event') or '')}</td>"
+            f"<td>{audit_event_summary_html(event)}</td>"
+            "</tr>"
+        )
+
+    return (
+        '<div class="table-wrap">'
+        '<table class="data-table">'
+        "<thead><tr><th>시간</th><th>이벤트</th><th>요약</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</div>"
+    )
+
+
 def app_shell(
     title: str,
     body: str,
@@ -851,6 +986,34 @@ def app_shell(
       flex-wrap: wrap;
       gap: 8px;
       overflow-wrap: anywhere;
+    }}
+    .table-wrap {{
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+    }}
+    .data-table {{
+      width: 100%;
+      min-width: 760px;
+      border-collapse: collapse;
+    }}
+    .data-table th,
+    .data-table td {{
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }}
+    .data-table th {{
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      opacity: 0.72;
+    }}
+    .data-table tbody tr:last-child td {{
+      border-bottom: 0;
     }}
     .badge {{
       display: inline-flex;
@@ -1396,6 +1559,7 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
       <section class="card">
         <ul class="compact">
           <li><a href="/api/server-state"><code>/api/server-state</code></a> 로 현재 review UI 상태를 JSON으로 확인합니다.</li>
+          <li><a href="/api/audit-state"><code>/api/audit-state</code></a> 로 최근 로컬 작업 이벤트 요약을 JSON으로 확인합니다.</li>
           <li>Embedded watcher: {status_chip("enabled" if embedded_watcher.get("enabled") else "disabled", "ok" if embedded_watcher.get("enabled") else "neutral")}</li>
           <li>Watcher open mode: <code>{escape(embedded_watcher.get("open_mode", ""))}</code></li>
           <li>Notification target: <code>{escape(embedded_watcher.get("notification_target", ""))}</code></li>
@@ -1405,6 +1569,11 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
           <li><code>server.py</code> 또는 tool schema를 바꾼 경우 MCP server 재시작 후 ChatGPT 앱에서 Refresh가 필요합니다.</li>
           <li>review UI, watcher, README만 바꾼 경우에는 review session만 다시 시작하면 되고 MCP server 재시작은 보통 필요하지 않습니다.</li>
         </ul>
+      </section>
+      <section class="card">
+        <h3>최근 로컬 작업 이벤트</h3>
+        <p class="meta">MCP tool 호출 뒤 응답이 끊겼을 때 직전 로컬 audit event를 확인합니다. 민감한 값은 요약에서 제외합니다.</p>
+        {recent_audit_events_html(10)}
       </section>
     </div>
     """
@@ -1479,6 +1648,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/history-state":
             self.send_json(history_state())
+            return
+
+        if parsed.path == "/api/audit-state":
+            self.send_json(audit_state())
             return
 
         if parsed.path == "/api/events":
