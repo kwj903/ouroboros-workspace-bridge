@@ -424,6 +424,8 @@ replace_text
 ```
 
 `workspace_stage_action_bundle`은 프로젝트 파일을 즉시 수정하지 않습니다. pending bundle을 runtime에 만들고, 로컬 승인 UI에서 승인한 뒤 runner가 적용합니다.
+action bundle apply는 clean git worktree에서만 허용됩니다. `git status --porcelain`에 변경이 남아 있으면 apply를 거부하므로 먼저 변경을 commit/stash/revert해야 합니다.
+apply 도중 action이 실패하면 이미 적용된 파일 action 변경을 rollback해서 repo가 partial apply 상태로 남지 않게 합니다.
 ChatGPT가 생성한 코드 수정은 가능하면 `workspace_stage_patch_bundle`로 unified diff를 승인 UI에 올리는 흐름을 권장합니다.
 터미널 명령, install/delete/run 명령, `git add`, `git commit`은 `workspace_stage_command_bundle`로 올린 뒤 로컬에서 승인합니다.
 

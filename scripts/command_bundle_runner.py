@@ -324,6 +324,39 @@ def run_git_apply(cwd: Path, args: list[str], patch: str, timeout_seconds: int =
     }
 
 
+def run_git(cwd: Path, args: list[str], timeout_seconds: int = 30) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        env=safe_env(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout_seconds,
+        shell=False,
+        check=False,
+    )
+
+
+def git_repo_root(cwd: Path) -> Path:
+    completed = run_git(cwd, ["rev-parse", "--show-toplevel"])
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"git rev-parse --show-toplevel failed: {detail}")
+    return Path(completed.stdout.strip()).resolve()
+
+
+def ensure_clean_worktree(cwd: Path) -> None:
+    completed = run_git(cwd, ["status", "--porcelain"])
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"git status --porcelain failed: {detail}")
+
+    if completed.stdout.strip():
+        raise RuntimeError("worktree is not clean; commit/stash/revert changes first")
+
+
 def step_patch_paths(step: dict[str, Any], patch: str) -> list[str]:
     raw_files = step.get("files")
     if isinstance(raw_files, list) and raw_files:
@@ -344,6 +377,157 @@ def backup_file(path: Path) -> str | None:
     backup_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, backup_path)
     return str(backup_path)
+
+
+def is_action_bundle(record: dict[str, Any]) -> bool:
+    steps = record.get("steps")
+    has_file_action = False
+    if isinstance(steps, list):
+        has_file_action = any(
+            isinstance(step, dict) and step_type(step) in {"write_file", "append_file", "replace_text"}
+            for step in steps
+        )
+    return record.get("version") == 2 or has_file_action
+
+
+def action_step_targets(steps: list[Any]) -> list[Path]:
+    targets: list[Path] = []
+    seen: set[Path] = set()
+
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if step_type(step) not in {"write_file", "append_file", "replace_text"}:
+            continue
+
+        target = resolve_file_path(str(step.get("path", ""))).resolve(strict=False)
+        if target not in seen:
+            seen.add(target)
+            targets.append(target)
+
+    return targets
+
+
+def is_git_tracked(repo_root: Path, rel_path: str) -> bool:
+    completed = run_git(repo_root, ["ls-files", "--error-unmatch", "--", rel_path])
+    return completed.returncode == 0
+
+
+def snapshot_action_targets(cwd: Path, steps: list[Any]) -> tuple[Path, list[dict[str, Any]]]:
+    repo_root = git_repo_root(cwd)
+    snapshots: list[dict[str, Any]] = []
+
+    for target in action_step_targets(steps):
+        if target != repo_root and not target.is_relative_to(repo_root):
+            raise ValueError(f"action target is outside git repository: {relative(target)}")
+
+        rel_path = str(target.relative_to(repo_root))
+        tracked = is_git_tracked(repo_root, rel_path)
+        existed = target.exists()
+        content = target.read_bytes() if existed and not tracked and target.is_file() else None
+
+        snapshots.append(
+            {
+                "path": target,
+                "repo_path": rel_path,
+                "tracked": tracked,
+                "existed": existed,
+                "content": content,
+            }
+        )
+
+    return repo_root, snapshots
+
+
+def remove_empty_parent_dirs(path: Path, stop_at: Path) -> None:
+    current = path.parent
+    stop_at = stop_at.resolve()
+
+    while current != stop_at and current.is_relative_to(stop_at):
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
+def rollback_action_changes(repo_root: Path, snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "attempted": True,
+        "completed": False,
+        "restored": [],
+        "removed": [],
+        "errors": [],
+    }
+
+    tracked_paths = [str(item["repo_path"]) for item in snapshots if bool(item.get("tracked"))]
+    if tracked_paths:
+        completed = run_git(repo_root, ["checkout", "--", *tracked_paths])
+        if completed.returncode != 0:
+            result["errors"].append(completed.stderr.strip() or completed.stdout.strip())
+        else:
+            result["restored"].extend(tracked_paths)
+
+    for item in snapshots:
+        if bool(item.get("tracked")):
+            continue
+
+        target = item["path"]
+        rel_path = str(item["repo_path"])
+        existed = bool(item.get("existed"))
+        content = item.get("content")
+
+        try:
+            if existed and content is not None:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+                result["restored"].append(rel_path)
+            elif not existed and target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+                remove_empty_parent_dirs(target, repo_root)
+                result["removed"].append(rel_path)
+        except Exception as exc:
+            result["errors"].append(f"{rel_path}: {exc}")
+
+    checkout_all = run_git(repo_root, ["checkout", "--", "."])
+    if checkout_all.returncode != 0:
+        result["errors"].append(checkout_all.stderr.strip() or checkout_all.stdout.strip())
+
+    clean_all = run_git(repo_root, ["clean", "-fd", "--", "."])
+    if clean_all.returncode != 0:
+        result["errors"].append(clean_all.stderr.strip() or clean_all.stdout.strip())
+    elif clean_all.stdout.strip():
+        result["removed"].extend(
+            line.strip().removeprefix("Removing ")
+            for line in clean_all.stdout.splitlines()
+            if line.strip()
+        )
+
+    remaining = run_git(repo_root, ["status", "--porcelain"])
+    if remaining.returncode != 0:
+        result["errors"].append(remaining.stderr.strip() or remaining.stdout.strip())
+    elif remaining.stdout.strip():
+        result["errors"].append(f"worktree still dirty after rollback:\n{remaining.stdout.strip()}")
+
+    result["completed"] = len(result["errors"]) == 0
+    return result
+
+
+def action_failure_message(
+    index: int,
+    step: dict[str, Any],
+    error: object,
+    rollback_status: str,
+) -> str:
+    return (
+        f"Action {index} failed: {step.get('name')}\n"
+        f"type: {step_type(step)}\n"
+        f"error: {error}\n"
+        f"rollback: {rollback_status}"
+    )
 
 
 def move_bundle(source: Path, record: dict[str, Any], status: str) -> None:
@@ -653,46 +837,94 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
             raise SystemExit("aborted")
 
     cwd = resolve_cwd(str(record.get("cwd", ".")))
+    action_bundle = is_action_bundle(record)
+    raw_steps = record.get("steps", [])
+    if not isinstance(raw_steps, list):
+        raw_steps = []
+
     results: list[dict[str, Any]] = []
     failed = False
+    failure_error: str | None = None
+    rollback_result: dict[str, Any] | None = None
+    action_repo_root: Path | None = None
+    action_snapshots: list[dict[str, Any]] = []
 
-    for idx, raw_step in enumerate(record.get("steps", []), 1):
-        if not isinstance(raw_step, dict):
-            failed = True
-            results.append({"exit_code": None, "stderr": f"Invalid step at index {idx}"})
-            break
-
-        print(f"\n[{idx}] applying: {raw_step.get('name')}")
-
+    if action_bundle:
         try:
-            result = apply_step(cwd, raw_step)
-            results.append(result)
-
-            if result.get("type") == "command" and result.get("exit_code") != 0:
-                failed = True
-                break
-
+            ensure_clean_worktree(cwd)
+            action_repo_root, action_snapshots = snapshot_action_targets(cwd, raw_steps)
         except Exception as exc:
             failed = True
+            failure_error = str(exc)
             results.append(
                 {
-                    "type": step_type(raw_step),
-                    "name": raw_step.get("name"),
+                    "type": "preflight",
+                    "name": "Action bundle clean worktree check",
                     "exit_code": None,
                     "stdout": "",
                     "stderr": str(exc),
                     "truncated": False,
                 }
             )
-            print(str(exc), file=sys.stderr)
-            break
+
+    if not failed:
+        for idx, raw_step in enumerate(raw_steps, 1):
+            if not isinstance(raw_step, dict):
+                failed = True
+                failure_error = f"Invalid step at index {idx}"
+                results.append({"exit_code": None, "stderr": failure_error})
+                break
+
+            print(f"\n[{idx}] applying: {raw_step.get('name')}")
+
+            try:
+                result = apply_step(cwd, raw_step)
+                results.append(result)
+
+                if result.get("type") == "command" and result.get("exit_code") != 0:
+                    failed = True
+                    failure_error = f"command exited with code {result.get('exit_code')}"
+                    if action_bundle:
+                        result["action_index"] = idx
+                        result["error"] = failure_error
+                    break
+
+            except Exception as exc:
+                failed = True
+                failure_error = str(exc)
+                results.append(
+                    {
+                        "type": step_type(raw_step),
+                        "name": raw_step.get("name"),
+                        "action_index": idx if action_bundle else None,
+                        "exit_code": None,
+                        "stdout": "",
+                        "stderr": str(exc),
+                        "truncated": False,
+                    }
+                )
+                print(str(exc), file=sys.stderr)
+                break
+
+    if action_bundle and failed and action_repo_root is not None:
+        rollback_result = rollback_action_changes(action_repo_root, action_snapshots)
+        rollback_status = "completed" if rollback_result.get("completed") else "failed"
+        failed_step = next((step for step in reversed(results) if step.get("type") != "preflight"), None)
+        if failed_step is not None:
+            failed_step["rollback"] = rollback_status
+        if failure_error is not None and isinstance(failed_step, dict):
+            idx = int(failed_step.get("action_index") or len(results))
+            failure_error = action_failure_message(idx, failed_step, failure_error, rollback_status)
 
     record["result"] = {
         "cwd": str(record.get("cwd", ".")),
         "steps": results,
         "ok": not failed,
     }
-    record["error"] = None if not failed else "One or more bundle steps failed."
+    if rollback_result is not None:
+        record["result"]["rollback"] = rollback_result
+
+    record["error"] = None if not failed else failure_error or "One or more bundle steps failed."
 
     move_bundle(path, record, "failed" if failed else "applied")
     print(f"\n{'failed' if failed else 'applied'} {bundle_id}")
