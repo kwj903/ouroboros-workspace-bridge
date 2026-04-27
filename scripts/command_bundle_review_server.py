@@ -5,6 +5,7 @@ import html
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -245,6 +246,25 @@ def short_error(value: object, max_chars: int = 160) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 1].rstrip() + "…"
+
+
+def mask_sensitive_text(value: object) -> str:
+    text = str(value or "")
+    for secret in (os.environ.get("MCP_ACCESS_TOKEN", ""), os.environ.get("NGROK_AUTHTOKEN", "")):
+        if secret:
+            text = text.replace(secret, "[redacted]")
+
+    replacements = (
+        (r"access_token=([^\s&\"'<>]+)", "access_token=[redacted]"),
+        (r"Authorization:\s*Bearer\s+([^\s\"'<>]+)", "Authorization: Bearer [redacted]"),
+        (r"Bearer\s+([^\s\"'<>]+)", "Bearer [redacted]"),
+        (r"(MCP_ACCESS_TOKEN=)([^\s\"'<>]+)", r"\1[redacted]"),
+        (r"(NGROK_AUTHTOKEN=)([^\s\"'<>]+)", r"\1[redacted]"),
+    )
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+    return text
 
 
 def summarize_bundle_result(record: dict[str, object]) -> dict[str, object]:
@@ -2237,11 +2257,11 @@ class Handler(BaseHTTPRequestHandler):
                 <h2>{escape(action_title)} failed: {escape(service)}</h2>
                 <details open>
                   <summary>stdout</summary>
-                  <pre>{escape(completed.stdout)}</pre>
+                  <pre>{escape(mask_sensitive_text(completed.stdout))}</pre>
                 </details>
                 <details open>
                   <summary>stderr</summary>
-                  <pre>{escape(completed.stderr)}</pre>
+                  <pre>{escape(mask_sensitive_text(completed.stderr))}</pre>
                 </details>
                 """
                 self.send_html(
@@ -2267,8 +2287,8 @@ class Handler(BaseHTTPRequestHandler):
 
             output = {
                 "exit_code": completed.returncode,
-                "stdout": completed.stdout,
-                "stderr": completed.stderr,
+                "stdout": mask_sensitive_text(completed.stdout),
+                "stderr": mask_sensitive_text(completed.stderr),
             }
 
             if completed.returncode != 0:
@@ -2277,11 +2297,11 @@ class Handler(BaseHTTPRequestHandler):
                 <h2>실행기 오류</h2>
                 <details open>
                   <summary>stdout</summary>
-                  <pre>{escape(completed.stdout)}</pre>
+                  <pre>{escape(mask_sensitive_text(completed.stdout))}</pre>
                 </details>
                 <details open>
                   <summary>stderr</summary>
-                  <pre>{escape(completed.stderr)}</pre>
+                  <pre>{escape(mask_sensitive_text(completed.stderr))}</pre>
                 </details>
                 <details>
                   <summary>Raw result</summary>
@@ -2303,16 +2323,16 @@ class Handler(BaseHTTPRequestHandler):
                     <h2>번들 실행 실패</h2>
                     <details open>
                       <summary>stdout</summary>
-                      <pre>{escape(completed.stdout)}</pre>
+                      <pre>{escape(mask_sensitive_text(completed.stdout))}</pre>
                     </details>
                     <details open>
                       <summary>stderr</summary>
-                      <pre>{escape(completed.stderr)}</pre>
+                      <pre>{escape(mask_sensitive_text(completed.stderr))}</pre>
                     </details>
                     <h3>기록된 결과</h3>
                     {result_html(updated_record.get("result")) if updated_record.get("result") is not None else ""}
                     <h3>오류</h3>
-                    <pre>{escape(updated_record.get("error", ""))}</pre>
+                    <pre>{escape(mask_sensitive_text(updated_record.get("error", "")))}</pre>
                     """
                     self.send_html("번들 실행 실패", body, status=500, active_nav="history")
                     return

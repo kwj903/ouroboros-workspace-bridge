@@ -466,6 +466,30 @@ class ReviewServerHelperTests(unittest.TestCase):
             else:
                 os.environ["MCP_ACCESS_TOKEN"] = original_token
 
+    def test_mask_sensitive_text_redacts_tokens(self) -> None:
+        original_token = os.environ.get("MCP_ACCESS_TOKEN")
+        try:
+            os.environ["MCP_ACCESS_TOKEN"] = "secret-token-value"
+            text = (
+                "MCP_ACCESS_TOKEN=secret-token-value "
+                "https://example.invalid/mcp?access_token=query-secret "
+                "Authorization: Bearer bearer-secret "
+                "Bearer loose-secret"
+            )
+            masked = review.mask_sensitive_text(text)
+
+            self.assertNotIn("secret-token-value", masked)
+            self.assertNotIn("query-secret", masked)
+            self.assertNotIn("bearer-secret", masked)
+            self.assertNotIn("loose-secret", masked)
+            self.assertIn("access_token=[redacted]", masked)
+            self.assertIn("Bearer [redacted]", masked)
+        finally:
+            if original_token is None:
+                os.environ.pop("MCP_ACCESS_TOKEN", None)
+            else:
+                os.environ["MCP_ACCESS_TOKEN"] = original_token
+
     def test_status_badge_includes_text_label(self) -> None:
         html = review.status_badge("reachable", "ok")
 
