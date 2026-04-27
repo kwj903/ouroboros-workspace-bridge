@@ -405,6 +405,9 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn(str(root / "processes"), html)
         self.assertIn("/api/supervisor-state", html)
         self.assertIn("data-table process-table", html)
+        self.assertIn(">review.log</code>", html)
+        self.assertIn(">review.pid</code>", html)
+        self.assertIn(f'title="{root / "processes" / "review.log"}"', html)
 
     def test_environment_tab_omits_token_and_renders_long_label(self) -> None:
         original_token = os.environ.get("MCP_ACCESS_TOKEN")

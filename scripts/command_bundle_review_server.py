@@ -843,6 +843,15 @@ def reachable_badge(value: object) -> str:
     return status_badge("not checked", "neutral")
 
 
+def process_path_cell_html(value: object) -> str:
+    path = str(value or "")
+    if path == "":
+        return "<code>none</code>"
+
+    label = Path(path).name or path
+    return f'<code title="{escape(path)}">{escape(label)}</code>'
+
+
 def supervisor_processes_html(state: dict[str, object]) -> str:
     services = state.get("services")
     if not isinstance(services, list):
@@ -868,8 +877,8 @@ def supervisor_processes_html(state: dict[str, object]) -> str:
             f"<td>{status_badge(managed_state, state_tone(managed_state))}</td>"
             f"<td>{reachable_badge(item.get('reachable'))}</td>"
             f"<td><code>{escape(endpoint)}</code></td>"
-            f"<td><code>{escape(item.get('log_file') or '')}</code></td>"
-            f"<td><code>{escape(item.get('pid_file') or '')}</code></td>"
+            f"<td>{process_path_cell_html(item.get('log_file'))}</td>"
+            f"<td>{process_path_cell_html(item.get('pid_file'))}</td>"
             "</tr>"
         )
 
@@ -1172,7 +1181,7 @@ def app_shell(
       border-bottom: 0;
     }}
     .process-table {{
-      min-width: 1080px;
+      min-width: 920px;
       table-layout: fixed;
     }}
     .process-table th:nth-child(1),
