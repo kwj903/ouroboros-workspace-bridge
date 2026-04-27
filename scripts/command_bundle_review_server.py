@@ -1625,7 +1625,19 @@ def bool_status(value: object) -> str:
     return "installed" if bool(value) else "missing"
 
 
-def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
+def supervisor_restart_notice_html(service: str, status: str) -> str:
+    if status != "ok" or service not in SUPERVISOR_RESTARTABLE_SERVICES:
+        return ""
+
+    return (
+        '<div class="notice">'
+        '<strong>Restart completed</strong><br>'
+        f'<code>{escape(service)}</code> restarted. Status table refreshed.'
+        '</div>'
+    )
+
+
+def server_tab_content_html(tab: str, state: dict[str, object], action_notice_html: str = "") -> str:
     tab = normalize_server_tab(tab)
     review_server = state.get("review_server") if isinstance(state.get("review_server"), dict) else {}
     review_dashboard = state.get("review_dashboard") if isinstance(state.get("review_dashboard"), dict) else {}
@@ -1736,6 +1748,7 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
             <strong>제한된 제어</strong><br>
             이 화면에서는 MCP/ngrok restart만 제공합니다. 전체 start/stop과 review restart는 터미널에서 수행합니다.
           </div>
+          {action_notice_html}
           <section class="card">
             <h3>Supervisor processes</h3>
             <p class="meta">
@@ -1865,9 +1878,9 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
     """
 
 
-def server_state_html(state: dict[str, object], current_tab: str) -> str:
+def server_state_html(state: dict[str, object], current_tab: str, action_notice_html: str = "") -> str:
     current_tab = normalize_server_tab(current_tab)
-    return server_tab_content_html(current_tab, state)
+    return server_tab_content_html(current_tab, state, action_notice_html=action_notice_html)
 
 
 def bundle_summary_html(record: dict[str, object]) -> str:
@@ -2040,9 +2053,15 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/servers":
             params = parse_qs(parsed.query)
             current_tab = normalize_server_tab(params.get("tab", ["overview"])[0])
+            action_notice_html = ""
+            if current_tab == "processes":
+                action_notice_html = supervisor_restart_notice_html(
+                    params.get("restarted", [""])[0],
+                    params.get("restart_status", [""])[0],
+                )
             self.send_html(
                 "관리",
-                server_state_html(server_state(), current_tab),
+                server_state_html(server_state(), current_tab, action_notice_html=action_notice_html),
                 active_nav="servers",
                 subtitle="로컬 MCP review 환경의 상태를 보기 전용으로 확인합니다.",
                 server_tab=current_tab,
@@ -2194,7 +2213,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
 
-            self.redirect("/servers?tab=processes")
+            self.redirect(f"/servers?tab=processes&restart_status=ok&restarted={service}")
             return
 
         if len(parts) == 3 and parts[0] == "bundles" and parts[2] in {"approve", "reject"}:

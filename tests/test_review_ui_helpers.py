@@ -413,6 +413,17 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn(">review.pid</code>", html)
         self.assertIn(f'title="{root / "processes" / "review.log"}"', html)
 
+    def test_processes_tab_renders_restart_success_notice(self) -> None:
+        root = Path(self.tmp.name) / "runtime"
+        review.RUNTIME_ROOT = root
+        notice = review.supervisor_restart_notice_html("mcp", "ok")
+        html = review.server_tab_content_html("processes", review.server_state(), action_notice_html=notice)
+
+        self.assertIn("Restart completed", html)
+        self.assertIn("mcp", html)
+        self.assertEqual(review.supervisor_restart_notice_html("review", "ok"), "")
+        self.assertEqual(review.supervisor_restart_notice_html("mcp", "failed"), "")
+
     def test_environment_tab_omits_token_and_renders_long_label(self) -> None:
         original_token = os.environ.get("MCP_ACCESS_TOKEN")
         try:
