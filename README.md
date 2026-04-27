@@ -194,7 +194,14 @@ http://127.0.0.1:8790/api/history-state
 http://127.0.0.1:8790/servers
 ```
 
-관리 섹션에는 개요, 서버, 연결, 환경, 로컬 도구, 진단 탭이 있으며 현재 단계에서는 모두 보기 전용입니다.
+관리 섹션에는 개요, 서버, 프로세스, 연결, 환경, 로컬 도구, 진단 탭이 있으며 현재 단계에서는 모두 보기 전용입니다.
+프로세스 탭에서는 `scripts/dev_session.sh start`가 관리하는 `review`, `mcp`, `ngrok` pid/alive/reachability/log path 상태를 확인할 수 있습니다. 이 화면은 상태만 읽으며 start/stop/restart를 실행하지 않습니다.
+보기 전용 supervisor 요약 API는 다음 endpoint입니다.
+
+```text
+http://127.0.0.1:8790/api/supervisor-state
+```
+
 진단 탭에서는 최근 bundle 생성, 명령 실행, 상태 확인 같은 로컬 audit event 요약을 확인할 수 있습니다.
 ChatGPT 도구 호출 뒤 응답이 끊겼을 때 직전 로컬 이벤트를 추적하는 데 사용합니다.
 보기 전용 audit 요약 API는 다음 endpoint입니다.
@@ -460,6 +467,7 @@ review server의 embedded watcher가 pending bundle 감시, `/pending` dashboard
 전체 이력과 실행 결과는 `http://127.0.0.1:8790/history`에서 확인합니다.
 `/history` 상단에는 status별 count와 최근 실패 번들 링크가 표시되며, bundle 상세 페이지에서 step별 stdout/stderr와 실패 step을 확인합니다.
 관리 정보는 `http://127.0.0.1:8790/servers`에서 보기 전용으로 확인합니다.
+관리 > 프로세스 탭은 `scripts/dev_session.sh start`가 만든 pid/log 파일 기준으로 `review`, `mcp`, `ngrok` 상태를 표시합니다. 같은 요약은 `http://127.0.0.1:8790/api/supervisor-state`에서 JSON으로 확인할 수 있습니다.
 관리 > 진단 탭에는 최근 로컬 작업 이벤트 표가 표시되고, 같은 요약은 `http://127.0.0.1:8790/api/audit-state`에서 JSON으로 확인할 수 있습니다.
 이 화면은 ChatGPT 도구 호출 뒤 응답이 끊긴 경우 직전 로컬 MCP event를 추적하는 용도이며 token/secret 값은 표시하지 않습니다.
 

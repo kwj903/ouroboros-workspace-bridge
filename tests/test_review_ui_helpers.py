@@ -24,6 +24,7 @@ class ReviewServerHelperTests(unittest.TestCase):
             review.FAILED_DIR,
         )
         self.original_audit_log = review.AUDIT_LOG
+        self.original_runtime_root = review.RUNTIME_ROOT
 
         review.PENDING_DIR = root / "pending"
         review.APPLIED_DIR = root / "applied"
@@ -42,6 +43,7 @@ class ReviewServerHelperTests(unittest.TestCase):
             review.FAILED_DIR,
         ) = self.original_dirs
         review.AUDIT_LOG = self.original_audit_log
+        review.RUNTIME_ROOT = self.original_runtime_root
         self.tmp.cleanup()
 
     def write_bundle(self, status: str, bundle_id: str, updated_at: str) -> None:
@@ -270,6 +272,7 @@ class ReviewServerHelperTests(unittest.TestCase):
     def test_normalize_server_tab(self) -> None:
         self.assertEqual(review.normalize_server_tab(None), "overview")
         self.assertEqual(review.normalize_server_tab("services"), "services")
+        self.assertEqual(review.normalize_server_tab("processes"), "processes")
         self.assertEqual(review.normalize_server_tab("bad-value"), "overview")
 
     def test_tcp_port_reachable_false_for_invalid_or_unused_port(self) -> None:
@@ -342,8 +345,62 @@ class ReviewServerHelperTests(unittest.TestCase):
     def test_management_nav_html_contains_internal_tab_labels(self) -> None:
         html = review.management_nav_html("overview")
 
-        for label in ("개요", "서버", "연결", "환경", "로컬 도구", "진단"):
+        for label in ("개요", "서버", "프로세스", "연결", "환경", "로컬 도구", "진단"):
             self.assertIn(label, html)
+
+    def test_supervisor_state_reports_missing_services(self) -> None:
+        root = Path(self.tmp.name) / "runtime"
+        review.RUNTIME_ROOT = root
+
+        state = review.supervisor_state()
+        services = {item["name"]: item for item in state["services"]}
+
+        self.assertEqual(state["runtime_root"], str(root))
+        self.assertEqual(state["process_dir"], str(root / "processes"))
+        self.assertEqual(services["review"]["pid"], None)
+        self.assertEqual(services["review"]["state"], "no")
+        self.assertEqual(services["review"]["managed"], False)
+        self.assertEqual(services["ngrok"]["reachable"], None)
+
+    def test_supervisor_state_reports_stale_pid_file_without_cleanup(self) -> None:
+        root = Path(self.tmp.name) / "runtime"
+        review.RUNTIME_ROOT = root
+        process_dir = root / "processes"
+        process_dir.mkdir(parents=True)
+        pid_file = process_dir / "mcp.pid"
+        pid_file.write_text("99999999\n", encoding="utf-8")
+
+        services = {item["name"]: item for item in review.supervisor_state()["services"]}
+
+        self.assertEqual(services["mcp"]["pid"], 99999999)
+        self.assertEqual(services["mcp"]["state"], "stale")
+        self.assertEqual(services["mcp"]["managed"], False)
+        self.assertEqual(services["mcp"]["managed_state"], "stale")
+        self.assertTrue(pid_file.exists())
+
+    def test_supervisor_state_omits_token_values(self) -> None:
+        original_token = os.environ.get("MCP_ACCESS_TOKEN")
+        try:
+            os.environ["MCP_ACCESS_TOKEN"] = "secret-token-value"
+            serialized = json.dumps(review.supervisor_state(), ensure_ascii=False)
+
+            self.assertNotIn("secret-token-value", serialized)
+            self.assertNotIn("access_token", serialized)
+        finally:
+            if original_token is None:
+                os.environ.pop("MCP_ACCESS_TOKEN", None)
+            else:
+                os.environ["MCP_ACCESS_TOKEN"] = original_token
+
+    def test_processes_tab_renders_supervisor_status(self) -> None:
+        root = Path(self.tmp.name) / "runtime"
+        review.RUNTIME_ROOT = root
+        html = review.server_tab_content_html("processes", review.server_state())
+
+        self.assertIn("Supervisor processes", html)
+        self.assertIn("scripts/dev_session.sh start", html)
+        self.assertIn(str(root / "processes"), html)
+        self.assertIn("/api/supervisor-state", html)
 
     def test_environment_tab_omits_token_and_renders_long_label(self) -> None:
         original_token = os.environ.get("MCP_ACCESS_TOKEN")

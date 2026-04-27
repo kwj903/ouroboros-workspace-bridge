@@ -35,23 +35,26 @@ from terminal_bridge.review_notifications import (
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = PROJECT_ROOT / "scripts" / "command_bundle_runner.py"
 
-RUNTIME_ROOT = Path.home() / ".mcp_terminal_bridge" / "my-terminal-tool"
+DEFAULT_RUNTIME_ROOT = Path.home() / ".mcp_terminal_bridge" / "my-terminal-tool"
+RUNTIME_ROOT = Path(os.environ.get("MCP_TERMINAL_BRIDGE_RUNTIME_ROOT", str(DEFAULT_RUNTIME_ROOT))).expanduser()
 COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
 AUDIT_LOG = RUNTIME_ROOT / "audit.jsonl"
 PENDING_DIR = COMMAND_BUNDLES_DIR / "pending"
 APPLIED_DIR = COMMAND_BUNDLES_DIR / "applied"
 REJECTED_DIR = COMMAND_BUNDLES_DIR / "rejected"
 FAILED_DIR = COMMAND_BUNDLES_DIR / "failed"
+SUPERVISOR_SERVICES = ("review", "mcp", "ngrok")
 
 HOST = os.environ.get("BUNDLE_REVIEW_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BUNDLE_REVIEW_PORT", "8790"))
 EVENT_POLL_SECONDS = 0.5
 EVENT_TIMEOUT_SECONDS = 25.0
 VALID_STATUS_FILTERS = {"all", "pending", "applied", "failed", "rejected"}
-VALID_SERVER_TABS = {"overview", "services", "connection", "environment", "tools", "diagnostics"}
+VALID_SERVER_TABS = {"overview", "services", "processes", "connection", "environment", "tools", "diagnostics"}
 SERVER_TAB_LABELS = {
     "overview": "개요",
     "services": "서버",
+    "processes": "프로세스",
     "connection": "연결",
     "environment": "환경",
     "tools": "로컬 도구",
@@ -443,6 +446,94 @@ def tcp_port_reachable(host: str, port: int, timeout_seconds: float = 0.5) -> bo
         return False
 
 
+def supervisor_process_dir() -> Path:
+    return RUNTIME_ROOT / "processes"
+
+
+def supervisor_pid_file(service: str) -> Path:
+    return supervisor_process_dir() / f"{service}.pid"
+
+
+def supervisor_log_file(service: str) -> Path:
+    return supervisor_process_dir() / f"{service}.log"
+
+
+def read_supervisor_pid(path: Path) -> int | None:
+    try:
+        raw_pid = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+    if not raw_pid.isdigit():
+        return None
+
+    try:
+        return int(raw_pid)
+    except ValueError:
+        return None
+
+
+def pid_is_alive(pid: int | None) -> bool:
+    if pid is None or pid < 1:
+        return False
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def supervisor_service_endpoint(service: str) -> tuple[str | None, int | None]:
+    if service == "review":
+        return os.environ.get("BUNDLE_REVIEW_HOST", HOST), env_int("BUNDLE_REVIEW_PORT", PORT)
+    if service == "mcp":
+        return os.environ.get("MCP_HOST", "127.0.0.1"), env_int("MCP_PORT", 8787)
+    return None, None
+
+
+def supervisor_service_state(service: str) -> dict[str, object]:
+    pid_file = supervisor_pid_file(service)
+    log_file = supervisor_log_file(service)
+    pid_file_exists = pid_file.exists()
+    pid = read_supervisor_pid(pid_file) if pid_file_exists else None
+    alive = pid_is_alive(pid)
+    state = "yes" if alive else "stale" if pid_file_exists else "no"
+    host, port = supervisor_service_endpoint(service)
+    reachable: bool | None
+    if host is not None and port is not None:
+        reachable = tcp_port_reachable(host, port, timeout_seconds=0.2)
+    else:
+        reachable = None
+
+    return {
+        "name": service,
+        "pid": pid,
+        "alive": alive,
+        "state": state,
+        "managed": alive,
+        "managed_state": state,
+        "reachable": reachable,
+        "host": host,
+        "port": port,
+        "pid_file": str(pid_file),
+        "log_file": str(log_file),
+    }
+
+
+def supervisor_state() -> dict[str, object]:
+    process_dir = supervisor_process_dir()
+    return {
+        "runtime_root": str(RUNTIME_ROOT),
+        "process_dir": str(process_dir),
+        "services": [supervisor_service_state(service) for service in SUPERVISOR_SERVICES],
+    }
+
+
 def server_state() -> dict[str, object]:
     mcp_host = os.environ.get("MCP_HOST", "127.0.0.1")
     mcp_port = env_int("MCP_PORT", 8787)
@@ -491,6 +582,7 @@ def server_state() -> dict[str, object]:
             "notification_click_action": watcher_config["notification_click_action"],
             "poll_seconds": watcher_config["poll_seconds"],
         },
+        "supervisor": supervisor_state(),
     }
 
 
@@ -635,7 +727,7 @@ def primary_nav_html(active: str) -> str:
 def management_nav_html(current_tab: str) -> str:
     current_tab = normalize_server_tab(current_tab)
     links: list[str] = []
-    for tab in ("overview", "services", "connection", "environment", "tools", "diagnostics"):
+    for tab in ("overview", "services", "processes", "connection", "environment", "tools", "diagnostics"):
         classes = ["side-link"]
         aria = ""
         if tab == current_tab:
@@ -727,6 +819,70 @@ def recent_audit_events_html(limit: int = 10) -> str:
         '<div class="table-wrap">'
         '<table class="data-table">'
         "<thead><tr><th>시간</th><th>이벤트</th><th>요약</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</div>"
+    )
+
+
+def state_tone(state: object) -> str:
+    if state in {"yes", True}:
+        return "ok"
+    if state == "stale":
+        return "warn"
+    if state is False:
+        return "warn"
+    return "neutral"
+
+
+def reachable_badge(value: object) -> str:
+    if value is True:
+        return status_badge("yes", "ok")
+    if value is False:
+        return status_badge("no", "warn")
+    return status_badge("not checked", "neutral")
+
+
+def supervisor_processes_html(state: dict[str, object]) -> str:
+    services = state.get("services")
+    if not isinstance(services, list):
+        services = []
+
+    rows: list[str] = []
+    for item in services:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", ""))
+        pid = item.get("pid")
+        pid_label = str(pid) if pid is not None else "none"
+        alive_state = str(item.get("state", "no"))
+        managed_state = str(item.get("managed_state", alive_state))
+        host = item.get("host")
+        port = item.get("port")
+        endpoint = f"{host}:{port}" if host and port else "not checked"
+        rows.append(
+            "<tr>"
+            f"<td><strong>{escape(name)}</strong></td>"
+            f"<td><code>{escape(pid_label)}</code></td>"
+            f"<td>{status_badge(alive_state, state_tone(alive_state))}</td>"
+            f"<td>{status_badge(managed_state, state_tone(managed_state))}</td>"
+            f"<td>{reachable_badge(item.get('reachable'))}</td>"
+            f"<td><code>{escape(endpoint)}</code></td>"
+            f"<td><code>{escape(item.get('log_file') or '')}</code></td>"
+            f"<td><code>{escape(item.get('pid_file') or '')}</code></td>"
+            "</tr>"
+        )
+
+    if not rows:
+        return '<p class="meta">Supervisor process 상태가 없습니다.</p>'
+
+    return (
+        '<div class="table-wrap">'
+        '<table class="data-table">'
+        "<thead><tr>"
+        "<th>Service</th><th>PID</th><th>Alive</th><th>Managed</th>"
+        "<th>Reachable</th><th>Endpoint</th><th>Log path</th><th>PID file</th>"
+        "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
         "</div>"
@@ -1390,6 +1546,7 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
     mcp_server = state.get("mcp_server") if isinstance(state.get("mcp_server"), dict) else {}
     ngrok = state.get("ngrok") if isinstance(state.get("ngrok"), dict) else {}
     embedded_watcher = state.get("embedded_watcher") if isinstance(state.get("embedded_watcher"), dict) else {}
+    supervisor = state.get("supervisor") if isinstance(state.get("supervisor"), dict) else supervisor_state()
 
     public_hint = ngrok.get("public_mcp_endpoint_hint")
     public_hint_value = f"<code>{escape(public_hint)}</code>" if public_hint else "없음"
@@ -1480,6 +1637,31 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
         </div>
         """
 
+    if tab == "processes":
+        return f"""
+        <div class="stack">
+          <div class="section-title">
+            <h2>{escape(SERVER_TAB_LABELS[tab])}</h2>
+            <p class="meta">Read-only status for services managed by <code>scripts/dev_session.sh start</code>.</p>
+          </div>
+          {read_only_notice}
+          <section class="card">
+            <h3>Supervisor processes</h3>
+            <p class="meta">
+              pidfile과 TCP reachability만 확인합니다. stale pidfile은 이 화면에서 삭제하지 않습니다.
+            </p>
+            <div class="kv">
+              {kv_row_html("Runtime root", str(supervisor.get("runtime_root", "")), code_value=True)}
+              {kv_row_html("Process directory", str(supervisor.get("process_dir", "")), code_value=True)}
+            </div>
+          </section>
+          <section class="card">
+            {supervisor_processes_html(supervisor)}
+          </section>
+          <p><a href="/api/supervisor-state"><code>/api/supervisor-state</code></a> 에서 같은 상태를 JSON으로 확인합니다.</p>
+        </div>
+        """
+
     if tab == "connection":
         return f"""
         <div class="stack">
@@ -1559,6 +1741,7 @@ def server_tab_content_html(tab: str, state: dict[str, object]) -> str:
       <section class="card">
         <ul class="compact">
           <li><a href="/api/server-state"><code>/api/server-state</code></a> 로 현재 review UI 상태를 JSON으로 확인합니다.</li>
+          <li><a href="/api/supervisor-state"><code>/api/supervisor-state</code></a> 로 <code>scripts/dev_session.sh start</code>가 관리하는 process 상태를 JSON으로 확인합니다.</li>
           <li><a href="/api/audit-state"><code>/api/audit-state</code></a> 로 최근 로컬 작업 이벤트 요약을 JSON으로 확인합니다.</li>
           <li>Embedded watcher: {status_chip("enabled" if embedded_watcher.get("enabled") else "disabled", "ok" if embedded_watcher.get("enabled") else "neutral")}</li>
           <li>Watcher open mode: <code>{escape(embedded_watcher.get("open_mode", ""))}</code></li>
@@ -1644,6 +1827,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/server-state":
             self.send_json(server_state())
+            return
+
+        if parsed.path == "/api/supervisor-state":
+            self.send_json(supervisor_state())
             return
 
         if parsed.path == "/api/history-state":
