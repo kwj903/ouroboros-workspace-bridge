@@ -134,6 +134,12 @@ doctor() {
     echo "[warn] NGROK_HOST/NGROK_BASE_URL: not set; scripts/run_ngrok.sh will use its default host."
   fi
 
+  echo
+  echo "Supervisor services:"
+  for service in review mcp ngrok; do
+    print_service_status "$service"
+  done
+
   return "$exit_code"
 }
 

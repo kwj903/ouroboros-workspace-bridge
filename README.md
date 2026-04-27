@@ -152,6 +152,8 @@ scripts/dev_session.sh configure
 토큰 값은 입력 중 화면에 표시하지 않으며 README, 로그, git tracked 파일에 저장하지 않습니다.
 `NGROK_HOST`는 사람마다 다를 수 있으므로 환경 변수 또는 `session.env`에서 관리합니다.
 
+`scripts/dev_session.sh doctor`는 필수 도구와 환경 변수뿐 아니라 supervisor-managed `review`, `mcp`, `ngrok` 상태도 함께 요약합니다.
+
 전체 로컬 세션 시작은 다음 한 명령을 권장합니다.
 
 ```bash
