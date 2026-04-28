@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Local MCP server and review UI for safe Workspace Terminal Bridge sessions"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "LicenseRef-KwakWooJae-NC-1.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "KwakWooJae" },
 ]
@@ -18,7 +20,7 @@ dependencies = [
 woojae = "terminal_bridge.cli:main"
 
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
