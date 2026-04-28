@@ -11,3 +11,8 @@
 .gitignore text eol=lf
 .gitattributes text eol=lf
 .python-version text eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
