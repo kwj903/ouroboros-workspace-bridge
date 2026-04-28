@@ -39,6 +39,14 @@ Stop the local session:
 uv run woojae stop
 ```
 
+## Platform Support / 플랫폼 지원
+
+- macOS: supported and tested.
+- Linux: experimental and not officially supported yet.
+- Windows: not supported directly. WSL may work, but it is untested.
+
+현재 Ouroboros Workspace Bridge는 macOS-first 로컬 개발 도구로 개발되고 있습니다. `woojae copy-url`, 로컬 알림 같은 일부 편의 기능은 macOS 전용 도구에 의존합니다.
+
 ## Documentation
 
 Korean docs:
