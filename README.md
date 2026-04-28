@@ -1,5 +1,9 @@
 # Ouroboros Workspace Bridge
 
+<p align="center">
+  <img src="assets/brand/ouroboros-by-KwakWooJae.png" alt="Ouroboros by KwakWooJae logo" width="220">
+</p>
+
 Part of Ouroboros by KwakWooJae.
 
 Author: KwakWooJae
