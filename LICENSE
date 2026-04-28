@@ -1,21 +1,75 @@
-MIT License
+KwakWooJae Non-Commercial License 1.0
 
 Copyright (c) 2026 KwakWooJae
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Contact for commercial permission: kwakwoojae@gmail.com
 
-The above copyright notice and this permission notice shall be included in all
+Permission is granted, free of charge, to any person obtaining a copy of this
+software and associated documentation files (the "Software"), to use, copy,
+modify, and distribute the Software, subject to the following conditions:
+
+1. Non-Commercial Use Only
+
+The Software may be used, copied, modified, and distributed only for
+non-commercial purposes.
+
+Non-commercial use means use that is not primarily intended for or directed
+toward commercial advantage, monetary compensation, revenue generation,
+business operations, or use in a commercial product or service.
+
+2. Commercial Use Requires Permission
+
+Commercial use of the Software is not permitted without prior written permission
+from the copyright holder.
+
+Commercial use includes, but is not limited to:
+
+- selling the Software or copies of the Software;
+- sublicensing the Software for commercial purposes;
+- using the Software in a paid product or paid service;
+- using the Software as part of a SaaS, API, platform, or hosted service;
+- using the Software in consulting, client work, or paid deliverables;
+- using the Software for internal business operations of a for-profit entity;
+- distributing modified versions for commercial purposes.
+
+To request commercial permission, contact the copyright holder at:
+
+kwakwoojae@gmail.com
+
+3. Modified Versions and Derivative Works
+
+You may create modified versions or derivative works of the Software only for
+non-commercial purposes.
+
+Any modified version or derivative work must include this license notice and
+must not be used, sold, sublicensed, or distributed for commercial purposes
+without prior written permission from the copyright holder.
+
+4. Notices
+
+The above copyright notice and this license notice must be included in all
 copies or substantial portions of the Software.
+
+5. No Trademark Rights
+
+This license does not grant permission to use the names, logos, trademarks, or
+branding of the copyright holder, including but not limited to "KwakWooJae",
+"Ouroboros", "Ouroboros by KwakWooJae", and "Ouroboros Workspace Bridge",
+except as required to preserve license notices.
+
+6. Termination
+
+If you violate this license, your rights under this license terminate
+automatically. You must stop using, copying, modifying, and distributing the
+Software unless you obtain written permission from the copyright holder.
+
+7. No Warranty
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.
