@@ -2,7 +2,7 @@
 
 This guide is for maintaining and extending Workspace Terminal Bridge itself.
 
-For end-user local session operation, see `docs/user/local-session.md`.
+For end-user local session operation, see `docs/en/local-session.md` or `docs/ko/local-session.md`.
 
 ## Working principles
 
@@ -269,8 +269,10 @@ workspace_git_status
 ## Related docs
 
 ```text
-docs/user/local-session.md
-docs/user/troubleshooting.md
+docs/en/local-session.md
+docs/en/troubleshooting.md
+docs/ko/local-session.md
+docs/ko/troubleshooting.md
 docs/project/phase-6-release-checklist.md
 docs/project/phase-7-plan.md
 ```

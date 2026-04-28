@@ -1,6 +1,6 @@
 # Troubleshooting
 
-This guide covers common local operation failures for Workspace Terminal Bridge.
+This guide covers common local operation failures for Ouroboros Workspace Bridge.
 
 Use these checks from the repository root:
 

@@ -1,6 +1,6 @@
 # Quickstart
 
-This is the short first-run path for Workspace Terminal Bridge.
+This is the short first-run path for Ouroboros Workspace Bridge.
 
 ## Prerequisites
 

@@ -1,6 +1,6 @@
 # Local Session Guide
 
-This guide is for users who want to run Workspace Terminal Bridge locally and connect it to ChatGPT.
+This guide is for users who want to run Ouroboros Workspace Bridge locally and connect it to ChatGPT.
 
 For project maintenance notes, release checklists, and development plans, see `docs/project/`.
 
@@ -199,5 +199,5 @@ Avoid approving bundles that mix unrelated work such as file edits, tests, and c
 For common recovery steps, see:
 
 ```text
-docs/user/troubleshooting.md
+docs/en/troubleshooting.md
 ```
