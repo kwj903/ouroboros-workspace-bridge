@@ -515,6 +515,40 @@ class ReviewServerHelperTests(unittest.TestCase):
             else:
                 os.environ["MCP_ACCESS_TOKEN"] = original_token
 
+    def test_mask_sensitive_text_redacts_ngrok_authtoken(self) -> None:
+        original_token = os.environ.get("NGROK_AUTHTOKEN")
+        try:
+            os.environ["NGROK_AUTHTOKEN"] = "ngrok-secret-value"
+            text = "NGROK_AUTHTOKEN=ngrok-secret-value raw=ngrok-secret-value"
+            masked = review.mask_sensitive_text(text)
+
+            self.assertNotIn("ngrok-secret-value", masked)
+            self.assertIn("NGROK_AUTHTOKEN=[redacted]", masked)
+        finally:
+            if original_token is None:
+                os.environ.pop("NGROK_AUTHTOKEN", None)
+            else:
+                os.environ["NGROK_AUTHTOKEN"] = original_token
+
+    def test_supervisor_control_html_renders_start_for_stopped_or_stale_services(self) -> None:
+        stopped_html = review.supervisor_control_html("mcp", "no")
+        stale_html = review.supervisor_control_html("ngrok", "stale")
+
+        self.assertIn('/servers/processes/start/mcp', stopped_html)
+        self.assertNotIn('/servers/processes/stop/mcp', stopped_html)
+        self.assertNotIn('/servers/processes/restart/mcp', stopped_html)
+        self.assertIn('/servers/processes/start/ngrok', stale_html)
+        self.assertNotIn('/servers/processes/stop/ngrok', stale_html)
+        self.assertNotIn('/servers/processes/restart/ngrok', stale_html)
+
+    def test_supervisor_control_html_keeps_review_terminal_only(self) -> None:
+        html = review.supervisor_control_html("review", "yes")
+
+        self.assertIn("terminal only", html)
+        self.assertNotIn("<form", html)
+        self.assertNotIn('/servers/processes/stop/review', html)
+        self.assertNotIn('/servers/processes/restart/review', html)
+
     def test_status_badge_includes_text_label(self) -> None:
         html = review.status_badge("reachable", "ok")
 
