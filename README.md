@@ -13,6 +13,14 @@ ChatGPT에서 로컬 `~/workspace` 아래의 프로젝트를 안전하게 탐색
 - 큰 텍스트 payload를 runtime에 저장하고 ref로 참조하는 안전한 대용량 수정 흐름
 - operation/audit/backup/trash/task 기록
 
+## 추가 문서
+
+Phase 6 이후 운영과 다음 작업 계획은 `docs/` 아래 문서로 분리해 관리합니다.
+
+- [`docs/phase-6-release-checklist.md`](docs/phase-6-release-checklist.md): Phase 6 로컬 세션 관리 기능 완료 범위와 릴리즈 확인 항목
+- [`docs/phase-7-plan.md`](docs/phase-7-plan.md): Phase 7 안정성, 관측성, 운영성 개선 계획
+- [`docs/troubleshooting.md`](docs/troubleshooting.md): review UI, MCP, ngrok, bundle 상태 문제 복구 절차
+
 ## 현재 상태
 
 이 서버는 개인 로컬 개발용 MVP입니다.
