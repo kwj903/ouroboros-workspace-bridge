@@ -21,8 +21,8 @@ The v0.1 recommended usage is from a repository checkout with `uv run woojae ...
 ## Quick Start
 
 ```bash
-git clone https://github.com/<owner>/<repo>.git
-cd <repo>
+git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
+cd ouroboros-workspace-bridge
 uv sync
 uv run woojae setup
 uv run woojae start
