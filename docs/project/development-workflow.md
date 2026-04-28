@@ -117,7 +117,18 @@ Do not use `precheck_commands` in commit bundles. Verification should happen bef
 
 ## Text payload refs
 
-Use text payload refs when content is long or when old/new replacement text would make the tool call too large.
+`workspace_stage_text_payload` is an advanced fallback for long content, not the default editing path.
+
+Do not use payload refs for short edits such as README link updates, small paragraph replacements, import lines, config tweaks, or test snippets. For short edits, put `content`, `old_text`, or `new_text` directly in a single action bundle.
+
+Use payload refs when content is long enough to make the tool call JSON heavy or fragile.
+
+Recommended thresholds:
+
+- 2KB or less: do not use payload refs
+- 2KB to 8KB: prefer a direct single action bundle when practical
+- 8KB or more: consider payload refs
+- 20KB or more, or large patches: prefer payload refs
 
 Supported fields:
 
@@ -134,7 +145,16 @@ Runtime location:
 ~/.mcp_terminal_bridge/my-terminal-tool/text_payloads
 ```
 
-Payload refs reduce large JSON tool calls and make review UI behavior more stable.
+Payload refs reduce large JSON tool calls and make review UI behavior more stable for large edits. They also add an extra tool call, so using them for short edits can increase the chance of interrupted responses.
+
+If a response stops after creating a payload ref, do not retry the same request immediately. First check:
+
+```text
+workspace_list_command_bundles
+workspace_git_status
+```
+
+A payload ref by itself does not modify project files.
 
 ## Task/session records
 
