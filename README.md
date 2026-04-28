@@ -79,6 +79,7 @@ scripts/dev_session.sh stop
 
 - [`docs/user/local-session.md`](docs/user/local-session.md): 로컬 세션 시작, 상태 확인, review UI, MCP/ngrok 연결, ChatGPT 앱 Refresh 기준
 - [`docs/user/troubleshooting.md`](docs/user/troubleshooting.md): review UI, MCP, ngrok, bundle 상태 문제 복구 절차
+- [`docs/user/chatgpt-agent-usage.md`](docs/user/chatgpt-agent-usage.md): ChatGPT 프로젝트 지침에 바로 복사해 넣을 수 있는 Workspace Terminal Bridge 작업 지침 템플릿
 
 프로젝트 작업용 문서:
 
