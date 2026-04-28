@@ -1,6 +1,12 @@
-# Workspace Terminal Bridge
+# Ouroboros Workspace Bridge
+
+Part of Ouroboros by KwakWooJae.
+
+Author: KwakWooJae
 
 ChatGPT에서 사용자가 지정한 로컬 workspace 아래의 프로젝트를 안전하게 탐색하고, 수정하고, 검증하기 위한 개인용 MCP 서버입니다.
+
+코드와 일부 내부 경로에는 기존 프로젝트 이름인 Workspace Terminal Bridge가 남아 있습니다. 현재 product display name은 Ouroboros Workspace Bridge이며, CLI 이름은 `woojae`입니다.
 
 이 프로젝트의 핵심 목표는 ChatGPT와 대화하면서 로컬 프로젝트를 함께 개발하되, 실제 파일 수정과 명령 실행은 로컬 review UI에서 사용자가 승인한 뒤 적용되도록 만드는 것입니다.
 
@@ -69,6 +75,12 @@ uv run woojae stop
 자세한 첫 실행 절차는 [`docs/user/quickstart.md`](docs/user/quickstart.md), 세션 운영 방법은 [`docs/user/local-session.md`](docs/user/local-session.md)를 참고하세요.
 
 ## 문서 구조
+
+Repository hygiene:
+
+- [`LICENSE`](LICENSE): MIT License
+- [`SECURITY.md`](SECURITY.md): local MCP server와 token handling 보안 정책
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): setup, verification, contribution rules
 
 사용자용 문서:
 
