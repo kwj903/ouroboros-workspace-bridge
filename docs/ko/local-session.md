@@ -5,7 +5,7 @@
 ## Repository root에서 시작
 
 ```bash
-cd <repo>
+cd ouroboros-workspace-bridge
 ```
 
 ## 권장 흐름

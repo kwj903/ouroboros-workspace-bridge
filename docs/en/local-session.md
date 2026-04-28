@@ -7,7 +7,7 @@ For project maintenance notes, release checklists, and development plans, see `d
 ## Start from the repository root
 
 ```bash
-cd <repo>
+cd ouroboros-workspace-bridge
 ```
 
 ## Recommended session flow

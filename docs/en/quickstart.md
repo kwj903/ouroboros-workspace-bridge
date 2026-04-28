@@ -4,7 +4,9 @@ This is the short first-run path for Ouroboros Workspace Bridge.
 
 ## Prerequisites
 
-- macOS is recommended for now.
+- macOS: supported and tested.
+- Linux: experimental and not officially supported yet.
+- Windows: not supported directly. WSL may work, but it is untested.
 - Python 3.12+
 - `uv`
 - ngrok account and ngrok CLI
@@ -23,6 +25,8 @@ Do not put ngrok auth tokens, MCP access tokens, or other secrets in repository 
 From a repository checkout:
 
 ```bash
+git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
+cd ouroboros-workspace-bridge
 uv sync
 uv run woojae setup
 ```
@@ -74,6 +78,14 @@ http://127.0.0.1:8790/pending
 http://127.0.0.1:8790/history
 http://127.0.0.1:8790/servers
 ```
+
+## License
+
+This project is licensed under the **KwakWooJae Non-Commercial License 1.0**. Non-commercial use is permitted. Commercial use requires prior written permission from KwakWooJae.
+
+Commercial permission contact: kwakwoojae@gmail.com
+
+See [LICENSE](../../LICENSE).
 
 ## Stop
 

@@ -5,7 +5,7 @@ This guide covers common local operation failures for Ouroboros Workspace Bridge
 Use these checks from the repository root:
 
 ```bash
-cd <repo>
+cd ouroboros-workspace-bridge
 ```
 
 ## First checks
