@@ -32,6 +32,8 @@ load_session_env() {
   local saved_mcp_host="${MCP_HOST-}"
   local had_mcp_port="${MCP_PORT+x}"
   local saved_mcp_port="${MCP_PORT-}"
+  local had_workspace_root="${WORKSPACE_ROOT+x}"
+  local saved_workspace_root="${WORKSPACE_ROOT-}"
 
   # shellcheck source=/dev/null
   source "$SESSION_ENV"
@@ -61,5 +63,10 @@ load_session_env() {
   if [[ -n "$had_mcp_port" ]]; then
     MCP_PORT="$saved_mcp_port"
     export MCP_PORT
+  fi
+
+  if [[ -n "$had_workspace_root" ]]; then
+    WORKSPACE_ROOT="$saved_workspace_root"
+    export WORKSPACE_ROOT
   fi
 }

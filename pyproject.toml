@@ -1,10 +1,22 @@
 [project]
 name = "my-terminal-tool"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local MCP server and review UI for safe Workspace Terminal Bridge sessions"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "mcp[cli]>=1.27.0",
     "pydantic>=2.13.3",
+    "starlette>=1.0.0",
+    "uvicorn>=0.46.0",
 ]
+
+[project.scripts]
+woojae = "terminal_bridge.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["terminal_bridge*"]

@@ -17,7 +17,14 @@ if [[ -z "$NGROK_HOST" && -n "$NGROK_BASE_URL" ]]; then
   NGROK_HOST="${NGROK_HOST%%/*}"
 fi
 
-: "${NGROK_HOST:=iguana-dashing-tuna.ngrok-free.app}"
-
 export MCP_PORT NGROK_HOST
-exec ngrok http --url="$NGROK_HOST" "$MCP_PORT"
+
+if [[ -n "$NGROK_HOST" ]]; then
+  exec ngrok http --url="$NGROK_HOST" "$MCP_PORT"
+fi
+
+cat <<'EOF'
+NGROK_HOST is not set. Starting ngrok in temporary URL mode.
+Use `woojae setup` or `scripts/dev_session.sh configure` to save a fixed domain later.
+EOF
+exec ngrok http "$MCP_PORT"

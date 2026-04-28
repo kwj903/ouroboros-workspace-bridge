@@ -7,21 +7,29 @@ For project maintenance notes, release checklists, and development plans, see `d
 ## Start from the repository root
 
 ```bash
-cd ~/workspace/Custom-Tools/GPT-Tools/my-terminal-tool
+cd <repo>
 ```
 
 ## Recommended session flow
 
-Check the local environment first:
+Run the initial setup when configuring a checkout for the first time:
 
 ```bash
-scripts/dev_session.sh doctor
+uv run woojae setup
+```
+
+This writes private runtime settings outside the repository. During setup, choose the allowed `WORKSPACE_ROOT`. Existing shell environment values such as `WORKSPACE_ROOT`, `MCP_ACCESS_TOKEN`, and `NGROK_HOST` take precedence over values loaded from runtime `session.env`.
+
+Check the local environment:
+
+```bash
+uv run woojae doctor
 ```
 
 Start the full local session:
 
 ```bash
-scripts/dev_session.sh start
+uv run woojae start
 ```
 
 This starts the review server, MCP server, and ngrok in the background. Process metadata is stored outside the repository under:
@@ -33,21 +41,27 @@ This starts the review server, MCP server, and ngrok in the background. Process 
 Check service status:
 
 ```bash
-scripts/dev_session.sh status
+uv run woojae status
+```
+
+Open the review UI:
+
+```bash
+uv run woojae open
 ```
 
 Stop the full session when finished:
 
 ```bash
-scripts/dev_session.sh stop
+uv run woojae stop
 ```
 
 ## Runtime environment
 
-If `MCP_ACCESS_TOKEN` or `NGROK_HOST` is missing, create a private runtime env file:
+If `MCP_ACCESS_TOKEN` is missing, create a private runtime env file:
 
 ```bash
-scripts/dev_session.sh configure
+uv run woojae setup
 ```
 
 The generated file is stored outside the repository:
@@ -63,6 +77,8 @@ Expected permission:
 ```
 
 Token values must not be committed, printed in docs, or pasted into logs.
+
+`NGROK_HOST` is optional. If it is not configured, `uv run woojae start` uses ngrok temporary URL mode. `uv run woojae copy-url` requires both `NGROK_HOST` and `MCP_ACCESS_TOKEN`.
 
 ## Review UI
 
@@ -84,23 +100,18 @@ The review UI is used to approve staged action and command bundles. It is intent
 
 ## Process controls
 
-Use the helper script for local process control.
+Use `woojae` for normal local process control.
 
 ```bash
-scripts/dev_session.sh status
-scripts/dev_session.sh start-service mcp
-scripts/dev_session.sh stop-service mcp
-scripts/dev_session.sh restart mcp
-scripts/dev_session.sh start-service ngrok
-scripts/dev_session.sh stop-service ngrok
-scripts/dev_session.sh restart ngrok
-scripts/dev_session.sh restart-session
-scripts/dev_session.sh logs review
-scripts/dev_session.sh logs mcp
-scripts/dev_session.sh logs ngrok
+uv run woojae status
+uv run woojae restart mcp
+uv run woojae restart ngrok
+uv run woojae logs review
+uv run woojae logs mcp
+uv run woojae logs ngrok
 ```
 
-The review process is not individually controlled from the UI because it is the UI process itself. For review-related recovery, use full session restart or stop/start.
+Script-level controls such as `scripts/dev_session.sh start-service mcp`, `stop-service`, and `restart-session` remain available for fallback/debug use. The review process is not individually controlled from the UI because it is the UI process itself. For review-related recovery, use full session restart or stop/start.
 
 ## ChatGPT MCP connection
 
@@ -123,8 +134,8 @@ Refresh the ChatGPT app MCP connection when:
 Recommended refresh flow:
 
 ```bash
-scripts/dev_session.sh restart mcp
-scripts/dev_session.sh status
+uv run woojae restart mcp
+uv run woojae status
 ```
 
 Then refresh the MCP connection in the ChatGPT app.
@@ -164,9 +175,9 @@ brew install terminal-notifier
 Useful watcher options:
 
 ```bash
-BUNDLE_REVIEW_EMBEDDED_WATCHER=0 scripts/dev_session.sh review
-BUNDLE_WATCH_NOTIFICATION_CLICK_ACTION=open scripts/dev_session.sh review
-BUNDLE_WATCH_OPEN_MODE=none scripts/dev_session.sh review
+BUNDLE_REVIEW_EMBEDDED_WATCHER=0 uv run woojae start
+BUNDLE_WATCH_NOTIFICATION_CLICK_ACTION=open uv run woojae start
+BUNDLE_WATCH_OPEN_MODE=none uv run woojae start
 ```
 
 Default notification target is `/pending`. Use bundle-specific notification targets only when debugging review flow behavior.

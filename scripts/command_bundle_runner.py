@@ -13,8 +13,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-WORKSPACE_ROOT = Path.home() / "workspace"
-RUNTIME_ROOT = Path.home() / ".mcp_terminal_bridge" / "my-terminal-tool"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from terminal_bridge.config import RUNTIME_ROOT, WORKSPACE_ROOT
+
 COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
 PENDING_DIR = COMMAND_BUNDLES_DIR / "pending"
 APPLIED_DIR = COMMAND_BUNDLES_DIR / "applied"
@@ -191,11 +195,11 @@ def safe_env() -> dict[str, str]:
 def resolve_cwd(cwd: str) -> Path:
     raw = Path(cwd)
     if raw.is_absolute() or ".." in raw.parts:
-        raise ValueError("cwd must be a relative path under ~/workspace")
+        raise ValueError("cwd must be a relative path under WORKSPACE_ROOT")
 
     target = (WORKSPACE_ROOT / raw).resolve(strict=False)
     if target != WORKSPACE_ROOT and not target.is_relative_to(WORKSPACE_ROOT):
-        raise ValueError("cwd escapes ~/workspace")
+        raise ValueError(f"cwd escapes WORKSPACE_ROOT: {WORKSPACE_ROOT}")
     if not target.exists() or not target.is_dir():
         raise NotADirectoryError(f"cwd does not exist or is not a directory: {cwd}")
 
@@ -209,7 +213,7 @@ def resolve_file_path(raw_path: str) -> Path:
 
     target = (WORKSPACE_ROOT / raw).resolve(strict=False)
     if target != WORKSPACE_ROOT and not target.is_relative_to(WORKSPACE_ROOT):
-        raise ValueError(f"file action path escapes ~/workspace: {raw_path}")
+        raise ValueError(f"file action path escapes WORKSPACE_ROOT: {raw_path}")
 
     rel_parts = target.relative_to(WORKSPACE_ROOT).parts
     if any(part in BLOCKED_DIR_NAMES for part in rel_parts):

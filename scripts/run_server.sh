@@ -9,13 +9,13 @@ load_session_env
 
 : "${MCP_HOST:=127.0.0.1}"
 : "${MCP_PORT:=8787}"
-: "${NGROK_HOST:=iguana-dashing-tuna.ngrok-free.app}"
+: "${NGROK_HOST:=}"
 
 if [[ -z "${MCP_ACCESS_TOKEN:-}" ]]; then
   cat >&2 <<'EOF'
 MCP_ACCESS_TOKEN is not set.
 
-Source your private env file before running this script.
+Run `woojae setup` or `scripts/dev_session.sh configure` before running this script.
 The token value is intentionally not printed.
 EOF
   exit 1

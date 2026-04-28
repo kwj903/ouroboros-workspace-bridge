@@ -1,12 +1,12 @@
 # Workspace Terminal Bridge
 
-ChatGPT에서 로컬 `~/workspace` 아래의 프로젝트를 안전하게 탐색하고, 수정하고, 검증하기 위한 개인용 MCP 서버입니다.
+ChatGPT에서 사용자가 지정한 로컬 workspace 아래의 프로젝트를 안전하게 탐색하고, 수정하고, 검증하기 위한 개인용 MCP 서버입니다.
 
 이 프로젝트의 핵심 목표는 ChatGPT와 대화하면서 로컬 프로젝트를 함께 개발하되, 실제 파일 수정과 명령 실행은 로컬 review UI에서 사용자가 승인한 뒤 적용되도록 만드는 것입니다.
 
 ## 핵심 기능
 
-- `~/workspace` 내부 파일/디렉터리 탐색
+- `WORKSPACE_ROOT` 내부 파일/디렉터리 탐색
 - UTF-8 텍스트 파일 읽기, 생성, 수정, append
 - patch 미리보기와 승인 기반 적용
 - Git status/diff 확인과 승인 기반 commit
@@ -19,11 +19,13 @@ ChatGPT에서 로컬 `~/workspace` 아래의 프로젝트를 안전하게 탐색
 
 이 서버는 개인 로컬 개발용 MVP입니다.
 
-기본 작업 루트:
+허용 workspace root:
 
 ```text
-~/workspace
+WORKSPACE_ROOT
 ```
+
+`WORKSPACE_ROOT`는 shell 환경 변수 또는 runtime `session.env`에서 설정합니다. 설정 전 기본값은 `~/workspace`입니다.
 
 런타임 데이터 위치:
 
@@ -35,29 +37,22 @@ ChatGPT에서 로컬 `~/workspace` 아래의 프로젝트를 안전하게 탐색
 
 ## 빠른 시작
 
-프로젝트 디렉터리로 이동합니다.
+v0.1 권장 사용 방식은 repository checkout에서 `uv run woojae ...`로 실행하는 것입니다. 전역 설치나 패키지 배포 방식은 이후 packaging 단계에서 다룹니다.
 
 ```bash
-cd ~/workspace/Custom-Tools/GPT-Tools/my-terminal-tool
+git clone https://github.com/<owner>/<repo>.git
+cd <repo>
+uv sync
+uv run woojae setup
+uv run woojae start
+uv run woojae copy-url
 ```
 
-환경과 세션 상태를 점검합니다.
+선택적으로 `./install.sh`를 실행하면 `uv sync`를 수행하고 다음 설정 명령을 안내합니다. 이 스크립트는 `sudo`를 사용하지 않고 interactive setup을 자동 실행하지 않습니다.
 
-```bash
-scripts/dev_session.sh doctor
-```
+`woojae setup`에서 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`를 선택합니다. 이미 shell에 설정된 `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN` 같은 환경 변수는 runtime `session.env` 값보다 우선합니다.
 
-전체 로컬 세션을 시작합니다.
-
-```bash
-scripts/dev_session.sh start
-```
-
-상태를 확인합니다.
-
-```bash
-scripts/dev_session.sh status
-```
+`NGROK_HOST`를 설정하지 않으면 `uv run woojae start`가 ngrok temporary URL mode로 터널을 엽니다. 이 경우 고정 MCP URL을 만들 수 없으므로 ngrok 출력 또는 로그에서 임시 URL을 확인해야 합니다. `uv run woojae copy-url`은 `NGROK_HOST`와 `MCP_ACCESS_TOKEN`이 모두 설정된 경우에만 실제 MCP URL을 macOS clipboard에 복사하며, 터미널에는 redacted preview만 출력합니다.
 
 로컬 승인 UI:
 
@@ -68,16 +63,17 @@ http://127.0.0.1:8790/pending
 작업을 마치면 세션을 종료합니다.
 
 ```bash
-scripts/dev_session.sh stop
+uv run woojae stop
 ```
 
-자세한 세션 운영 방법은 [`docs/user/local-session.md`](docs/user/local-session.md)를 참고하세요.
+자세한 첫 실행 절차는 [`docs/user/quickstart.md`](docs/user/quickstart.md), 세션 운영 방법은 [`docs/user/local-session.md`](docs/user/local-session.md)를 참고하세요.
 
 ## 문서 구조
 
 사용자용 문서:
 
 - [`docs/user/local-session.md`](docs/user/local-session.md): 로컬 세션 시작, 상태 확인, review UI, MCP/ngrok 연결, ChatGPT 앱 Refresh 기준
+- [`docs/user/quickstart.md`](docs/user/quickstart.md): 처음 설치와 ChatGPT 연결을 위한 짧은 실행 절차
 - [`docs/user/troubleshooting.md`](docs/user/troubleshooting.md): review UI, MCP, ngrok, bundle 상태 문제 복구 절차
 - [`docs/user/chatgpt-agent-usage.md`](docs/user/chatgpt-agent-usage.md): ChatGPT 프로젝트 지침에 바로 복사해 넣을 수 있는 Workspace Terminal Bridge 작업 지침 템플릿
 
@@ -126,14 +122,7 @@ ngrok
 ChatGPT Developer Mode App
 ```
 
-Python 의존성은 `pyproject.toml` 기준입니다.
-
-```toml
-dependencies = [
-    "mcp[cli]>=1.27.0",
-    "pydantic>=2.13.3",
-]
-```
+Python 의존성은 `pyproject.toml` 기준입니다. 처음 받은 뒤에는 `uv sync`로 project-local environment를 준비합니다.
 
 ## 운영 원칙
 
@@ -172,7 +161,7 @@ git diff --check
 ngrok URL은 외부에서 접근 가능한 주소입니다. 작업하지 않을 때는 ngrok과 MCP 서버를 꺼두는 것을 권장합니다.
 
 ```bash
-scripts/dev_session.sh stop
+uv run woojae stop
 ```
 
 토큰을 바꾸거나 MCP tool schema를 변경한 경우에는 MCP 서버를 재시작하고 ChatGPT 앱에서 MCP 연결을 Refresh해야 합니다.

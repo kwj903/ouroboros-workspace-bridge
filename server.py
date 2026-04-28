@@ -167,29 +167,31 @@ from terminal_bridge.trash import (
     _restore_trash_payload,
 )
 
+allowed_hosts = [
+    "127.0.0.1:*",
+    "localhost:*",
+    "[::1]:*",
+]
+allowed_origins = [
+    "http://127.0.0.1:*",
+    "http://localhost:*",
+]
+if NGROK_HOST:
+    allowed_hosts.extend([NGROK_HOST, f"{NGROK_HOST}:*"])
+    allowed_origins.extend([f"https://{NGROK_HOST}", f"https://{NGROK_HOST}:*"])
+
 transport_security = TransportSecuritySettings(
     enable_dns_rebinding_protection=True,
-    allowed_hosts=[
-        "127.0.0.1:*",
-        "localhost:*",
-        "[::1]:*",
-        NGROK_HOST,
-        f"{NGROK_HOST}:*",
-    ],
-    allowed_origins=[
-        "http://127.0.0.1:*",
-        "http://localhost:*",
-        f"https://{NGROK_HOST}",
-        f"https://{NGROK_HOST}:*",
-    ],
+    allowed_hosts=allowed_hosts,
+    allowed_origins=allowed_origins,
 )
 
 mcp = FastMCP(
     name="Workspace Terminal Bridge",
     instructions=(
-        "Provides controlled development access under ~/workspace. "
+        "Provides controlled development access under the configured WORKSPACE_ROOT. "
         "This server rejects absolute paths, path traversal, secret-like files, "
-        "and paths outside ~/workspace. It supports reading, safe file writes, "
+        "and paths outside WORKSPACE_ROOT. It supports reading, safe file writes, "
         "soft deletion, restore, approved command profiles, basic git operations, "
         "and sandboxed argv-based command execution with risk classification."
     ),
@@ -387,8 +389,10 @@ class AccessTokenMiddleware:
 
 def _run_server() -> None:
     if not MCP_ACCESS_TOKEN:
-        _run_server()
-        return
+        raise SystemExit(
+            "MCP_ACCESS_TOKEN is required. Run `woojae setup` or "
+            "`scripts/dev_session.sh configure` before starting the MCP server."
+        )
 
     from starlette.applications import Starlette
     from starlette.routing import Mount
@@ -587,7 +591,7 @@ def _run_command(cwd: str, command: list[str], timeout_seconds: int = 30) -> Com
     },
 )
 def workspace_info() -> WorkspaceInfo:
-    """Return basic information about the configured ~/workspace root and enabled tools."""
+    """Return basic information about the configured WORKSPACE_ROOT and enabled tools."""
     tools = [
         "workspace_info",
         "workspace_list",
@@ -665,7 +669,7 @@ def workspace_list(
         str,
         Field(
             description=(
-                "Relative directory path under ~/workspace. "
+                "Relative directory path under the configured WORKSPACE_ROOT. "
                 "Use '.' for the workspace root. Absolute paths and '..' are rejected."
             )
         ),
@@ -675,7 +679,7 @@ def workspace_list(
         Field(description="Whether to include hidden dotfiles, except blocked secret-like files."),
     ] = False,
 ) -> ListResult:
-    """List files and directories under ~/workspace."""
+    """List files and directories under the configured WORKSPACE_ROOT."""
     return _list_workspace(path, include_hidden)
 
 
@@ -688,11 +692,11 @@ def workspace_list(
     },
 )
 def workspace_tree(
-    path: Annotated[str, Field(description="Relative directory path under ~/workspace.")] = ".",
+    path: Annotated[str, Field(description="Relative directory path under the configured WORKSPACE_ROOT.")] = ".",
     max_depth: Annotated[int, Field(ge=1, le=5)] = 2,
     max_entries: Annotated[int, Field(ge=1, le=300)] = 120,
 ) -> TreeResult:
-    """Return a compact tree view under ~/workspace."""
+    """Return a compact tree view under the configured WORKSPACE_ROOT."""
     return _tree_workspace(path, max_depth, max_entries)
 
 
@@ -705,11 +709,11 @@ def workspace_tree(
     },
 )
 def workspace_read_file(
-    path: Annotated[str, Field(description="Relative file path under ~/workspace.")],
+    path: Annotated[str, Field(description="Relative file path under the configured WORKSPACE_ROOT.")],
     offset: Annotated[int, Field(ge=0)] = 0,
     limit: Annotated[int, Field(ge=1, le=20_000)] = 12_000,
 ) -> ReadFileResult:
-    """Read a UTF-8 text file under ~/workspace."""
+    """Read a UTF-8 text file under the configured WORKSPACE_ROOT."""
     return _read_workspace_file(path, offset, limit)
 
 
@@ -722,9 +726,9 @@ def workspace_read_file(
     },
 )
 def workspace_create_directory(
-    path: Annotated[str, Field(description="Relative directory path under ~/workspace.")],
+    path: Annotated[str, Field(description="Relative directory path under the configured WORKSPACE_ROOT.")],
 ) -> WriteFileResult:
-    """Create a directory under ~/workspace."""
+    """Create a directory under the configured WORKSPACE_ROOT."""
     target = _resolve_workspace_path(path)
     target.mkdir(parents=True, exist_ok=True)
 
@@ -748,14 +752,14 @@ def workspace_create_directory(
     },
 )
 def workspace_write_file(
-    path: Annotated[str, Field(description="Relative file path under ~/workspace.")],
+    path: Annotated[str, Field(description="Relative file path under the configured WORKSPACE_ROOT.")],
     content: Annotated[str, Field(description="UTF-8 text content to write.")],
     overwrite: Annotated[bool, Field(description="Whether to overwrite an existing file.")] = False,
     create_parent_dirs: Annotated[bool, Field(description="Whether to create missing parent directories.")] = True,
     expected_sha256: Annotated[str | None, Field(description="Optional current sha256 guard for overwrites.")] = None,
     operation_id: Annotated[str | None, Field(description="Optional idempotency key for retry-safe writes.")] = None,
 ) -> WriteFileResult:
-    """Create or overwrite a UTF-8 text file under ~/workspace. Existing files are backed up before overwrite."""
+    """Create or overwrite a UTF-8 text file under the configured WORKSPACE_ROOT. Existing files are backed up before overwrite."""
     op_id, previous = _begin_operation(
         "workspace_write_file",
         {
@@ -830,11 +834,11 @@ def workspace_write_file(
     },
 )
 def workspace_append_file(
-    path: Annotated[str, Field(description="Relative file path under ~/workspace.")],
+    path: Annotated[str, Field(description="Relative file path under the configured WORKSPACE_ROOT.")],
     content: Annotated[str, Field(description="UTF-8 text content to append.")],
     create_if_missing: Annotated[bool, Field(description="Create the file if it does not exist.")] = True,
 ) -> WriteFileResult:
-    """Append UTF-8 text to a file under ~/workspace. Existing files are backed up before append."""
+    """Append UTF-8 text to a file under the configured WORKSPACE_ROOT. Existing files are backed up before append."""
     if len(content) > MAX_WRITE_CHARS:
         raise ValueError(f"Content too large. Max characters: {MAX_WRITE_CHARS}")
 
@@ -882,14 +886,14 @@ def workspace_append_file(
     },
 )
 def workspace_replace_text(
-    path: Annotated[str, Field(description="Relative UTF-8 file path under ~/workspace.")],
+    path: Annotated[str, Field(description="Relative UTF-8 file path under the configured WORKSPACE_ROOT.")],
     old_text: Annotated[str, Field(description="Exact text to find.")],
     new_text: Annotated[str, Field(description="Replacement text.")],
     replace_all: Annotated[bool, Field(description="Replace all occurrences instead of only the first.")] = False,
     expected_sha256: Annotated[str | None, Field(description="Optional current sha256 guard.")] = None,
     operation_id: Annotated[str | None, Field(description="Optional idempotency key for retry-safe replacements.")] = None,
 ) -> ReplaceTextResult:
-    """Replace exact text in a UTF-8 file under ~/workspace. The file is backed up before modification."""
+    """Replace exact text in a UTF-8 file under the configured WORKSPACE_ROOT. The file is backed up before modification."""
     op_id, previous = _begin_operation(
         "workspace_replace_text",
         {
@@ -981,7 +985,7 @@ def workspace_replace_text(
     },
 )
 def workspace_soft_delete(
-    path: Annotated[str, Field(description="Relative file or directory path under ~/workspace.")],
+    path: Annotated[str, Field(description="Relative file or directory path under the configured WORKSPACE_ROOT.")],
     operation_id: Annotated[str | None, Field(description="Optional idempotency key for retry-safe trash moves.")] = None,
 ) -> DeleteResult:
     """Move a file or directory to the MCP trash instead of permanently deleting it."""
@@ -1260,7 +1264,7 @@ def workspace_list_trash(
     },
 )
 def workspace_move_to_trash(
-    path: Annotated[str, Field(description="Relative file or directory path under ~/workspace.")],
+    path: Annotated[str, Field(description="Relative file or directory path under the configured WORKSPACE_ROOT.")],
     operation_id: Annotated[str | None, Field(description="Optional idempotency key for retry-safe trash moves.")] = None,
 ) -> DeleteResult:
     """Alias for workspace_soft_delete. Moves a file or directory to reversible MCP trash."""
@@ -1276,13 +1280,13 @@ def workspace_move_to_trash(
     },
 )
 def workspace_find_files(
-    path: Annotated[str, Field(description="Relative directory path under ~/workspace.")] = ".",
+    path: Annotated[str, Field(description="Relative directory path under the configured WORKSPACE_ROOT.")] = ".",
     pattern: Annotated[str, Field(description="fnmatch pattern such as '*.py' or '*server*'.")] = "*",
     include_files: Annotated[bool, Field(description="Whether to include files.")] = True,
     include_directories: Annotated[bool, Field(description="Whether to include directories.")] = False,
     max_entries: Annotated[int, Field(ge=1, le=300, description="Maximum matching entries to return.")] = 100,
 ) -> FindFilesResult:
-    """Find files or directories under ~/workspace using a safe fnmatch pattern."""
+    """Find files or directories under the configured WORKSPACE_ROOT using a safe fnmatch pattern."""
     target = _resolve_workspace_path(path)
 
     if not target.exists():
@@ -1344,13 +1348,13 @@ def workspace_find_files(
 )
 def workspace_search_text(
     query: Annotated[str, Field(description="Plain text query to search for. Regex is not used.")],
-    path: Annotated[str, Field(description="Relative directory path under ~/workspace.")] = ".",
+    path: Annotated[str, Field(description="Relative directory path under the configured WORKSPACE_ROOT.")] = ".",
     file_glob: Annotated[str, Field(description="File glob such as '*.py' or '*'.")] = "*",
     case_sensitive: Annotated[bool, Field(description="Whether matching is case-sensitive.")] = False,
     max_matches: Annotated[int, Field(ge=1, le=300, description="Maximum matches to return.")] = 100,
     max_file_bytes: Annotated[int, Field(ge=1, le=1_000_000, description="Maximum bytes per file to scan.")] = 500_000,
 ) -> SearchTextResult:
-    """Search text files under ~/workspace for a plain text query."""
+    """Search text files under the configured WORKSPACE_ROOT for a plain text query."""
     if query == "":
         raise ValueError("query cannot be empty.")
 
@@ -1435,11 +1439,11 @@ def workspace_search_text(
     },
 )
 def workspace_read_many_files(
-    paths: Annotated[list[str], Field(description="Relative file paths under ~/workspace.")],
+    paths: Annotated[list[str], Field(description="Relative file paths under the configured WORKSPACE_ROOT.")],
     limit_per_file: Annotated[int, Field(ge=1, le=20_000, description="Maximum characters per file.")] = 8_000,
     total_limit: Annotated[int, Field(ge=1, le=80_000, description="Maximum total characters to return.")] = 40_000,
 ) -> ReadManyFilesResult:
-    """Read multiple UTF-8 text files under ~/workspace with per-file and total limits."""
+    """Read multiple UTF-8 text files under the configured WORKSPACE_ROOT with per-file and total limits."""
     if not paths:
         raise ValueError("paths cannot be empty.")
 
@@ -1507,7 +1511,7 @@ def workspace_read_many_files(
     },
 )
 def workspace_project_snapshot(
-    path: Annotated[str, Field(description="Relative project directory under ~/workspace.")] = ".",
+    path: Annotated[str, Field(description="Relative project directory under the configured WORKSPACE_ROOT.")] = ".",
     max_depth: Annotated[int, Field(ge=1, le=5, description="Tree depth.")] = 2,
     max_entries: Annotated[int, Field(ge=1, le=300, description="Tree entries.")] = 120,
 ) -> ProjectSnapshotResult:
@@ -1772,7 +1776,7 @@ def workspace_list_tasks(
 )
 def workspace_preview_patch(
     patch: Annotated[str, Field(description="Unified diff patch text to validate with git apply --check.")],
-    cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")] = ".",
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")] = ".",
     timeout_seconds: Annotated[int, Field(ge=1, le=60)] = 15,
 ) -> PatchPreviewResult:
     """Validate a unified diff patch without applying it."""
@@ -1818,13 +1822,13 @@ def workspace_preview_patch(
 )
 def workspace_apply_patch(
     patch: Annotated[str, Field(description="Unified diff patch text to apply with git apply.")],
-    cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")] = ".",
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")] = ".",
     operation_id: Annotated[str | None, Field(description="Optional idempotency key for retry-safe patch application.")] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=120)] = 30,
     return_diff: Annotated[bool, Field(description="Whether to include git diff in the tool result. Keep false for large changes.")] = False,
     diff_max_chars: Annotated[int, Field(ge=1, le=20_000, description="Maximum diff characters to return when return_diff is true.")] = 4_000,
 ) -> PatchApplyResult:
-    """Apply a unified diff patch under ~/workspace after git apply --check. Existing files are backed up first."""
+    """Apply a unified diff patch under the configured WORKSPACE_ROOT after git apply --check. Existing files are backed up first."""
     op_id, previous = _begin_operation(
         "workspace_apply_patch",
         {
@@ -1940,10 +1944,10 @@ def workspace_apply_patch(
 def workspace_git_status(
     cwd: Annotated[
         str,
-        Field(description="Relative directory under ~/workspace that contains, or is inside, a git repository."),
+        Field(description="Relative directory under the configured WORKSPACE_ROOT that contains, or is inside, a git repository."),
     ] = ".",
 ) -> CommandResult:
-    """Run git status under ~/workspace."""
+    """Run git status under the configured WORKSPACE_ROOT."""
     return _run_command(cwd=cwd, command=["git", "status", "--short", "--branch"], timeout_seconds=15)
 
 
@@ -1958,10 +1962,10 @@ def workspace_git_status(
 def workspace_git_diff(
     cwd: Annotated[
         str,
-        Field(description="Relative directory under ~/workspace that contains, or is inside, a git repository."),
+        Field(description="Relative directory under the configured WORKSPACE_ROOT that contains, or is inside, a git repository."),
     ] = ".",
 ) -> CommandResult:
-    """Run git diff under ~/workspace."""
+    """Run git diff under the configured WORKSPACE_ROOT."""
     return _run_command(cwd=cwd, command=["git", "diff", "--no-ext-diff"], timeout_seconds=15)
 
 
@@ -1975,7 +1979,7 @@ def workspace_git_diff(
     },
 )
 def workspace_exec(
-    cwd: Annotated[str, Field(description="Relative working directory under ~/workspace.")],
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     argv: Annotated[
         list[str],
         Field(description="Command argv to run with shell=False. The first item is the executable."),
@@ -1986,7 +1990,7 @@ def workspace_exec(
         Field(description="Optional idempotency key for retry-safe command execution."),
     ] = None,
 ) -> WorkspaceExecResult:
-    """Run a sandboxed argv-based command under ~/workspace after risk classification.
+    """Run a sandboxed argv-based command under the configured WORKSPACE_ROOT after risk classification.
 
     Low-risk commands run immediately. Medium/high-risk commands return
     approval_required=true for a future local approval UI. Blocked commands are never executed.
@@ -2075,7 +2079,7 @@ def _read_staged_text_payload(payload_ref: str) -> tuple[str, dict[str, object]]
 )
 def workspace_stage_patch_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
-    cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")],
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     patch: Annotated[str | None, Field(description="Unified diff patch text. Prefer patch_ref for large patches.")] = None,
     patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
 ) -> CommandBundleStageResult:
@@ -2184,7 +2188,7 @@ def workspace_stage_patch_bundle(
 )
 def workspace_stage_action_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
-    cwd: Annotated[str, Field(description="Relative working directory under ~/workspace.")],
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     actions: Annotated[list[CommandBundleAction], Field(min_length=1, max_length=30)],
 ) -> CommandBundleStageResult:
     """Stage file and command actions for local approval.
@@ -2253,7 +2257,7 @@ def workspace_stage_action_bundle(
     },
 )
 def workspace_stage_commit_bundle(
-    cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")],
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     paths: Annotated[
         list[str],
         Field(min_length=1, max_length=100, description="Relative paths to stage and commit. Use ['.'] with care."),
@@ -2332,7 +2336,7 @@ def workspace_stage_commit_bundle(
 )
 def workspace_stage_command_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
-    cwd: Annotated[str, Field(description="Relative working directory under ~/workspace.")],
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     steps: Annotated[list[CommandBundleStep], Field(min_length=1, max_length=20)],
 ) -> CommandBundleStageResult:
     """Stage a command bundle for local approval instead of executing it in ChatGPT.
@@ -2528,11 +2532,11 @@ def workspace_run_profile(
         ],
         Field(description="Approved command profile. Arbitrary shell commands are not accepted."),
     ],
-    cwd: Annotated[str, Field(description="Relative directory under ~/workspace.")],
+    cwd: Annotated[str, Field(description="Relative directory under the configured WORKSPACE_ROOT.")],
     args: Annotated[list[str], Field(description="Additional safe args for the selected profile.")] = [],
     timeout_seconds: Annotated[int, Field(ge=1, le=180)] = 60,
 ) -> CommandResult:
-    """Run an approved command profile under ~/workspace. This does not accept arbitrary shell commands."""
+    """Run an approved command profile under the configured WORKSPACE_ROOT. This does not accept arbitrary shell commands."""
     target = _resolve_workspace_path(cwd)
     if not target.exists() or not target.is_dir():
         raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
@@ -2563,10 +2567,10 @@ def workspace_run_profile(
     },
 )
 def workspace_git_add(
-    cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")],
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     paths: Annotated[list[str], Field(description="Relative paths to stage. Use ['.'] to stage all allowed files.")],
 ) -> CommandResult:
-    """Stage files with git add under ~/workspace. Paths are validated and secret-like files are blocked."""
+    """Stage files with git add under the configured WORKSPACE_ROOT. Paths are validated and secret-like files are blocked."""
     target = _resolve_workspace_path(cwd)
 
     if not target.exists() or not target.is_dir():
@@ -2607,10 +2611,10 @@ def workspace_git_add(
     },
 )
 def workspace_git_commit(
-    cwd: Annotated[str, Field(description="Relative git repository directory under ~/workspace.")],
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Commit message.")],
 ) -> GitCommitResult:
-    """Create a git commit for already staged changes under ~/workspace."""
+    """Create a git commit for already staged changes under the configured WORKSPACE_ROOT."""
     if "\n" in message or "\r" in message:
         raise ValueError("Commit message must be a single line in this MVP.")
 

@@ -223,7 +223,7 @@ Restart only what is needed.
 
 Workspace Terminal Bridge uses several guardrails:
 
-- workspace root is constrained under `~/workspace`
+- workspace root is constrained under the configured `WORKSPACE_ROOT`
 - path traversal is blocked
 - sensitive directories and secret-like files are blocked
 - direct mutation tools are hidden by default

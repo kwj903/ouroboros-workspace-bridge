@@ -50,8 +50,10 @@ Workspace Terminal Bridge development session checklist
 1. Check local prerequisites:
    scripts/dev_session.sh doctor
 
-2. If MCP_ACCESS_TOKEN or NGROK_HOST is missing, create a private runtime env file:
+2. If MCP_ACCESS_TOKEN is missing, create a private runtime env file:
    scripts/dev_session.sh configure
+
+   NGROK_HOST is optional. If it is not configured, ngrok temporary URL mode is used.
 
 3. Start the full local session in the background:
    scripts/dev_session.sh start
@@ -148,8 +150,10 @@ doctor() {
   if [[ -n "${NGROK_HOST:-}" || -n "${NGROK_BASE_URL:-}" ]]; then
     echo "[ok] NGROK_HOST/NGROK_BASE_URL: set"
   else
-    echo "[warn] NGROK_HOST/NGROK_BASE_URL: not set; scripts/run_ngrok.sh will use its default host."
+    echo "[info] NGROK_HOST/NGROK_BASE_URL: not set; scripts/run_ngrok.sh will use temporary URL mode."
   fi
+
+  echo "[info] WORKSPACE_ROOT: ${WORKSPACE_ROOT:-$HOME/workspace}"
 
   echo
   echo "Supervisor services:"
@@ -680,6 +684,32 @@ logs_session() {
   tail_service_log "${1:-}"
 }
 
+normalize_workspace_root_path() {
+  local value="$1"
+  local launcher
+  launcher="$(python_launcher)"
+
+  "$launcher" - "$value" <<'PY'
+import sys
+from pathlib import Path
+
+print(Path(sys.argv[1]).expanduser().resolve(strict=False))
+PY
+}
+
+is_dangerous_workspace_root() {
+  local path="$1"
+
+  case "$path" in
+    / | /System | /Library | /private | /etc | /usr | /bin | /sbin)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 configure() {
   load_session_env
 
@@ -692,6 +722,12 @@ configure() {
   local ngrok_input=""
   local mcp_host="${MCP_HOST:-127.0.0.1}"
   local mcp_port="${MCP_PORT:-8787}"
+  local workspace_default="${WORKSPACE_ROOT:-$HOME/workspace}"
+  local workspace_input=""
+  local workspace_root=""
+  local home_root=""
+  local create_workspace=""
+  local home_confirm=""
 
   echo "Workspace Terminal Bridge session env configure"
   echo "Target: $SESSION_ENV"
@@ -719,13 +755,52 @@ configure() {
       ngrok_host="$(normalize_ngrok_host "$ngrok_input")"
     fi
   else
-    read -r -p "NGROK_HOST, for example your-domain.ngrok-free.app: " ngrok_host
+    read -r -p "NGROK_HOST, for example your-domain.ngrok-free.app (optional): " ngrok_host
     ngrok_host="$(normalize_ngrok_host "$ngrok_host")"
-    if [[ -z "$ngrok_host" ]]; then
-      echo "[error] NGROK_HOST is required."
-      return 1
-    fi
   fi
+
+  workspace_default="$(normalize_workspace_root_path "$workspace_default")"
+  home_root="$(normalize_workspace_root_path "$HOME")"
+
+  while true; do
+    read -r -p "WORKSPACE_ROOT [$workspace_default]: " workspace_input
+    workspace_root="$(normalize_workspace_root_path "${workspace_input:-$workspace_default}")"
+
+    if is_dangerous_workspace_root "$workspace_root"; then
+      echo "[error] Refusing dangerous WORKSPACE_ROOT: $workspace_root"
+      echo "        Choose a normal project parent directory instead."
+      continue
+    fi
+
+    if [[ "$workspace_root" == "$home_root" ]]; then
+      echo "[warn] You selected your entire home directory as WORKSPACE_ROOT."
+      echo "       This grants ChatGPT access to a very broad tree. A dedicated project parent directory is safer."
+      read -r -p "Type yes to keep using your home directory, or press Enter to choose again: " home_confirm
+      if [[ "$home_confirm" != "yes" ]]; then
+        continue
+      fi
+    fi
+
+    if [[ ! -e "$workspace_root" ]]; then
+      read -r -p "WORKSPACE_ROOT does not exist. Create it? [y/N]: " create_workspace
+      case "$create_workspace" in
+        y | Y | yes | YES)
+          mkdir -p "$workspace_root"
+          ;;
+        *)
+          echo "[error] WORKSPACE_ROOT must exist or be created."
+          continue
+          ;;
+      esac
+    fi
+
+    if [[ ! -d "$workspace_root" ]]; then
+      echo "[error] WORKSPACE_ROOT is not a directory: $workspace_root"
+      continue
+    fi
+
+    break
+  done
 
   umask 077
   {
@@ -733,6 +808,7 @@ configure() {
     echo "# Stored outside the git repository. Do not commit token values."
     echo "export MCP_ACCESS_TOKEN=$(shell_quote "$token")"
     echo "export NGROK_HOST=$(shell_quote "$ngrok_host")"
+    echo "export WORKSPACE_ROOT=$(shell_quote "$workspace_root")"
     echo "export MCP_HOST=$(shell_quote "$mcp_host")"
     echo "export MCP_PORT=$(shell_quote "$mcp_port")"
   } > "$SESSION_ENV"
@@ -741,7 +817,12 @@ configure() {
   echo
   echo "Saved private session environment: $SESSION_ENV"
   echo "MCP_ACCESS_TOKEN: set"
-  echo "NGROK_HOST: $ngrok_host"
+  if [[ -n "$ngrok_host" ]]; then
+    echo "NGROK_HOST: $ngrok_host"
+  else
+    echo "NGROK_HOST: not set; ngrok temporary URL mode will be used"
+  fi
+  echo "WORKSPACE_ROOT: $workspace_root"
   echo
   echo "The helper scripts auto-load this file. To use it in your current shell too, run:"
   echo "  source $SESSION_ENV"

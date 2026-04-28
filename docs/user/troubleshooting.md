@@ -5,7 +5,7 @@ This guide covers common local operation failures for Workspace Terminal Bridge.
 Use these checks from the repository root:
 
 ```bash
-cd ~/workspace/Custom-Tools/GPT-Tools/my-terminal-tool
+cd <repo>
 ```
 
 ## First checks
@@ -13,8 +13,8 @@ cd ~/workspace/Custom-Tools/GPT-Tools/my-terminal-tool
 Start with the current supervisor state.
 
 ```bash
-scripts/dev_session.sh status
-scripts/dev_session.sh doctor
+uv run woojae status
+uv run woojae doctor
 ```
 
 Expected high-level result:
@@ -36,8 +36,8 @@ Symptoms:
 Check:
 
 ```bash
-scripts/dev_session.sh status
-scripts/dev_session.sh logs review
+uv run woojae status
+uv run woojae logs review
 ```
 
 Recover:
@@ -49,9 +49,9 @@ scripts/dev_session.sh restart-session
 If that does not recover the UI:
 
 ```bash
-scripts/dev_session.sh stop
-scripts/dev_session.sh start
-scripts/dev_session.sh status
+uv run woojae stop
+uv run woojae start
+uv run woojae status
 ```
 
 ## MCP server is unreachable
@@ -60,20 +60,20 @@ Symptoms:
 
 - ChatGPT MCP calls fail.
 - `/servers?tab=processes` shows MCP reachable as `no`.
-- `scripts/dev_session.sh status` shows `mcp alive=no` or `reachable=no`.
+- `uv run woojae status` shows `mcp alive=no` or `reachable=no`.
 
 Check:
 
 ```bash
-scripts/dev_session.sh status
-scripts/dev_session.sh logs mcp
+uv run woojae status
+uv run woojae logs mcp
 ```
 
 Recover:
 
 ```bash
-scripts/dev_session.sh restart mcp
-scripts/dev_session.sh status
+uv run woojae restart mcp
+uv run woojae status
 ```
 
 If `server.py` or MCP tool schemas changed, refresh the MCP connection in the ChatGPT app after restart.
@@ -89,18 +89,18 @@ Symptoms:
 Check:
 
 ```bash
-scripts/dev_session.sh status
-scripts/dev_session.sh logs ngrok
+uv run woojae status
+uv run woojae logs ngrok
 ```
 
 Recover:
 
 ```bash
-scripts/dev_session.sh restart ngrok
-scripts/dev_session.sh status
+uv run woojae restart ngrok
+uv run woojae status
 ```
 
-If ngrok still fails, check that `NGROK_HOST` is configured in the runtime environment and that the ngrok account/session is valid.
+If ngrok still fails, check that the ngrok account/session is valid. `NGROK_HOST` is optional for temporary URL mode, but `uv run woojae copy-url` requires a configured fixed host.
 
 ## Bundle is stuck in pending
 
@@ -167,14 +167,14 @@ Symptoms:
 Check:
 
 ```bash
-scripts/dev_session.sh status
+uv run woojae status
 ```
 
 Recover by restarting the service or full session:
 
 ```bash
-scripts/dev_session.sh restart mcp
-scripts/dev_session.sh restart ngrok
+uv run woojae restart mcp
+uv run woojae restart ngrok
 ```
 
 For review-related stale state, prefer full session recovery:
@@ -193,21 +193,21 @@ Symptoms:
 Check:
 
 ```bash
-scripts/dev_session.sh status
-scripts/dev_session.sh logs review
-scripts/dev_session.sh logs mcp
-scripts/dev_session.sh logs ngrok
+uv run woojae status
+uv run woojae logs review
+uv run woojae logs mcp
+uv run woojae logs ngrok
 ```
 
 Recover:
 
 ```bash
-scripts/dev_session.sh stop
-scripts/dev_session.sh start
-scripts/dev_session.sh status
+uv run woojae stop
+uv run woojae start
+uv run woojae status
 ```
 
-The full session restart helper log is stored under the process directory shown by `scripts/dev_session.sh status`.
+The full session restart helper log is stored under the process directory shown by `uv run woojae status`.
 
 ## ChatGPT app MCP connection needs refresh
 
@@ -221,8 +221,8 @@ Refresh the ChatGPT app MCP connection when:
 Recommended order:
 
 ```bash
-scripts/dev_session.sh restart mcp
-scripts/dev_session.sh status
+uv run woojae restart mcp
+uv run woojae status
 ```
 
 Then refresh the MCP connection in the ChatGPT app.
@@ -255,11 +255,11 @@ Do not repeat the same large request. Split the next attempt into smaller bundle
 When unsure, use this order:
 
 ```bash
-scripts/dev_session.sh status
-scripts/dev_session.sh doctor
-scripts/dev_session.sh logs review
-scripts/dev_session.sh logs mcp
-scripts/dev_session.sh logs ngrok
+uv run woojae status
+uv run woojae doctor
+uv run woojae logs review
+uv run woojae logs mcp
+uv run woojae logs ngrok
 ```
 
 Then from ChatGPT, check:

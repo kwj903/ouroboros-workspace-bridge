@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
 import shutil
+import tempfile
 import unittest
+from pathlib import Path
 from uuid import uuid4
 
 from terminal_bridge import (
     bundle_serialization,
+    cli,
     commands,
     config,
     operations,
@@ -15,6 +19,124 @@ from terminal_bridge import (
     tasks,
 )
 from terminal_bridge.models import CommandBundleAction, CommandBundleStep
+
+
+class ConfigWorkspaceRootTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.original_runtime_root = config.DEFAULT_RUNTIME_ROOT
+        self.original_runtime_root_env = os.environ.get("MCP_TERMINAL_BRIDGE_RUNTIME_ROOT")
+        self.original_workspace_root = os.environ.get("WORKSPACE_ROOT")
+
+    def tearDown(self) -> None:
+        config.DEFAULT_RUNTIME_ROOT = self.original_runtime_root
+        if self.original_runtime_root_env is None:
+            os.environ.pop("MCP_TERMINAL_BRIDGE_RUNTIME_ROOT", None)
+        else:
+            os.environ["MCP_TERMINAL_BRIDGE_RUNTIME_ROOT"] = self.original_runtime_root_env
+        if self.original_workspace_root is None:
+            os.environ.pop("WORKSPACE_ROOT", None)
+        else:
+            os.environ["WORKSPACE_ROOT"] = self.original_workspace_root
+        self.tmp.cleanup()
+
+    def test_shell_workspace_root_overrides_session_env(self) -> None:
+        root = Path(self.tmp.name)
+        session_root = root / "runtime"
+        shell_workspace = root / "shell-workspace"
+        session_workspace = root / "session-workspace"
+        session_root.mkdir()
+        shell_workspace.mkdir()
+        session_workspace.mkdir()
+        (session_root / "session.env").write_text(
+            f"export WORKSPACE_ROOT={session_workspace}\n",
+            encoding="utf-8",
+        )
+
+        config.DEFAULT_RUNTIME_ROOT = session_root
+        os.environ["WORKSPACE_ROOT"] = str(shell_workspace)
+
+        self.assertEqual(config._resolve_workspace_root(), shell_workspace.resolve())
+
+    def test_session_env_workspace_root_is_used_as_fallback(self) -> None:
+        root = Path(self.tmp.name)
+        session_root = root / "runtime"
+        session_workspace = root / "session-workspace"
+        session_root.mkdir()
+        session_workspace.mkdir()
+        (session_root / "session.env").write_text(
+            f"export WORKSPACE_ROOT={session_workspace}\n",
+            encoding="utf-8",
+        )
+
+        config.DEFAULT_RUNTIME_ROOT = session_root
+        os.environ.pop("WORKSPACE_ROOT", None)
+
+        self.assertEqual(config._resolve_workspace_root(), session_workspace.resolve())
+
+    def test_custom_runtime_root_session_env_is_used_as_fallback(self) -> None:
+        root = Path(self.tmp.name)
+        runtime_root = root / "custom-runtime"
+        session_workspace = root / "session-workspace"
+        runtime_root.mkdir()
+        session_workspace.mkdir()
+        (runtime_root / "session.env").write_text(
+            f"export WORKSPACE_ROOT={session_workspace}\n",
+            encoding="utf-8",
+        )
+
+        os.environ["MCP_TERMINAL_BRIDGE_RUNTIME_ROOT"] = str(runtime_root)
+        os.environ.pop("WORKSPACE_ROOT", None)
+
+        self.assertEqual(config._resolve_workspace_root(), session_workspace.resolve())
+
+    def test_rejects_dangerous_workspace_root(self) -> None:
+        os.environ["WORKSPACE_ROOT"] = "/"
+
+        with self.assertRaises(ValueError):
+            config._resolve_workspace_root()
+
+
+class CliEnvHelperTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.original_runtime_root = os.environ.get("MCP_TERMINAL_BRIDGE_RUNTIME_ROOT")
+        self.original_ngrok_host = os.environ.get("NGROK_HOST")
+        self.original_ngrok_base_url = os.environ.get("NGROK_BASE_URL")
+        self.original_token = os.environ.get("MCP_ACCESS_TOKEN")
+
+    def tearDown(self) -> None:
+        for name, value in (
+            ("MCP_TERMINAL_BRIDGE_RUNTIME_ROOT", self.original_runtime_root),
+            ("NGROK_HOST", self.original_ngrok_host),
+            ("NGROK_BASE_URL", self.original_ngrok_base_url),
+            ("MCP_ACCESS_TOKEN", self.original_token),
+        ):
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        self.tmp.cleanup()
+
+    def test_cli_uses_shell_env_before_session_env_for_host(self) -> None:
+        runtime_root = Path(self.tmp.name)
+        (runtime_root / "session.env").write_text(
+            "export NGROK_HOST=session.example.invalid\n",
+            encoding="utf-8",
+        )
+        os.environ["MCP_TERMINAL_BRIDGE_RUNTIME_ROOT"] = str(runtime_root)
+        os.environ["NGROK_HOST"] = "shell.example.invalid"
+
+        self.assertEqual(cli.configured_ngrok_host(), "shell.example.invalid")
+
+    def test_cli_mcp_url_redacted_preview_does_not_include_token(self) -> None:
+        os.environ["NGROK_HOST"] = "example.invalid"
+        os.environ["MCP_ACCESS_TOKEN"] = "secret-token-value"
+
+        self.assertEqual(
+            cli.mcp_url("<redacted>"),
+            "https://example.invalid/mcp?access_token=<redacted>",
+        )
 
 
 class RefactoredSafetyHelperTests(unittest.TestCase):

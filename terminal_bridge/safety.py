@@ -21,12 +21,12 @@ def _resolve_workspace_path(path: str) -> Path:
     raw = Path(path).expanduser()
 
     if raw.is_absolute():
-        raise ValueError("Absolute paths are not allowed. Use a path relative to ~/workspace.")
+        raise ValueError("Absolute paths are not allowed. Use a path relative to WORKSPACE_ROOT.")
 
     candidate = (WORKSPACE_ROOT / raw).resolve(strict=False)
 
     if candidate != WORKSPACE_ROOT and not candidate.is_relative_to(WORKSPACE_ROOT):
-        raise ValueError("Path escapes ~/workspace and is rejected.")
+        raise ValueError("Path escapes WORKSPACE_ROOT and is rejected.")
 
     relative_parts = candidate.relative_to(WORKSPACE_ROOT).parts
 
