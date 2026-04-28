@@ -61,6 +61,18 @@ Repository hygiene:
 - [SECURITY.md](SECURITY.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
+## License
+
+This project is licensed under the **KwakWooJae Non-Commercial License 1.0**.
+
+Non-commercial use is permitted. Commercial use requires prior written permission from KwakWooJae.
+
+For commercial permission, contact: kwakwoojae@gmail.com
+
+This is a source-available project, not an OSI-approved open source project.
+
+See [LICENSE](LICENSE).
+
 ## Repository Layout
 
 ```text
