@@ -40,3 +40,7 @@ Add supervisor process status
 Fix action bundle rollback
 Update quickstart docs
 ```
+
+## Contribution License
+
+By contributing to this repository, you agree that your contributions are licensed under the KwakWooJae Non-Commercial License 1.0.
