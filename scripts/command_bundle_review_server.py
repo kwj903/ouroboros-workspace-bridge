@@ -388,6 +388,26 @@ def normalize_companion_cwd(value: object) -> str:
     return "." if target == WORKSPACE_ROOT else str(target.relative_to(WORKSPACE_ROOT))
 
 
+def normalize_companion_relative_path(value: object) -> str:
+    if not isinstance(value, str) or value.strip() == "":
+        raise ValueError("path must be a non-empty string.")
+
+    raw = Path(value.strip())
+    if raw.is_absolute() or ".." in raw.parts:
+        raise ValueError("path must be a safe relative path.")
+    return raw.as_posix()
+
+
+def normalize_companion_title(value: object, default: str) -> str:
+    if value is None:
+        return default
+    if not isinstance(value, str) or value.strip() == "":
+        raise ValueError("title must be a non-empty string.")
+    if len(value.strip()) > 160:
+        raise ValueError("title is too long.")
+    return value.strip()
+
+
 def validate_companion_intent(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("Intent JSON must be an object.")
@@ -403,7 +423,7 @@ def validate_companion_intent(value: object) -> dict[str, object]:
         raise ValueError("intent_kind must be 'run'.")
 
     intent_type = str(value.get("intent_type", "")).strip()
-    if intent_type not in {"check", "commit_current_changes", "dev_session"}:
+    if intent_type not in {"check", "commit_current_changes", "dev_session", "apply_patch", "write_file", "run_script", "command_bundle"}:
         raise ValueError(f"Unsupported intent_type: {intent_type}")
 
     cwd = normalize_companion_cwd(value.get("cwd"))
@@ -428,7 +448,7 @@ def validate_companion_intent(value: object) -> dict[str, object]:
         if action not in COMPANION_DEV_SESSION_ACTIONS:
             raise ValueError("Unsupported dev_session action.")
         normalized_params = {"action": action}
-    else:
+    elif intent_type == "commit_current_changes":
         unknown_params = set(params) - {"message", "include_untracked"}
         if unknown_params:
             raise ValueError(f"Unknown commit_current_changes params: {', '.join(sorted(unknown_params))}")
@@ -441,6 +461,84 @@ def validate_companion_intent(value: object) -> dict[str, object]:
         if not isinstance(include_untracked, bool):
             raise ValueError("include_untracked must be a boolean.")
         normalized_params = {"message": message.strip(), "include_untracked": include_untracked}
+    elif intent_type == "apply_patch":
+        unknown_params = set(params) - {"title", "patch", "patch_ref"}
+        if unknown_params:
+            raise ValueError(f"Unknown apply_patch params: {', '.join(sorted(unknown_params))}")
+        title = normalize_companion_title(params.get("title"), "Apply patch")
+        patch = params.get("patch")
+        patch_ref = params.get("patch_ref")
+        if (patch is None) == (patch_ref is None):
+            raise ValueError("apply_patch requires exactly one of patch or patch_ref.")
+        normalized_params = {"title": title}
+        if patch is not None:
+            if not isinstance(patch, str) or patch.strip() == "":
+                raise ValueError("patch must be a non-empty string.")
+            normalized_params["patch"] = patch
+        else:
+            if not isinstance(patch_ref, str) or patch_ref.strip() == "":
+                raise ValueError("patch_ref must be a non-empty string.")
+            normalized_params["patch_ref"] = patch_ref.strip()
+    elif intent_type == "write_file":
+        unknown_params = set(params) - {"title", "path", "content", "overwrite", "create_parent_dirs"}
+        if unknown_params:
+            raise ValueError(f"Unknown write_file params: {', '.join(sorted(unknown_params))}")
+        title = normalize_companion_title(params.get("title"), "Write file")
+        path = normalize_companion_relative_path(params.get("path"))
+        content = params.get("content")
+        if not isinstance(content, str):
+            raise ValueError("content must be a string.")
+        overwrite = params.get("overwrite", False)
+        create_parent_dirs = params.get("create_parent_dirs", True)
+        if not isinstance(overwrite, bool):
+            raise ValueError("overwrite must be a boolean.")
+        if not isinstance(create_parent_dirs, bool):
+            raise ValueError("create_parent_dirs must be a boolean.")
+        normalized_params = {
+            "title": title,
+            "path": path,
+            "content": content,
+            "overwrite": overwrite,
+            "create_parent_dirs": create_parent_dirs,
+        }
+    elif intent_type == "run_script":
+        unknown_params = set(params) - {"title", "script", "timeout_seconds"}
+        if unknown_params:
+            raise ValueError(f"Unknown run_script params: {', '.join(sorted(unknown_params))}")
+        title = normalize_companion_title(params.get("title"), "Run script")
+        script = params.get("script")
+        if not isinstance(script, str) or script.strip() == "":
+            raise ValueError("script must be a non-empty string.")
+        timeout_seconds = params.get("timeout_seconds", 60)
+        if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool) or timeout_seconds < 1 or timeout_seconds > 300:
+            raise ValueError("timeout_seconds must be an integer between 1 and 300.")
+        normalized_params = {"title": title, "script": script, "timeout_seconds": timeout_seconds}
+    elif intent_type == "command_bundle":
+        unknown_params = set(params) - {"title", "steps"}
+        if unknown_params:
+            raise ValueError(f"Unknown command_bundle params: {', '.join(sorted(unknown_params))}")
+        title = normalize_companion_title(params.get("title"), "Command bundle")
+        steps = params.get("steps")
+        if not isinstance(steps, list) or not steps:
+            raise ValueError("steps must be a non-empty list.")
+        normalized_steps: list[dict[str, object]] = []
+        for step in steps:
+            if not isinstance(step, dict):
+                raise ValueError("each step must be an object.")
+            unknown_step = set(step) - {"name", "argv", "timeout_seconds"}
+            if unknown_step:
+                raise ValueError(f"Unknown command step params: {', '.join(sorted(unknown_step))}")
+            name = step.get("name")
+            argv = step.get("argv")
+            timeout_seconds = step.get("timeout_seconds", 60)
+            if not isinstance(name, str) or name.strip() == "":
+                raise ValueError("step name must be a non-empty string.")
+            if not isinstance(argv, list) or not argv or not all(isinstance(item, str) and item for item in argv):
+                raise ValueError("step argv must be a non-empty list of strings.")
+            if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool) or timeout_seconds < 1 or timeout_seconds > 300:
+                raise ValueError("step timeout_seconds must be an integer between 1 and 300.")
+            normalized_steps.append({"name": name.strip(), "argv": argv, "timeout_seconds": timeout_seconds})
+        normalized_params = {"title": title, "steps": normalized_steps}
 
     return {
         "version": 1,
@@ -3071,6 +3169,46 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 3 and parts[0] == "bundles" and parts[2] in {"approve", "reject"}:
             bundle_id = parts[1]
             action = parts[2]
+
+            try:
+                _existing_path, existing_record = find_bundle(bundle_id)
+            except FileNotFoundError:
+                self.send_html(
+                    "이미 처리된 번들",
+                    (
+                        f"<p><a href='/pending'>승인 대기로 돌아가기</a> · "
+                        f"<a href='/history'>전체 이력 보기</a></p>"
+                        f"<div class='notice'>"
+                        f"<strong>Bundle is no longer pending.</strong><br>"
+                        f"<code>{escape(bundle_id)}</code> 는 이미 적용/실패/거절 처리되었거나 정리되었습니다. "
+                        f"최신 결과는 이력/결과 또는 Latest handoff를 확인하세요."
+                        f"</div>"
+                        f"{latest_handoff_html()}"
+                    ),
+                    status=409,
+                    active_nav="history",
+                )
+                return
+
+            existing_status = str(existing_record.get("status", "unknown"))
+            if existing_status != "pending":
+                self.send_html(
+                    "이미 처리된 번들",
+                    (
+                        f"<p><a href='/bundles/{escape(bundle_id)}'>결과 보기</a> · "
+                        f"<a href='/pending'>승인 대기로 돌아가기</a></p>"
+                        f"<div class='notice'>"
+                        f"<strong>Bundle already handled.</strong><br>"
+                        f"<code>{escape(bundle_id)}</code> 상태는 "
+                        f"<code>{escape(existing_status)}</code> 입니다. "
+                        f"중복 승인 요청은 다시 실행하지 않습니다."
+                        f"</div>"
+                        f"{bundle_detail_html(_existing_path, existing_record)}"
+                    ),
+                    status=200,
+                    active_nav="history",
+                )
+                return
 
             if action == "approve":
                 completed = run_runner(["apply", bundle_id, "--yes"])

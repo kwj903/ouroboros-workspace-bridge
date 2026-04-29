@@ -217,3 +217,17 @@ Manual checks before considering this workflow healthy:
 - The bundle-focused page shows `Copy for ChatGPT` JSON.
 - `workspace_next_handoff` returns the latest handoff after local execution.
 - `bash scripts/check_all.sh` exits `0` when local checks pass and `npx` is missing.
+
+### Supported companion action intents
+
+The companion JSON import path currently accepts these executable `intent_type` values:
+
+- `check`
+- `commit_current_changes`
+- `dev_session`
+- `apply_patch`
+- `write_file`
+- `run_script`
+- `command_bundle`
+
+The last four exist so ChatGPT can emit a normal `ouroboros-intent` message and let the browser companion import it into the local pending UI, instead of calling an MCP bundle tool directly.

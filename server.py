@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import difflib
 import base64
 import fnmatch
 import html
@@ -544,6 +545,39 @@ def _intent_preview(payload: dict[str, object]) -> dict[str, object]:
             "paths": paths,
             "include_untracked": include_untracked,
         }
+    if intent_type == "apply_patch":
+        patch = params.get("patch")
+        patch_ref = params.get("patch_ref")
+        return {
+            "intent_type": intent_type,
+            "cwd": cwd,
+            "summary": f"Prepare patch bundle: {params.get('title', 'Apply patch')}",
+            "patch_chars": len(patch) if isinstance(patch, str) else None,
+            "patch_ref": patch_ref if isinstance(patch_ref, str) else None,
+        }
+    if intent_type == "write_file":
+        return {
+            "intent_type": intent_type,
+            "cwd": cwd,
+            "summary": f"Prepare write file bundle: {params.get('path', '')}",
+            "path": params.get("path", ""),
+            "overwrite": bool(params.get("overwrite", False)),
+        }
+    if intent_type == "run_script":
+        return {
+            "intent_type": intent_type,
+            "cwd": cwd,
+            "summary": f"Prepare run script bundle: {params.get('title', 'Run script')}",
+            "timeout_seconds": int(params.get("timeout_seconds", 60)),
+        }
+    if intent_type == "command_bundle":
+        raw_steps = params.get("steps")
+        return {
+            "intent_type": intent_type,
+            "cwd": cwd,
+            "summary": f"Prepare command bundle: {params.get('title', 'Command bundle')}",
+            "step_count": len(raw_steps) if isinstance(raw_steps, list) else 0,
+        }
     raise ValueError(f"Unknown intent_type: {intent_type}")
 
 
@@ -565,6 +599,83 @@ def _approve_intent(payload: dict[str, object]) -> CommandBundleStageResult:
         if not paths:
             raise ValueError("No changes to commit.")
         return workspace_stage_commit_bundle(cwd=cwd, paths=paths, message=str(params.get("message", "")), precheck_commands=None)
+    if intent_type == "apply_patch":
+        title = str(params.get("title") or f"Apply patch ({_intent_nonce(payload)[:8]})")
+        patch = params.get("patch")
+        patch_ref = params.get("patch_ref")
+        return workspace_stage_patch_bundle(
+            title=title,
+            cwd=cwd,
+            patch=patch if isinstance(patch, str) else None,
+            patch_ref=patch_ref if isinstance(patch_ref, str) else None,
+        )
+    if intent_type == "write_file":
+        title = str(params.get("title") or f"Write file ({_intent_nonce(payload)[:8]})")
+        relative_path = str(params.get("path", ""))
+        content = str(params.get("content", ""))
+        overwrite = bool(params.get("overwrite", False))
+        create_parent_dirs = bool(params.get("create_parent_dirs", True))
+
+        target_dir = _resolve_workspace_path(cwd)
+        file_path = (target_dir / relative_path).resolve(strict=False)
+        if file_path != target_dir and not file_path.is_relative_to(target_dir):
+            raise ValueError("write_file path must stay under cwd.")
+        if file_path.exists() and not overwrite:
+            raise ValueError("write_file target exists and overwrite is false.")
+        if not create_parent_dirs and not file_path.parent.exists():
+            raise ValueError("write_file parent directory does not exist.")
+
+        patch_path = relative_path.replace("\\", "/")
+        if file_path.exists():
+            before = file_path.read_text(encoding="utf-8")
+            diff_body = "".join(
+                difflib.unified_diff(
+                    before.splitlines(keepends=True),
+                    content.splitlines(keepends=True),
+                    fromfile=f"a/{patch_path}",
+                    tofile=f"b/{patch_path}",
+                )
+            )
+            patch = f"diff --git a/{patch_path} b/{patch_path}\n" + diff_body
+        else:
+            lines = content.splitlines(keepends=True)
+            patch_lines = [
+                f"diff --git a/{patch_path} b/{patch_path}\n",
+                "new file mode 100644\n",
+                "--- /dev/null\n",
+                f"+++ b/{patch_path}\n",
+                f"@@ -0,0 +1,{len(lines)} @@\n",
+            ]
+            patch_lines.extend("+" + line for line in lines)
+            patch = "".join(patch_lines)
+
+        return workspace_stage_patch_bundle(title=title, cwd=cwd, patch=patch)
+    if intent_type == "run_script":
+        title = str(params.get("title") or f"Run script ({_intent_nonce(payload)[:8]})")
+        timeout_seconds = int(params.get("timeout_seconds", 60))
+        step = CommandBundleStep(
+            name=title,
+            argv=["bash", "-lc", str(params.get("script", ""))],
+            timeout_seconds=timeout_seconds,
+        )
+        return workspace_stage_command_bundle(title=title, cwd=cwd, steps=[step])
+    if intent_type == "command_bundle":
+        title = str(params.get("title") or f"Command bundle ({_intent_nonce(payload)[:8]})")
+        raw_steps = params.get("steps")
+        if not isinstance(raw_steps, list) or not raw_steps:
+            raise ValueError("command_bundle steps must be a non-empty list.")
+        steps = []
+        for step in raw_steps:
+            if not isinstance(step, dict):
+                raise ValueError("command_bundle step must be an object.")
+            steps.append(
+                CommandBundleStep(
+                    name=str(step.get("name", "")),
+                    argv=[str(item) for item in step.get("argv", [])],
+                    timeout_seconds=int(step.get("timeout_seconds", 60)),
+                )
+            )
+        return workspace_stage_command_bundle(title=title, cwd=cwd, steps=steps)
     raise ValueError(f"Unknown intent_type: {intent_type}")
 
 

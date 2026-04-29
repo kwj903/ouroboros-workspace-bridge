@@ -1060,3 +1060,86 @@ class WatcherHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompanionActionIntentValidationTests(unittest.TestCase):
+    def _cwd(self) -> str:
+        return safety._relative(config.PROJECT_ROOT)
+
+    def test_validate_companion_intent_accepts_action_intents(self) -> None:
+        payloads = [
+            {
+                "version": 1,
+                "intent_kind": "run",
+                "intent_type": "apply_patch",
+                "cwd": self._cwd(),
+                "params": {"title": "Patch docs", "patch": "diff --git a/README.md b/README.md\n"},
+            },
+            {
+                "version": 1,
+                "intent_kind": "run",
+                "intent_type": "write_file",
+                "cwd": self._cwd(),
+                "params": {"path": "tmp/example.txt", "content": "hello", "overwrite": True},
+            },
+            {
+                "version": 1,
+                "intent_kind": "run",
+                "intent_type": "run_script",
+                "cwd": self._cwd(),
+                "params": {"title": "Echo", "script": "echo ok", "timeout_seconds": 10},
+            },
+            {
+                "version": 1,
+                "intent_kind": "run",
+                "intent_type": "command_bundle",
+                "cwd": self._cwd(),
+                "params": {
+                    "title": "Git status",
+                    "steps": [{"name": "status", "argv": ["git", "status", "--short"], "timeout_seconds": 30}],
+                },
+            },
+        ]
+
+        for payload in payloads:
+            with self.subTest(intent_type=payload["intent_type"]):
+                normalized = review.validate_companion_intent(payload)
+                self.assertEqual(normalized["intent_kind"], "run")
+                self.assertEqual(normalized["intent_type"], payload["intent_type"])
+
+    def test_validate_companion_intent_rejects_bad_action_params(self) -> None:
+        bad_payloads = [
+            {
+                "version": 1,
+                "intent_kind": "run",
+                "intent_type": "apply_patch",
+                "cwd": self._cwd(),
+                "params": {"title": "bad"},
+            },
+            {
+                "version": 1,
+                "intent_kind": "run",
+                "intent_type": "write_file",
+                "cwd": self._cwd(),
+                "params": {"path": "../bad.txt", "content": "no"},
+            },
+            {
+                "version": 1,
+                "intent_kind": "run",
+                "intent_type": "run_script",
+                "cwd": self._cwd(),
+                "params": {"script": "", "timeout_seconds": 10},
+            },
+            {
+                "version": 1,
+                "intent_kind": "run",
+                "intent_type": "command_bundle",
+                "cwd": self._cwd(),
+                "params": {"steps": [{"name": "bad", "argv": []}]},
+            },
+        ]
+
+        for payload in bad_payloads:
+            with self.subTest(intent_type=payload["intent_type"]):
+                with self.assertRaises(ValueError):
+                    review.validate_companion_intent(payload)

@@ -217,3 +217,17 @@ local checks가 통과했다면 이 skip은 성공으로 처리됩니다. remote
 - bundle-focused page에 `Copy for ChatGPT` JSON이 보인다.
 - 로컬 실행 뒤 `workspace_next_handoff`가 최신 handoff를 반환한다.
 - local checks가 통과하고 `npx`가 없을 때 `bash scripts/check_all.sh`가 exit `0`으로 끝난다.
+
+### 지원하는 companion action intent
+
+companion JSON import 경로는 현재 다음 실행용 `intent_type` 값을 허용합니다.
+
+- `check`
+- `commit_current_changes`
+- `dev_session`
+- `apply_patch`
+- `write_file`
+- `run_script`
+- `command_bundle`
+
+마지막 네 가지는 ChatGPT가 MCP bundle tool을 직접 호출하지 않고 일반 `ouroboros-intent` 메시지만 출력해도 browser companion이 로컬 pending UI로 가져올 수 있게 하기 위한 타입입니다.
