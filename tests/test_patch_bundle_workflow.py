@@ -39,6 +39,10 @@ BUNDLE_TOOLS = {
     "workspace_cancel_command_bundle",
 }
 
+RECOVERY_TOOLS = {
+    "workspace_recover_last_activity",
+}
+
 PRIMITIVE_STAGE_TOOLS = {
     "workspace_stage_command_bundle",
     "workspace_stage_action_bundle",
@@ -69,7 +73,21 @@ class ToolSurfaceTests(unittest.TestCase):
 
         self.assertFalse(DIRECT_RISKY_TOOLS.intersection(tools))
         self.assertTrue(BUNDLE_TOOLS.issubset(tools))
+        self.assertTrue(RECOVERY_TOOLS.issubset(tools))
         self.assertFalse(PRIMITIVE_STAGE_TOOLS.intersection(tools))
+
+    def test_recover_last_activity_returns_snapshot(self) -> None:
+        tools = set(server.workspace_info().tools)
+
+        self.assertIn("workspace_recover_last_activity", tools)
+
+        result = server.workspace_recover_last_activity(cwd=safety._relative(config.PROJECT_ROOT))
+
+        self.assertIsInstance(result, dict)
+        self.assertIn("git_status", result)
+        self.assertIn("latest_bundles", result)
+        self.assertIn("latest_audit_events", result)
+        self.assertIn("diagnosis", result)
 
 
 class PatchBundleStagingTests(unittest.TestCase):

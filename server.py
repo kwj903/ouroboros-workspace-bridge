@@ -613,6 +613,7 @@ def workspace_info() -> WorkspaceInfo:
         "workspace_git_diff",
         "workspace_preview_patch",
         "workspace_read_audit_log",
+        "workspace_recover_last_activity",
         "workspace_get_operation",
         "workspace_list_operations",
         "workspace_list_backups",
@@ -1107,6 +1108,96 @@ def workspace_read_audit_log(
         count=len(entries),
         truncated=len(entries) >= limit,
     )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_recover_last_activity(
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")] = ".",
+    bundle_limit: Annotated[int, Field(ge=1, le=20, description="Maximum recent command bundles to summarize.")] = 5,
+    audit_limit: Annotated[int, Field(ge=1, le=50, description="Maximum recent audit events to summarize.")] = 10,
+) -> dict[str, object]:
+    """Return a compact recovery snapshot after an interrupted ChatGPT tool call."""
+    _ensure_runtime_dirs()
+
+    try:
+        git_status = _run_command(cwd, ["git", "status", "--short", "--branch"], timeout_seconds=30).model_dump()
+    except Exception as exc:
+        git_status = {
+            "cwd": cwd,
+            "command": ["git", "status", "--short", "--branch"],
+            "exit_code": None,
+            "stdout": "",
+            "stderr": f"{type(exc).__name__}: {exc}",
+            "truncated": False,
+        }
+
+    bundle_entries: list[dict[str, object]] = []
+    for directory in _command_bundle_dirs():
+        if not directory.exists():
+            continue
+        for bundle_path in directory.glob("cmd-*.json"):
+            try:
+                record = _read_json(bundle_path)
+            except Exception:
+                continue
+            steps = record.get("steps") if isinstance(record.get("steps"), list) else []
+            bundle_entries.append(
+                {
+                    "bundle_id": str(record.get("bundle_id", bundle_path.stem)),
+                    "title": str(record.get("title", "")),
+                    "cwd": str(record.get("cwd", "")),
+                    "status": str(record.get("status", directory.name)),
+                    "risk": str(record.get("risk", "unknown")),
+                    "command_count": len(steps),
+                    "updated_at": str(record.get("updated_at", "")),
+                    "error": record.get("error") if isinstance(record.get("error"), str) else None,
+                }
+            )
+
+    bundle_entries.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
+    latest_bundles = bundle_entries[:bundle_limit]
+
+    audit_entries: list[dict[str, object]] = []
+    for item in workspace_read_audit_log(limit=audit_limit).entries:
+        safe_item: dict[str, object] = {}
+        for key in (
+            "ts",
+            "event",
+            "bundle_id",
+            "operation_id",
+            "cwd",
+            "title",
+            "risk",
+            "command_count",
+            "path_count",
+            "exit_code",
+            "truncated",
+        ):
+            if key in item:
+                safe_item[key] = item[key]
+        audit_entries.append(safe_item)
+
+    git_stdout = str(git_status.get("stdout", "")).strip()
+    if not latest_bundles:
+        diagnosis = "No command bundle records were found. If a mutation tool call appeared to hang, it may not have reached the MCP server."
+    elif git_stdout and git_stdout != "## main...origin/main":
+        diagnosis = "The worktree is not clean or the branch is ahead/behind. Inspect git_status and latest_bundles before retrying mutation tools."
+    else:
+        diagnosis = "Recent command bundle records and git status are available. Use latest_bundles to decide whether to retry, inspect status, or continue."
+
+    return {
+        "git_status": git_status,
+        "latest_bundles": latest_bundles,
+        "latest_audit_events": audit_entries,
+        "diagnosis": diagnosis,
+    }
 
 
 @mcp.tool(

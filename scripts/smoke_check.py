@@ -27,6 +27,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TOOLS = {
     "workspace_project_snapshot",
     "workspace_preview_patch",
+    "workspace_recover_last_activity",
     "workspace_stage_text_payload",
     "workspace_command_bundle_status",
     "workspace_wait_command_bundle_status",
