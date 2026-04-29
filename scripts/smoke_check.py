@@ -28,6 +28,8 @@ EXPECTED_TOOLS = {
     "workspace_project_snapshot",
     "workspace_preview_patch",
     "workspace_recover_last_activity",
+    "workspace_list_tool_calls",
+    "workspace_tool_call_status",
     "workspace_stage_text_payload",
     "workspace_command_bundle_status",
     "workspace_wait_command_bundle_status",

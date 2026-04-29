@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
 import server
+from terminal_bridge import tool_calls
 from terminal_bridge.models import CommandBundleAction, CommandBundleStatusResult, CommandBundleStep
 
 
@@ -14,6 +17,10 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.original_stage_action = server.workspace_stage_action_bundle
         self.original_stage_commit = server.workspace_stage_commit_bundle
         self.original_wait = server.workspace_wait_command_bundle_status
+        self.original_wait_impl = server._workspace_wait_command_bundle_status_impl
+        self.original_tool_call_dir = tool_calls.TOOL_CALL_DIR
+        self.tmp = tempfile.TemporaryDirectory()
+        tool_calls.TOOL_CALL_DIR = Path(self.tmp.name)
 
     def tearDown(self) -> None:
         server.workspace_stage_command_bundle = self.original_stage_command
@@ -21,6 +28,9 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         server.workspace_stage_action_bundle = self.original_stage_action
         server.workspace_stage_commit_bundle = self.original_stage_commit
         server.workspace_wait_command_bundle_status = self.original_wait
+        server._workspace_wait_command_bundle_status_impl = self.original_wait_impl
+        tool_calls.TOOL_CALL_DIR = self.original_tool_call_dir
+        self.tmp.cleanup()
 
     def status_result(self, bundle_id: str) -> CommandBundleStatusResult:
         return CommandBundleStatusResult(
@@ -53,7 +63,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             return expected
 
         server.workspace_stage_command_bundle = fake_stage
-        server.workspace_wait_command_bundle_status = fake_wait
+        server._workspace_wait_command_bundle_status_impl = fake_wait
 
         result = server.workspace_stage_command_bundle_and_wait(
             title="Run status",
@@ -87,7 +97,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             return expected
 
         server.workspace_stage_patch_bundle = fake_stage
-        server.workspace_wait_command_bundle_status = fake_wait
+        server._workspace_wait_command_bundle_status_impl = fake_wait
 
         result = server.workspace_stage_patch_bundle_and_wait(
             title="Apply patch",
@@ -126,7 +136,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             return expected
 
         server.workspace_stage_action_bundle = fake_stage
-        server.workspace_wait_command_bundle_status = fake_wait
+        server._workspace_wait_command_bundle_status_impl = fake_wait
 
         result = server.workspace_stage_action_bundle_and_wait(
             title="Write file",
@@ -160,7 +170,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             return expected
 
         server.workspace_stage_commit_bundle = fake_stage
-        server.workspace_wait_command_bundle_status = fake_wait
+        server._workspace_wait_command_bundle_status_impl = fake_wait
 
         result = server.workspace_stage_commit_bundle_and_wait(
             cwd=".",
@@ -188,7 +198,105 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertIn("workspace_stage_patch_bundle_and_wait", tools)
         self.assertIn("workspace_stage_action_bundle_and_wait", tools)
         self.assertIn("workspace_stage_commit_bundle_and_wait", tools)
+        self.assertIn("workspace_list_tool_calls", tools)
+        self.assertIn("workspace_tool_call_status", tools)
         self.assertNotIn("workspace_stage_command_bundle", tools)
         self.assertNotIn("workspace_stage_action_bundle", tools)
         self.assertNotIn("workspace_stage_patch_bundle", tools)
         self.assertNotIn("workspace_stage_commit_bundle", tools)
+
+    def test_instrumented_function_creates_completed_tool_call_record(self) -> None:
+        expected = self.status_result("cmd-test-journal")
+
+        server.workspace_stage_command_bundle = lambda **kwargs: SimpleNamespace(bundle_id="cmd-test-journal")
+        server._workspace_wait_command_bundle_status_impl = lambda *args, **kwargs: expected
+
+        result = server.workspace_stage_command_bundle_and_wait(
+            title="Run status",
+            cwd=".",
+            steps=[CommandBundleStep(name="status", argv=["git", "status"])],
+        )
+
+        self.assertIs(result, expected)
+        records = tool_calls.list_tool_calls()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["tool_name"], "workspace_stage_command_bundle_and_wait")
+        self.assertEqual(records[0]["status"], "completed")
+        self.assertIsInstance(records[0]["duration_ms"], int)
+        self.assertEqual(records[0]["result_summary"]["bundle_id"], "cmd-test-journal")
+
+    def test_failed_instrumentation_records_failed_status(self) -> None:
+        server.workspace_stage_command_bundle = lambda **kwargs: (_ for _ in ()).throw(ValueError("bad stage"))
+
+        with self.assertRaises(ValueError):
+            server.workspace_stage_command_bundle_and_wait(
+                title="Bad stage",
+                cwd=".",
+                steps=[CommandBundleStep(name="status", argv=["git", "status"])],
+            )
+
+        records = tool_calls.list_tool_calls()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["tool_name"], "workspace_stage_command_bundle_and_wait")
+        self.assertEqual(records[0]["status"], "failed")
+        self.assertIsInstance(records[0]["duration_ms"], int)
+        self.assertIn("ValueError", records[0]["error"])
+
+
+class ToolCallJournalTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.original_tool_call_dir = tool_calls.TOOL_CALL_DIR
+        self.tmp = tempfile.TemporaryDirectory()
+        tool_calls.TOOL_CALL_DIR = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        tool_calls.TOOL_CALL_DIR = self.original_tool_call_dir
+        self.tmp.cleanup()
+
+    def test_tool_call_records_can_be_written_listed_and_read(self) -> None:
+        call_id = tool_calls.write_started(
+            "workspace_stage_patch_bundle_and_wait",
+            {
+                "cwd": ".",
+                "patch": "secret patch body" * 100,
+                "access_token": "secret-token",
+                "header": "Authorization: Bearer secret-token",
+                "url": "https://example.test/mcp?access_token=secret-token",
+            },
+        )
+        tool_calls.write_completed(
+            call_id,
+            CommandBundleStatusResult(
+                bundle_id="cmd-test",
+                title="fake",
+                cwd=".",
+                status="pending",
+                risk="medium",
+                approval_required=True,
+                command_count=2,
+                created_at="",
+                updated_at="",
+            ),
+        )
+
+        listed = tool_calls.list_tool_calls()
+        read = tool_calls.read_tool_call(call_id)
+
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(read["call_id"], call_id)
+        self.assertEqual(read["status"], "completed")
+        self.assertEqual(read["args_summary"]["access_token"], "<redacted>")
+        self.assertNotIn("secret-token", read["args_summary"]["header"])
+        self.assertNotIn("secret-token", read["args_summary"]["url"])
+        self.assertTrue(read["args_summary"]["patch"]["omitted"])
+        self.assertEqual(read["result_summary"]["bundle_id"], "cmd-test")
+
+    def test_list_skips_malformed_records_and_read_reports_malformed(self) -> None:
+        call_id = tool_calls.write_started("workspace_command_bundle_status", {"bundle_id": "cmd-test"})
+        (tool_calls.TOOL_CALL_DIR / "call-99999999-999999-bad.json").write_text("{bad json", encoding="utf-8")
+
+        listed = tool_calls.list_tool_calls()
+
+        self.assertEqual([record["call_id"] for record in listed], [call_id])
+        with self.assertRaises(ValueError):
+            tool_calls.read_tool_call("call-99999999-999999-bad")

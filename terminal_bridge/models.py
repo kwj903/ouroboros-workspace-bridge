@@ -230,6 +230,25 @@ class OperationListResult(BaseModel):
     count: int
 
 
+class ToolCallStatusResult(BaseModel):
+    call_id: str
+    tool_name: str
+    status: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    failed_at: str | None = None
+    duration_ms: int | None = None
+    args_hash: str | None = None
+    args_summary: dict[str, object] | None = None
+    result_summary: dict[str, object] | None = None
+    error: str | None = None
+
+
+class ToolCallListResult(BaseModel):
+    entries: list[ToolCallStatusResult]
+    count: int
+
+
 class FileMatchEntry(BaseModel):
     path: str
     kind: str

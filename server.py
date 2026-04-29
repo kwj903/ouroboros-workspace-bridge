@@ -7,6 +7,7 @@ import json
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import parse_qs
@@ -73,6 +74,7 @@ from terminal_bridge.config import (
     TEXT_PAYLOAD_CHUNK_MAX_CHARS,
     TEXT_PAYLOAD_DIR,
     TEXT_PAYLOAD_MAX_TOTAL_CHARS,
+    TOOL_CALL_DIR,
     TRASH_DIR,
     WORKSPACE_ROOT,
 )
@@ -111,6 +113,8 @@ from terminal_bridge.models import (
     TaskStatusResult,
     TaskStepEntry,
     TextPayloadStageResult,
+    ToolCallListResult,
+    ToolCallStatusResult,
     TrashEntry,
     TrashListResult,
     TreeResult,
@@ -160,6 +164,13 @@ from terminal_bridge.tasks import (
     _read_task,
     _task_path,
     _write_task,
+)
+from terminal_bridge.tool_calls import (
+    list_tool_calls as _list_tool_call_records,
+    read_tool_call as _read_tool_call_record,
+    write_completed as _write_tool_call_completed,
+    write_failed as _write_tool_call_failed,
+    write_started as _write_tool_call_started,
 )
 from terminal_bridge.trash import (
     _list_trash_entries,
@@ -228,6 +239,7 @@ def _ensure_runtime_dirs() -> None:
     OPERATION_DIR.mkdir(parents=True, exist_ok=True)
     TASK_DIR.mkdir(parents=True, exist_ok=True)
     TEXT_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    TOOL_CALL_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_PENDING_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_APPLIED_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_REJECTED_DIR.mkdir(parents=True, exist_ok=True)
@@ -246,6 +258,34 @@ def _audit(event: str, **data: object) -> None:
 
 
 _set_operation_audit_callback(_audit)
+
+
+def _tool_call_status_result(record: dict[str, object]) -> ToolCallStatusResult:
+    return ToolCallStatusResult(
+        call_id=str(record.get("call_id", "")),
+        tool_name=str(record.get("tool_name", "")),
+        status=str(record.get("status", "unknown")),
+        started_at=record.get("started_at") if isinstance(record.get("started_at"), str) else None,
+        completed_at=record.get("completed_at") if isinstance(record.get("completed_at"), str) else None,
+        failed_at=record.get("failed_at") if isinstance(record.get("failed_at"), str) else None,
+        duration_ms=record.get("duration_ms") if isinstance(record.get("duration_ms"), int) else None,
+        args_hash=record.get("args_hash") if isinstance(record.get("args_hash"), str) else None,
+        args_summary=record.get("args_summary") if isinstance(record.get("args_summary"), dict) else None,
+        result_summary=record.get("result_summary") if isinstance(record.get("result_summary"), dict) else None,
+        error=record.get("error") if isinstance(record.get("error"), str) else None,
+    )
+
+
+def _record_tool_call(tool_name: str, args: dict[str, object], action: Callable[[], object]) -> object:
+    call_id = _write_tool_call_started(tool_name, args)
+    try:
+        result = action()
+    except Exception as exc:
+        _write_tool_call_failed(call_id, exc)
+        raise
+
+    _write_tool_call_completed(call_id, result)
+    return result
 
 
 def _read_operation_record(operation_id: str) -> dict[str, object] | None:
@@ -614,6 +654,8 @@ def workspace_info() -> WorkspaceInfo:
         "workspace_preview_patch",
         "workspace_read_audit_log",
         "workspace_recover_last_activity",
+        "workspace_list_tool_calls",
+        "workspace_tool_call_status",
         "workspace_get_operation",
         "workspace_list_operations",
         "workspace_list_backups",
@@ -1124,6 +1166,14 @@ def workspace_recover_last_activity(
     audit_limit: Annotated[int, Field(ge=1, le=50, description="Maximum recent audit events to summarize.")] = 10,
 ) -> dict[str, object]:
     """Return a compact recovery snapshot after an interrupted ChatGPT tool call."""
+    return _record_tool_call(
+        "workspace_recover_last_activity",
+        {"cwd": cwd, "bundle_limit": bundle_limit, "audit_limit": audit_limit},
+        lambda: _workspace_recover_last_activity_impl(cwd, bundle_limit, audit_limit),
+    )
+
+
+def _workspace_recover_last_activity_impl(cwd: str, bundle_limit: int, audit_limit: int) -> dict[str, object]:
     _ensure_runtime_dirs()
 
     try:
@@ -1198,6 +1248,38 @@ def workspace_recover_last_activity(
         "latest_audit_events": audit_entries,
         "diagnosis": diagnosis,
     }
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_list_tool_calls(
+    limit: Annotated[int, Field(ge=1, le=200, description="Maximum tool call records to return.")] = 50,
+) -> ToolCallListResult:
+    """List recent instrumented MCP tool calls, newest first."""
+    records = _list_tool_call_records(limit)
+    entries = [_tool_call_status_result(record) for record in records]
+    return ToolCallListResult(entries=entries, count=len(entries))
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_tool_call_status(
+    call_id: Annotated[str, Field(description="Tool call id returned by workspace_list_tool_calls.")],
+) -> ToolCallStatusResult:
+    """Return one instrumented MCP tool call record."""
+    return _tool_call_status_result(_read_tool_call_record(call_id))
 
 
 @mcp.tool(
@@ -2507,6 +2589,14 @@ def workspace_command_bundle_status(
     bundle_id: Annotated[str, Field(description="Command bundle id returned by workspace_stage_command_bundle.")],
 ) -> CommandBundleStatusResult:
     """Return status and result for a staged command bundle."""
+    return _record_tool_call(
+        "workspace_command_bundle_status",
+        {"bundle_id": bundle_id},
+        lambda: _workspace_command_bundle_status_impl(bundle_id),
+    )
+
+
+def _workspace_command_bundle_status_impl(bundle_id: str) -> CommandBundleStatusResult:
     _, record = _find_command_bundle(bundle_id)
     steps = record.get("steps") if isinstance(record.get("steps"), list) else []
 
@@ -2543,6 +2633,22 @@ def workspace_wait_command_bundle_status(
     This tool is read-only. It never approves, rejects, or executes bundles. It only polls
     the existing bundle status so ChatGPT can continue promptly after a local approval.
     """
+    return _record_tool_call(
+        "workspace_wait_command_bundle_status",
+        {
+            "bundle_id": bundle_id,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_wait_command_bundle_status_impl(bundle_id, timeout_seconds, poll_interval_seconds),
+    )
+
+
+def _workspace_wait_command_bundle_status_impl(
+    bundle_id: str,
+    timeout_seconds: int,
+    poll_interval_seconds: float,
+) -> CommandBundleStatusResult:
     deadline = time.monotonic() + timeout_seconds
 
     while True:
@@ -2584,8 +2690,34 @@ def workspace_stage_command_bundle_and_wait(
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
     """Stage a command bundle, then briefly wait for local review UI approval."""
+    return _record_tool_call(
+        "workspace_stage_command_bundle_and_wait",
+        {
+            "title": title,
+            "cwd": cwd,
+            "steps": steps,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_stage_command_bundle_and_wait_impl(
+            title,
+            cwd,
+            steps,
+            timeout_seconds,
+            poll_interval_seconds,
+        ),
+    )
+
+
+def _workspace_stage_command_bundle_and_wait_impl(
+    title: str,
+    cwd: str,
+    steps: list[CommandBundleStep],
+    timeout_seconds: int,
+    poll_interval_seconds: float,
+) -> CommandBundleStatusResult:
     staged = workspace_stage_command_bundle(title=title, cwd=cwd, steps=steps)
-    return workspace_wait_command_bundle_status(
+    return _workspace_wait_command_bundle_status_impl(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
@@ -2609,8 +2741,37 @@ def workspace_stage_patch_bundle_and_wait(
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
     """Stage a patch bundle, then briefly wait for local review UI approval."""
+    return _record_tool_call(
+        "workspace_stage_patch_bundle_and_wait",
+        {
+            "title": title,
+            "cwd": cwd,
+            "patch": patch,
+            "patch_ref": patch_ref,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_stage_patch_bundle_and_wait_impl(
+            title,
+            cwd,
+            patch,
+            patch_ref,
+            timeout_seconds,
+            poll_interval_seconds,
+        ),
+    )
+
+
+def _workspace_stage_patch_bundle_and_wait_impl(
+    title: str,
+    cwd: str,
+    patch: str | None,
+    patch_ref: str | None,
+    timeout_seconds: int,
+    poll_interval_seconds: float,
+) -> CommandBundleStatusResult:
     staged = workspace_stage_patch_bundle(title=title, cwd=cwd, patch=patch, patch_ref=patch_ref)
-    return workspace_wait_command_bundle_status(
+    return _workspace_wait_command_bundle_status_impl(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
@@ -2633,8 +2794,34 @@ def workspace_stage_action_bundle_and_wait(
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
     """Stage an action bundle, then briefly wait for local review UI approval."""
+    return _record_tool_call(
+        "workspace_stage_action_bundle_and_wait",
+        {
+            "title": title,
+            "cwd": cwd,
+            "actions": actions,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_stage_action_bundle_and_wait_impl(
+            title,
+            cwd,
+            actions,
+            timeout_seconds,
+            poll_interval_seconds,
+        ),
+    )
+
+
+def _workspace_stage_action_bundle_and_wait_impl(
+    title: str,
+    cwd: str,
+    actions: list[CommandBundleAction],
+    timeout_seconds: int,
+    poll_interval_seconds: float,
+) -> CommandBundleStatusResult:
     staged = workspace_stage_action_bundle(title=title, cwd=cwd, actions=actions)
-    return workspace_wait_command_bundle_status(
+    return _workspace_wait_command_bundle_status_impl(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
@@ -2660,13 +2847,39 @@ def workspace_stage_commit_bundle_and_wait(
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
     """Stage a commit bundle, then briefly wait for local review UI approval."""
+    return _record_tool_call(
+        "workspace_stage_commit_bundle_and_wait",
+        {
+            "cwd": cwd,
+            "paths": paths,
+            "message": message,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_stage_commit_bundle_and_wait_impl(
+            cwd,
+            paths,
+            message,
+            timeout_seconds,
+            poll_interval_seconds,
+        ),
+    )
+
+
+def _workspace_stage_commit_bundle_and_wait_impl(
+    cwd: str,
+    paths: list[str],
+    message: str,
+    timeout_seconds: int,
+    poll_interval_seconds: float,
+) -> CommandBundleStatusResult:
     staged = workspace_stage_commit_bundle(
         cwd=cwd,
         paths=paths,
         message=message,
         precheck_commands=None,
     )
-    return workspace_wait_command_bundle_status(
+    return _workspace_wait_command_bundle_status_impl(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
