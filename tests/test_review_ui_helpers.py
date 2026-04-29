@@ -242,7 +242,9 @@ class ReviewServerHelperTests(unittest.TestCase):
     def test_intent_inbox_form_is_rendered_on_pending_page(self) -> None:
         html = review.intent_inbox_html()
 
-        self.assertIn("Intent Inbox", html)
+        self.assertIn("<details", html)
+        self.assertIn("고급: Intent 직접 가져오기", html)
+        self.assertIn("일반 승인에는 필요 없습니다", html)
         self.assertIn('action="/intents/import"', html)
         self.assertIn('name="token"', html)
         self.assertIn("Import intent", html)
@@ -313,7 +315,7 @@ class ReviewServerHelperTests(unittest.TestCase):
 
         self.assertIn("Intent import failed", html)
         self.assertIn("expired", html)
-        self.assertIn("Intent Inbox", html)
+        self.assertIn("고급: Intent 직접 가져오기", html)
 
     def test_short_error_truncates_long_strings(self) -> None:
         error = review.short_error("x" * 200, max_chars=20)

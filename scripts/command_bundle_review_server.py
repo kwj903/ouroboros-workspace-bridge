@@ -382,10 +382,10 @@ def intent_import_error_html(message: object) -> str:
 
 def intent_inbox_html() -> str:
     return """
-    <section class="card">
-      <h2>Intent Inbox</h2>
+    <details class="card">
+      <summary><strong>고급: Intent 직접 가져오기</strong></summary>
       <p class="meta">
-        ChatGPT가 만든 <code>local_review_url</code> 전체 URL 또는 <code>token</code> 값만 붙여넣어 pending bundle로 가져옵니다.
+        일반 승인에는 필요 없습니다. ChatGPT가 제공한 intent URL/token을 수동으로 가져올 때만 사용합니다.
       </p>
       <form method="post" action="/intents/import">
         <textarea name="token" rows="3" placeholder="http://127.0.0.1:8765/review-intent?token=..."></textarea>
@@ -393,7 +393,7 @@ def intent_inbox_html() -> str:
           <button class="approve" type="submit">Import intent</button>
         </div>
       </form>
-    </section>
+    </details>
     """
 
 
@@ -2599,11 +2599,11 @@ class Handler(BaseHTTPRequestHandler):
                 )
 
             body = (
-                intent_inbox_html()
-                + approval_mode_banner_html(approval_mode)
+                approval_mode_banner_html(approval_mode)
                 + approval_mode_card_html(approval_mode)
                 + "<p><a href='/history'>전체 이력 보기</a></p>"
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
+                + intent_inbox_html()
                 + command_bundle_poll_script()
             )
             self.send_html(
