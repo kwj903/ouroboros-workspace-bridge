@@ -6,6 +6,7 @@ import hmac
 import json
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import parse_qs
@@ -621,6 +622,11 @@ def workspace_info() -> WorkspaceInfo:
         "workspace_stage_action_bundle",
         "workspace_stage_patch_bundle",
         "workspace_command_bundle_status",
+        "workspace_wait_command_bundle_status",
+        "workspace_stage_command_bundle_and_wait",
+        "workspace_stage_patch_bundle_and_wait",
+        "workspace_stage_action_bundle_and_wait",
+        "workspace_stage_commit_bundle_and_wait",
         "workspace_list_command_bundles",
         "workspace_cancel_command_bundle",
     ]
@@ -2422,6 +2428,158 @@ def workspace_command_bundle_status(
         updated_at=str(record.get("updated_at", "")),
         result=record.get("result") if isinstance(record.get("result"), dict) else None,
         error=record.get("error") if isinstance(record.get("error"), str) else None,
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_wait_command_bundle_status(
+    bundle_id: Annotated[str, Field(description="Command bundle id returned by workspace_stage_command_bundle.")],
+    timeout_seconds: Annotated[int, Field(ge=1, le=30, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Wait briefly for a pending command bundle to be approved, rejected, applied, or failed.
+
+    This tool is read-only. It never approves, rejects, or executes bundles. It only polls
+    the existing bundle status so ChatGPT can continue promptly after a local approval.
+    """
+    deadline = time.monotonic() + timeout_seconds
+
+    while True:
+        _, record = _find_command_bundle(bundle_id)
+        steps = record.get("steps") if isinstance(record.get("steps"), list) else []
+        result = CommandBundleStatusResult(
+            bundle_id=str(record.get("bundle_id", bundle_id)),
+            title=str(record.get("title", "")),
+            cwd=str(record.get("cwd", "")),
+            status=str(record.get("status", "unknown")),
+            risk=str(record.get("risk", "unknown")),
+            approval_required=bool(record.get("approval_required", False)),
+            command_count=len(steps),
+            created_at=str(record.get("created_at", "")),
+            updated_at=str(record.get("updated_at", "")),
+            result=record.get("result") if isinstance(record.get("result"), dict) else None,
+            error=record.get("error") if isinstance(record.get("error"), str) else None,
+        )
+
+        if result.status != "pending" or time.monotonic() >= deadline:
+            return result
+
+        time.sleep(min(poll_interval_seconds, max(0.0, deadline - time.monotonic())))
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_stage_command_bundle_and_wait(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
+    steps: Annotated[list[CommandBundleStep], Field(min_length=1, max_length=20)],
+    timeout_seconds: Annotated[int, Field(ge=1, le=30, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Stage a command bundle, then briefly wait for local review UI approval."""
+    staged = workspace_stage_command_bundle(title=title, cwd=cwd, steps=steps)
+    return workspace_wait_command_bundle_status(
+        staged.bundle_id,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_stage_patch_bundle_and_wait(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
+    patch: Annotated[str | None, Field(description="Unified diff patch text. Prefer patch_ref for large patches.")] = None,
+    patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
+    timeout_seconds: Annotated[int, Field(ge=1, le=30, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Stage a patch bundle, then briefly wait for local review UI approval."""
+    staged = workspace_stage_patch_bundle(title=title, cwd=cwd, patch=patch, patch_ref=patch_ref)
+    return workspace_wait_command_bundle_status(
+        staged.bundle_id,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_stage_action_bundle_and_wait(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
+    actions: Annotated[list[CommandBundleAction], Field(min_length=1, max_length=30)],
+    timeout_seconds: Annotated[int, Field(ge=1, le=30, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Stage an action bundle, then briefly wait for local review UI approval."""
+    staged = workspace_stage_action_bundle(title=title, cwd=cwd, actions=actions)
+    return workspace_wait_command_bundle_status(
+        staged.bundle_id,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_stage_commit_bundle_and_wait(
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
+    paths: Annotated[
+        list[str],
+        Field(min_length=1, max_length=100, description="Relative paths to stage and commit. Use ['.'] with care."),
+    ],
+    message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
+    precheck_commands: Annotated[
+        list[CommandBundleStep] | None,
+        Field(description="Optional low-risk commands to run before git add/commit."),
+    ] = None,
+    timeout_seconds: Annotated[int, Field(ge=1, le=30, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Stage a commit bundle, then briefly wait for local review UI approval."""
+    staged = workspace_stage_commit_bundle(
+        cwd=cwd,
+        paths=paths,
+        message=message,
+        precheck_commands=precheck_commands,
+    )
+    return workspace_wait_command_bundle_status(
+        staged.bundle_id,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
     )
 
 
