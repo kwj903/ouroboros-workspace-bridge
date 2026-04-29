@@ -27,11 +27,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TOOLS = {
     "workspace_project_snapshot",
     "workspace_preview_patch",
-    "workspace_stage_command_bundle",
-    "workspace_stage_commit_bundle",
-    "workspace_stage_patch_bundle",
+    "workspace_stage_text_payload",
+    "workspace_command_bundle_status",
+    "workspace_wait_command_bundle_status",
+    "workspace_stage_command_bundle_and_wait",
+    "workspace_stage_action_bundle_and_wait",
+    "workspace_stage_patch_bundle_and_wait",
+    "workspace_stage_commit_bundle_and_wait",
+    "workspace_list_command_bundles",
+    "workspace_cancel_command_bundle",
     "workspace_task_start",
     "workspace_list_tasks",
+}
+
+DISALLOWED_TOOLS = {
+    "workspace_stage_command_bundle",
+    "workspace_stage_action_bundle",
+    "workspace_stage_patch_bundle",
+    "workspace_stage_commit_bundle",
 }
 
 
@@ -142,9 +155,15 @@ def check_workspace_info(mcp_url: str, timeout: int) -> None:
     if not isinstance(tools, list):
         raise RuntimeError("workspace_info response did not include a tools list.")
 
-    missing = sorted(EXPECTED_TOOLS.difference(str(tool) for tool in tools))
+    exposed_tools = {str(tool) for tool in tools}
+
+    missing = sorted(EXPECTED_TOOLS.difference(exposed_tools))
     if missing:
         raise RuntimeError(f"workspace_info is missing expected tools: {', '.join(missing)}")
+
+    exposed_disallowed = sorted(DISALLOWED_TOOLS.intersection(exposed_tools))
+    if exposed_disallowed:
+        raise RuntimeError(f"workspace_info exposed disallowed tools: {', '.join(exposed_disallowed)}")
 
     print(f"workspace_info OK: {len(tools)} tools exposed")
 

@@ -214,6 +214,13 @@ def _direct_mutation_tool(**kwargs: object):
     return decorator
 
 
+def _internal_tool(**_kwargs: object):
+    def decorator(func):
+        return func
+
+    return decorator
+
+
 def _ensure_runtime_dirs() -> None:
     RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -617,10 +624,6 @@ def workspace_info() -> WorkspaceInfo:
         "workspace_task_finish",
         "workspace_list_tasks",
         "workspace_stage_text_payload",
-        "workspace_stage_commit_bundle",
-        "workspace_stage_command_bundle",
-        "workspace_stage_action_bundle",
-        "workspace_stage_patch_bundle",
         "workspace_command_bundle_status",
         "workspace_wait_command_bundle_status",
         "workspace_stage_command_bundle_and_wait",
@@ -2075,7 +2078,7 @@ def _read_staged_text_payload(payload_ref: str) -> tuple[str, dict[str, object]]
     return "".join(chunks), ref_info
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": False,
@@ -2184,7 +2187,7 @@ def workspace_stage_patch_bundle(
     )
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": False,
@@ -2254,7 +2257,7 @@ def workspace_stage_action_bundle(
     )
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": False,
@@ -2332,7 +2335,7 @@ def workspace_stage_commit_bundle(
     )
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": False,
         "destructiveHint": False,
@@ -2562,10 +2565,6 @@ def workspace_stage_commit_bundle_and_wait(
         Field(min_length=1, max_length=100, description="Relative paths to stage and commit. Use ['.'] with care."),
     ],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
-    precheck_commands: Annotated[
-        list[CommandBundleStep] | None,
-        Field(description="Optional low-risk commands to run before git add/commit."),
-    ] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=30, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
@@ -2574,7 +2573,7 @@ def workspace_stage_commit_bundle_and_wait(
         cwd=cwd,
         paths=paths,
         message=message,
-        precheck_commands=precheck_commands,
+        precheck_commands=None,
     )
     return workspace_wait_command_bundle_status(
         staged.bundle_id,

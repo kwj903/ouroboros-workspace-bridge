@@ -143,10 +143,9 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             {"bundle_id": "cmd-test-action", "timeout_seconds": 9, "poll_interval_seconds": 1.25},
         )
 
-    def test_commit_bundle_and_wait_calls_stage_then_wait(self) -> None:
+    def test_commit_bundle_and_wait_uses_internal_default_prechecks(self) -> None:
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-commit")
-        prechecks = [CommandBundleStep(name="status", argv=["git", "status", "--short"])]
 
         def fake_stage(**kwargs: object) -> SimpleNamespace:
             calls["stage"] = kwargs
@@ -167,7 +166,6 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             cwd=".",
             paths=["README.md"],
             message="Update docs",
-            precheck_commands=prechecks,
             timeout_seconds=10,
             poll_interval_seconds=1.5,
         )
@@ -175,7 +173,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertIs(result, expected)
         self.assertEqual(
             calls["stage"],
-            {"cwd": ".", "paths": ["README.md"], "message": "Update docs", "precheck_commands": prechecks},
+            {"cwd": ".", "paths": ["README.md"], "message": "Update docs", "precheck_commands": None},
         )
         self.assertEqual(
             calls["wait"],
@@ -190,3 +188,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertIn("workspace_stage_patch_bundle_and_wait", tools)
         self.assertIn("workspace_stage_action_bundle_and_wait", tools)
         self.assertIn("workspace_stage_commit_bundle_and_wait", tools)
+        self.assertNotIn("workspace_stage_command_bundle", tools)
+        self.assertNotIn("workspace_stage_action_bundle", tools)
+        self.assertNotIn("workspace_stage_patch_bundle", tools)
+        self.assertNotIn("workspace_stage_commit_bundle", tools)

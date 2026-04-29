@@ -29,13 +29,21 @@ DIRECT_RISKY_TOOLS = {
 
 BUNDLE_TOOLS = {
     "workspace_stage_text_payload",
+    "workspace_command_bundle_status",
+    "workspace_wait_command_bundle_status",
+    "workspace_stage_command_bundle_and_wait",
+    "workspace_stage_action_bundle_and_wait",
+    "workspace_stage_patch_bundle_and_wait",
+    "workspace_stage_commit_bundle_and_wait",
+    "workspace_list_command_bundles",
+    "workspace_cancel_command_bundle",
+}
+
+PRIMITIVE_STAGE_TOOLS = {
     "workspace_stage_command_bundle",
     "workspace_stage_action_bundle",
     "workspace_stage_commit_bundle",
     "workspace_stage_patch_bundle",
-    "workspace_command_bundle_status",
-    "workspace_list_command_bundles",
-    "workspace_cancel_command_bundle",
 }
 
 
@@ -61,6 +69,7 @@ class ToolSurfaceTests(unittest.TestCase):
 
         self.assertFalse(DIRECT_RISKY_TOOLS.intersection(tools))
         self.assertTrue(BUNDLE_TOOLS.issubset(tools))
+        self.assertFalse(PRIMITIVE_STAGE_TOOLS.intersection(tools))
 
 
 class PatchBundleStagingTests(unittest.TestCase):
