@@ -45,6 +45,7 @@ BUNDLE_TOOLS = {
 
 RECOVERY_TOOLS = {
     "workspace_recover_last_activity",
+    "workspace_transport_probe",
 }
 
 PRIMITIVE_STAGE_TOOLS = {
@@ -96,6 +97,30 @@ class ToolSurfaceTests(unittest.TestCase):
         self.assertIn("latest_bundles", result)
         self.assertIn("latest_audit_events", result)
         self.assertIn("diagnosis", result)
+
+    def test_transport_probe_returns_compact_snapshot_with_git_status(self) -> None:
+        tools = set(server.workspace_info().tools)
+
+        self.assertIn("workspace_transport_probe", tools)
+        self.assertFalse(PRIMITIVE_STAGE_TOOLS.intersection(tools))
+
+        result = server.workspace_transport_probe(cwd=safety._relative(config.PROJECT_ROOT), include_git_status=True)
+
+        self.assertIs(result["ok"], True)
+        self.assertIn("server_time", result)
+        self.assertIn("pid", result)
+        self.assertIn("workspace_root", result)
+        self.assertIn("runtime_root", result)
+        self.assertIn("latest_tool_call_count", result)
+        self.assertIn("latest_bundle_count", result)
+        self.assertIn("diagnosis", result)
+        self.assertIsInstance(result["git_status"], dict)
+
+    def test_transport_probe_can_skip_git_status(self) -> None:
+        result = server.workspace_transport_probe(include_git_status=False)
+
+        self.assertIs(result["ok"], True)
+        self.assertIsNone(result["git_status"])
 
 
 class PatchBundleStagingTests(unittest.TestCase):

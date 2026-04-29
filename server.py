@@ -4,6 +4,7 @@ import contextlib
 import fnmatch
 import hmac
 import json
+import os
 import subprocess
 import tempfile
 import time
@@ -686,6 +687,7 @@ def workspace_info() -> WorkspaceInfo:
         "workspace_git_status",
         "workspace_git_diff",
         "workspace_preview_patch",
+        "workspace_transport_probe",
         "workspace_read_audit_log",
         "workspace_recover_last_activity",
         "workspace_list_tool_calls",
@@ -1188,6 +1190,87 @@ def workspace_read_audit_log(
         count=len(entries),
         truncated=len(entries) >= limit,
     )
+
+
+def _transport_git_status_summary(cwd: str) -> dict[str, object]:
+    try:
+        target = _resolve_workspace_path(cwd)
+        if not target.exists():
+            raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
+        if not target.is_dir():
+            raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+
+        completed = subprocess.run(
+            ["git", "status", "--short", "--branch"],
+            cwd=str(target),
+            env=_safe_env(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5,
+            shell=False,
+            check=False,
+        )
+        stdout_lines = completed.stdout.splitlines()
+        stderr = completed.stderr.strip()
+        return {
+            "cwd": _relative(target),
+            "exit_code": completed.returncode,
+            "branch": stdout_lines[0] if stdout_lines else "",
+            "changed_line_count": max(0, len(stdout_lines) - 1),
+            "stderr": stderr[:300],
+            "truncated": len(stderr) > 300,
+        }
+    except Exception as exc:
+        return {
+            "cwd": cwd,
+            "exit_code": None,
+            "branch": "",
+            "changed_line_count": None,
+            "stderr": f"{type(exc).__name__}: {exc}"[:300],
+            "truncated": False,
+        }
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_transport_probe(
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")] = ".",
+    include_git_status: Annotated[bool, Field(description="Whether to include a compact git status summary.")] = True,
+) -> dict[str, object]:
+    """Quickly confirm that the MCP request reached this server."""
+    return _record_tool_call(
+        "workspace_transport_probe",
+        {"cwd": cwd, "include_git_status": include_git_status},
+        lambda: _workspace_transport_probe_impl(cwd, include_git_status),
+    )
+
+
+def _workspace_transport_probe_impl(cwd: str, include_git_status: bool) -> dict[str, object]:
+    _ensure_runtime_dirs()
+    latest_tool_call_count = len(_list_tool_call_records(20))
+    latest_bundle_count = sum(1 for directory in _command_bundle_dirs() if directory.exists() for _ in directory.glob("cmd-*.json"))
+    git_status = _transport_git_status_summary(cwd) if include_git_status else None
+
+    return {
+        "ok": True,
+        "server_time": _now_iso(),
+        "pid": os.getpid(),
+        "workspace_root": str(WORKSPACE_ROOT),
+        "runtime_root": str(RUNTIME_ROOT),
+        "latest_tool_call_count": latest_tool_call_count,
+        "latest_bundle_count": latest_bundle_count,
+        "git_status": git_status,
+        "git_status_summary": git_status,
+        "diagnosis": "Transport probe reached the MCP server.",
+    }
 
 
 @mcp.tool(
