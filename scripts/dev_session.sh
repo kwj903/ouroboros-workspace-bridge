@@ -710,6 +710,17 @@ is_dangerous_workspace_root() {
   esac
 }
 
+generate_mcp_access_token() {
+  local launcher
+  launcher="$(python_launcher)"
+
+  "$launcher" - <<'PY'
+import secrets
+
+print(secrets.token_urlsafe(32))
+PY
+}
+
 configure() {
   load_session_env
 
@@ -718,6 +729,7 @@ configure() {
 
   local token="${MCP_ACCESS_TOKEN:-}"
   local token_input=""
+  local token_status="kept"
   local ngrok_host="${NGROK_HOST:-${NGROK_BASE_URL:-}}"
   local ngrok_input=""
   local mcp_host="${MCP_HOST:-127.0.0.1}"
@@ -738,12 +750,20 @@ configure() {
     echo
     if [[ -n "$token_input" ]]; then
       token="$token_input"
+      token_status="updated"
     fi
   else
-    read -r -s -p "MCP_ACCESS_TOKEN: " token
+    echo "MCP_ACCESS_TOKEN is not set. Press Enter to auto-generate a secure token, or type your own value."
+    read -r -s -p "MCP_ACCESS_TOKEN [auto-generate]: " token
     echo
     if [[ -z "$token" ]]; then
-      echo "[error] MCP_ACCESS_TOKEN is required."
+      token="$(generate_mcp_access_token)"
+      token_status="generated"
+    else
+      token_status="provided"
+    fi
+    if [[ -z "$token" ]]; then
+      echo "[error] MCP_ACCESS_TOKEN could not be generated. Type a value manually and retry."
       return 1
     fi
   fi
@@ -816,7 +836,20 @@ configure() {
 
   echo
   echo "Saved private session environment: $SESSION_ENV"
-  echo "MCP_ACCESS_TOKEN: set"
+  case "$token_status" in
+    generated)
+      echo "MCP_ACCESS_TOKEN: generated and saved"
+      ;;
+    provided)
+      echo "MCP_ACCESS_TOKEN: provided and saved"
+      ;;
+    updated)
+      echo "MCP_ACCESS_TOKEN: updated and saved"
+      ;;
+    *)
+      echo "MCP_ACCESS_TOKEN: kept and saved"
+      ;;
+  esac
   if [[ -n "$ngrok_host" ]]; then
     echo "NGROK_HOST: $ngrok_host"
   else
