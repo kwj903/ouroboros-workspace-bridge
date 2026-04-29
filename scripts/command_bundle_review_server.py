@@ -32,12 +32,12 @@ from terminal_bridge.review_notifications import (
     review_url as notification_review_url,
     send_notification,
 )
+from terminal_bridge import bundle_watcher
 from terminal_bridge.approval_modes import (
     VALID_APPROVAL_MODES,
     load_approval_mode,
     normalize_approval_mode,
     save_approval_mode,
-    should_auto_approve,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -182,28 +182,11 @@ def command_bundle_state() -> dict[str, object]:
 
 
 def load_bundle_id(path: Path) -> str | None:
-    try:
-        record = read_json(path)
-    except Exception:
-        return path.stem
-
-    bundle_id = record.get("bundle_id")
-    if isinstance(bundle_id, str) and bundle_id:
-        return bundle_id
-
-    return path.stem
+    return bundle_watcher.load_bundle_id(path)
 
 
 def current_pending_bundle_ids() -> set[str]:
-    ids: set[str] = set()
-    if not PENDING_DIR.exists():
-        return ids
-
-    for path in sorted(PENDING_DIR.glob("cmd-*.json")):
-        bundle_id = load_bundle_id(path)
-        if bundle_id:
-            ids.add(bundle_id)
-    return ids
+    return bundle_watcher.current_pending_bundle_ids(PENDING_DIR)
 
 
 def bundle_status_counts() -> dict[str, int]:
@@ -628,37 +611,33 @@ def embedded_watcher_loop(
     poll_seconds = float(config.get("poll_seconds", 1.5))
     osascript_fallback = bool(config.get("osascript_fallback", False))
 
-    while not stop_event.wait(poll_seconds):
-        for bundle_id in sorted(current_pending_bundle_ids()):
-            if bundle_id in seen_pending_bundle_ids:
-                continue
+    def notify_bundle(bundle_id: str) -> None:
+        send_notification(
+            base_url,
+            bundle_id,
+            notification_target,
+            click_action=notification_click_action,
+            enable_osascript_fallback=osascript_fallback,
+        )
 
-            print(f"[review-ui] 새 승인 대기 번들: {bundle_id}")
-            mode = load_approval_mode()
-            try:
-                _, record = find_bundle(bundle_id)
-            except Exception:
-                record = {}
+    def open_bundle(bundle_id: str) -> None:
+        url = notification_review_url(base_url, bundle_id)
+        print(f"[review-ui] 승인 페이지 열기: {bundle_id}: {url}")
+        open_url(url)
 
-            if record and should_auto_approve(record, mode):
-                print(f"[review-ui] approval mode {mode}: 자동 승인 시도: {bundle_id}")
-                auto_apply_bundle(bundle_id, f"mode={mode}")
-                seen_pending_bundle_ids.add(bundle_id)
-                continue
-
-            if notify_enabled:
-                send_notification(
-                    base_url,
-                    bundle_id,
-                    notification_target,
-                    click_action=notification_click_action,
-                    enable_osascript_fallback=osascript_fallback,
-                )
-            if open_mode == "bundle":
-                url = notification_review_url(base_url, bundle_id)
-                print(f"[review-ui] 승인 페이지 열기: {bundle_id}: {url}")
-                open_url(url)
-            seen_pending_bundle_ids.add(bundle_id)
+    bundle_watcher.watch_pending_bundles(
+        pending_dir=PENDING_DIR,
+        runner=RUNNER,
+        project_root=PROJECT_ROOT,
+        seen_bundle_ids=seen_pending_bundle_ids,
+        poll_seconds=poll_seconds,
+        notify_enabled=notify_enabled,
+        notify_bundle=notify_bundle,
+        open_mode=open_mode,
+        open_bundle=open_bundle,
+        stop_event=stop_event,
+        log_prefix="[review-ui] ",
+    )
 
 
 def start_embedded_watcher() -> tuple[threading.Event | None, threading.Thread | None]:
@@ -1612,13 +1591,7 @@ def run_runner(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def auto_apply_bundle(bundle_id: str, source: str) -> None:
-    try:
-        completed = run_runner(["apply", bundle_id, "--yes"])
-    except Exception as exc:
-        print(f"[review-ui] auto-approval failed before runner completed: {bundle_id}: {type(exc).__name__}")
-        return
-
-    print(f"[review-ui] auto-approval {source}: {bundle_id}: exit={completed.returncode}")
+    bundle_watcher.auto_apply_bundle(bundle_id, RUNNER, PROJECT_ROOT, source, "[review-ui] ")
 
 
 def run_supervisor_control(action: str, service: str) -> subprocess.CompletedProcess[str]:

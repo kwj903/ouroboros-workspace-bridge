@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
 import os
-import subprocess
 import sys
-import time
 import urllib.request
 from pathlib import Path
 
@@ -25,7 +22,7 @@ from terminal_bridge.review_notifications import (
     review_url as _review_url,
     send_notification,
 )
-from terminal_bridge.approval_modes import load_approval_mode, should_auto_approve
+from terminal_bridge import bundle_watcher
 from terminal_bridge.config import COMMAND_BUNDLE_PENDING_DIR
 
 PENDING_DIR = COMMAND_BUNDLE_PENDING_DIR
@@ -88,54 +85,19 @@ def notify_pending_bundle(bundle_id: str, target: str, click_action: str) -> Non
 
 
 def load_bundle_id(path: Path) -> str | None:
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return path.stem
-
-    bundle_id = record.get("bundle_id")
-    if isinstance(bundle_id, str) and bundle_id:
-        return bundle_id
-
-    return path.stem
+    return bundle_watcher.load_bundle_id(path)
 
 
 def load_bundle_record(path: Path) -> dict[str, object] | None:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    return data if isinstance(data, dict) else None
+    return bundle_watcher.load_bundle_record(path)
 
 
 def current_pending_bundle_ids() -> set[str]:
-    ids: set[str] = set()
-    for path in sorted(PENDING_DIR.glob("cmd-*.json")):
-        bundle_id = load_bundle_id(path)
-        if bundle_id:
-            ids.add(bundle_id)
-    return ids
+    return bundle_watcher.current_pending_bundle_ids(PENDING_DIR)
 
 
 def auto_apply_bundle(bundle_id: str, source: str) -> None:
-    try:
-        completed = subprocess.run(
-            [sys.executable, str(RUNNER), "apply", bundle_id, "--yes"],
-            cwd=str(PROJECT_ROOT),
-            env=os.environ.copy(),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=300,
-            shell=False,
-            check=False,
-        )
-    except Exception as exc:
-        print(f"자동 승인 실행 실패: {bundle_id}: {type(exc).__name__}")
-        return
-
-    print(f"자동 승인 {source}: {bundle_id}: exit={completed.returncode}")
+    bundle_watcher.auto_apply_bundle(bundle_id, RUNNER, PROJECT_ROOT, source)
 
 
 def main() -> None:
@@ -154,7 +116,13 @@ def main() -> None:
     print(f"알림 클릭 동작: {notification_click_action}")
     print("종료하려면 Ctrl-C를 누르세요.")
 
-    if not server_health_ok():
+    if server_health_ok():
+        print(
+            "Warning: review server appears reachable and may already run the embedded watcher. "
+            "Running the standalone watcher at the same time may duplicate notifications or auto-approval.",
+            file=sys.stderr,
+        )
+    else:
         print(
             "Warning: review server health check failed. "
             "Start it with: uv run python scripts/command_bundle_review_server.py",
@@ -166,31 +134,27 @@ def main() -> None:
         print(f"승인 대기 대시보드 열기: {url}")
         open_url(url)
 
+    def open_bundle(bundle_id: str) -> None:
+        url = review_url(bundle_id)
+        print(f"승인 페이지 열기: {bundle_id}: {url}")
+        open_url(url)
+
     try:
-        while True:
-            for path in sorted(PENDING_DIR.glob("cmd-*.json")):
-                bundle_id = load_bundle_id(path)
-                if not bundle_id or bundle_id in seen:
-                    continue
-
-                print(f"새 승인 대기 번들: {bundle_id}")
-                approval_mode = load_approval_mode()
-                record = load_bundle_record(path)
-                if record is not None and should_auto_approve(record, approval_mode):
-                    print(f"approval mode {approval_mode}: 자동 승인 시도: {bundle_id}")
-                    auto_apply_bundle(bundle_id, f"mode={approval_mode}")
-                    seen.add(bundle_id)
-                    continue
-
-                if notify_enabled:
-                    notify_pending_bundle(bundle_id, notification_target, notification_click_action)
-                if open_mode == "bundle":
-                    url = review_url(bundle_id)
-                    print(f"승인 페이지 열기: {bundle_id}: {url}")
-                    open_url(url)
-                seen.add(bundle_id)
-
-            time.sleep(POLL_SECONDS)
+        bundle_watcher.watch_pending_bundles(
+            pending_dir=PENDING_DIR,
+            runner=RUNNER,
+            project_root=PROJECT_ROOT,
+            seen_bundle_ids=seen,
+            poll_seconds=POLL_SECONDS,
+            notify_enabled=notify_enabled,
+            notify_bundle=lambda bundle_id: notify_pending_bundle(
+                bundle_id,
+                notification_target,
+                notification_click_action,
+            ),
+            open_mode=open_mode,
+            open_bundle=open_bundle,
+        )
 
     except KeyboardInterrupt:
         print("\n감시기를 종료합니다...")
