@@ -35,8 +35,10 @@ from terminal_bridge.bundles import (
     _command_bundle_dirs,
     _command_bundle_path,
     _find_command_bundle,
+    _find_command_bundle_by_request_key,
     _move_command_bundle,
     _new_command_bundle_id,
+    _request_key,
     _write_command_bundle,
 )
 from terminal_bridge.bundle_serialization import (
@@ -286,6 +288,38 @@ def _record_tool_call(tool_name: str, args: dict[str, object], action: Callable[
 
     _write_tool_call_completed(call_id, result)
     return result
+
+
+def _command_bundle_stage_result(path: Path, record: dict[str, object]) -> CommandBundleStageResult:
+    bundle_id = str(record.get("bundle_id", path.stem))
+    steps = record.get("steps") if isinstance(record.get("steps"), list) else []
+    return CommandBundleStageResult(
+        bundle_id=bundle_id,
+        title=str(record.get("title", "")),
+        cwd=str(record.get("cwd", "")),
+        status=str(record.get("status", "unknown")),
+        risk=str(record.get("risk", "unknown")),
+        approval_required=bool(record.get("approval_required", False)),
+        path=str(path),
+        review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
+        command_count=len(steps),
+    )
+
+
+def _dedupe_command_bundle(request_key: str, *, kind: str, title: str | None = None) -> CommandBundleStageResult | None:
+    existing = _find_command_bundle_by_request_key(request_key)
+    if existing is None:
+        return None
+
+    path, record = existing
+    _audit(
+        "dedupe_command_bundle",
+        request_key=request_key,
+        existing_bundle_id=str(record.get("bundle_id", path.stem)),
+        kind=kind,
+        requested_title=title,
+    )
+    return _command_bundle_stage_result(path, record)
 
 
 def _read_operation_record(operation_id: str) -> dict[str, object] | None:
@@ -2305,14 +2339,28 @@ def workspace_stage_patch_bundle(
     patch_paths = _extract_patch_paths(patch_text)
     _validate_patch_paths(target, patch_paths)
 
+    relative_cwd = _relative(target)
+    patch_sha256 = _sha256_bytes(patch_text.encode("utf-8"))
+    request_key = _request_key(
+        {
+            "kind": "patch_bundle",
+            "title": title,
+            "cwd": relative_cwd,
+            "patch_sha256": patch_sha256,
+            "patch_paths": patch_paths,
+        }
+    )
+    deduped = _dedupe_command_bundle(request_key, kind="patch_bundle", title=title)
+    if deduped is not None:
+        return deduped
+
     bundle_id = _new_command_bundle_id()
     now = _now_iso()
-    patch_sha256 = _sha256_bytes(patch_text.encode("utf-8"))
     serialized_steps = [
         {
             "type": "apply_patch",
             "name": title,
-            "cwd": _relative(target),
+            "cwd": relative_cwd,
             **step_source,
             "patch_sha256": patch_sha256,
             "files": patch_paths,
@@ -2325,7 +2373,7 @@ def workspace_stage_patch_bundle(
         "version": 3,
         "bundle_id": bundle_id,
         "title": title,
-        "cwd": _relative(target),
+        "cwd": relative_cwd,
         "status": "pending",
         "risk": "medium",
         "approval_required": True,
@@ -2334,6 +2382,9 @@ def workspace_stage_patch_bundle(
         "steps": serialized_steps,
         "result": None,
         "error": None,
+        "request_key": request_key,
+        "request_key_version": 1,
+        "duplicate_of": None,
     }
 
     bundle_path = _command_bundle_path(bundle_id, "pending")
@@ -2341,16 +2392,17 @@ def workspace_stage_patch_bundle(
     _audit(
         "stage_patch_bundle",
         bundle_id=bundle_id,
-        cwd=_relative(target),
+        cwd=relative_cwd,
         title=title,
         patch_sha256=patch_sha256,
         files=patch_paths,
+        request_key=request_key,
     )
 
     return CommandBundleStageResult(
         bundle_id=bundle_id,
         title=title,
-        cwd=_relative(target),
+        cwd=relative_cwd,
         status="pending",
         risk="medium",
         approval_required=True,
@@ -2387,15 +2439,29 @@ def workspace_stage_action_bundle(
     if not target.is_dir():
         raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
 
-    bundle_id = _new_command_bundle_id()
     serialized_steps, risk, _ = _serialize_action_steps(target, actions)
+    relative_cwd = _relative(target)
+    request_key = _request_key(
+        {
+            "kind": "action_bundle",
+            "title": title,
+            "cwd": relative_cwd,
+            "actions": actions,
+            "steps": serialized_steps,
+        }
+    )
+    deduped = _dedupe_command_bundle(request_key, kind="action_bundle", title=title)
+    if deduped is not None:
+        return deduped
+
+    bundle_id = _new_command_bundle_id()
     now = _now_iso()
 
     record: dict[str, object] = {
         "version": 2,
         "bundle_id": bundle_id,
         "title": title,
-        "cwd": _relative(target),
+        "cwd": relative_cwd,
         "status": "pending",
         "risk": risk,
         "approval_required": True,
@@ -2404,6 +2470,9 @@ def workspace_stage_action_bundle(
         "steps": serialized_steps,
         "result": None,
         "error": None,
+        "request_key": request_key,
+        "request_key_version": 1,
+        "duplicate_of": None,
     }
 
     bundle_path = _command_bundle_path(bundle_id, "pending")
@@ -2411,16 +2480,17 @@ def workspace_stage_action_bundle(
     _audit(
         "stage_action_bundle",
         bundle_id=bundle_id,
-        cwd=_relative(target),
+        cwd=relative_cwd,
         title=title,
         risk=risk,
         action_count=len(serialized_steps),
+        request_key=request_key,
     )
 
     return CommandBundleStageResult(
         bundle_id=bundle_id,
         title=title,
-        cwd=_relative(target),
+        cwd=relative_cwd,
         status="pending",
         risk=risk,
         approval_required=True,
@@ -2465,6 +2535,20 @@ def workspace_stage_commit_bundle(
         message,
         precheck_commands,
     )
+    relative_cwd = _relative(target)
+    request_key = _request_key(
+        {
+            "kind": "commit_bundle",
+            "cwd": relative_cwd,
+            "paths": safe_paths,
+            "message": commit_message,
+            "precheck_commands": precheck_commands,
+        }
+    )
+    deduped = _dedupe_command_bundle(request_key, kind="commit_bundle", title=f"Commit: {commit_message[:120]}")
+    if deduped is not None:
+        return deduped
+
     bundle_id = _new_command_bundle_id()
     now = _now_iso()
     title = f"Commit: {commit_message[:120]}"
@@ -2473,7 +2557,7 @@ def workspace_stage_commit_bundle(
         "version": 4,
         "bundle_id": bundle_id,
         "title": title,
-        "cwd": _relative(target),
+        "cwd": relative_cwd,
         "status": "pending",
         "risk": risk,
         "approval_required": True,
@@ -2482,6 +2566,9 @@ def workspace_stage_commit_bundle(
         "steps": serialized_steps,
         "result": None,
         "error": None,
+        "request_key": request_key,
+        "request_key_version": 1,
+        "duplicate_of": None,
     }
 
     bundle_path = _command_bundle_path(bundle_id, "pending")
@@ -2489,16 +2576,17 @@ def workspace_stage_commit_bundle(
     _audit(
         "stage_commit_bundle",
         bundle_id=bundle_id,
-        cwd=_relative(target),
+        cwd=relative_cwd,
         risk=risk,
         path_count=len(safe_paths),
         command_count=len(serialized_steps),
+        request_key=request_key,
     )
 
     return CommandBundleStageResult(
         bundle_id=bundle_id,
         title=title,
-        cwd=_relative(target),
+        cwd=relative_cwd,
         status="pending",
         risk=risk,
         approval_required=True,
@@ -2534,15 +2622,28 @@ def workspace_stage_command_bundle(
     if not target.is_dir():
         raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
 
-    bundle_id = _new_command_bundle_id()
     serialized_steps, risk, _ = _serialize_command_steps(target, steps)
+    relative_cwd = _relative(target)
+    request_key = _request_key(
+        {
+            "kind": "command_bundle",
+            "title": title,
+            "cwd": relative_cwd,
+            "steps": serialized_steps,
+        }
+    )
+    deduped = _dedupe_command_bundle(request_key, kind="command_bundle", title=title)
+    if deduped is not None:
+        return deduped
+
+    bundle_id = _new_command_bundle_id()
     now = _now_iso()
 
     record: dict[str, object] = {
         "version": 1,
         "bundle_id": bundle_id,
         "title": title,
-        "cwd": _relative(target),
+        "cwd": relative_cwd,
         "status": "pending",
         "risk": risk,
         "approval_required": True,
@@ -2551,6 +2652,9 @@ def workspace_stage_command_bundle(
         "steps": serialized_steps,
         "result": None,
         "error": None,
+        "request_key": request_key,
+        "request_key_version": 1,
+        "duplicate_of": None,
     }
 
     bundle_path = _command_bundle_path(bundle_id, "pending")
@@ -2558,16 +2662,17 @@ def workspace_stage_command_bundle(
     _audit(
         "stage_command_bundle",
         bundle_id=bundle_id,
-        cwd=_relative(target),
+        cwd=relative_cwd,
         title=title,
         risk=risk,
         command_count=len(serialized_steps),
+        request_key=request_key,
     )
 
     return CommandBundleStageResult(
         bundle_id=bundle_id,
         title=title,
-        cwd=_relative(target),
+        cwd=relative_cwd,
         status="pending",
         risk=risk,
         approval_required=True,

@@ -62,6 +62,10 @@ index 0000000..1111111
 """
 
 
+def command_bundle_file_count() -> int:
+    return sum(1 for directory in server._command_bundle_dirs() if directory.exists() for _ in directory.glob("cmd-*.json"))
+
+
 class ToolSurfaceTests(unittest.TestCase):
     def test_workspace_info_default_tool_list_is_bundle_first(self) -> None:
         original = server.MCP_EXPOSE_DIRECT_MUTATION_TOOLS
@@ -279,6 +283,129 @@ class CommitBundleStagingTests(unittest.TestCase):
                 paths=["../outside.md"],
                 message="Bad path",
             )
+
+
+class CommandBundleDedupeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.bundle_ids: list[str] = []
+        self.original_audit = server._audit
+        server._audit = lambda *args, **kwargs: None
+
+    def tearDown(self) -> None:
+        server._audit = self.original_audit
+
+        for bundle_id in self.bundle_ids:
+            for status in ("pending", "applied", "rejected", "failed"):
+                server._command_bundle_path(bundle_id, status).unlink(missing_ok=True)
+
+    def project_cwd(self) -> str:
+        return safety._relative(config.PROJECT_ROOT)
+
+    def test_command_bundle_duplicate_returns_same_bundle_without_new_file(self) -> None:
+        title = f"Dedupe command {uuid4().hex[:8]}"
+        steps = [server.CommandBundleStep(name="status", argv=["git", "status", "--short"])]
+        before_count = command_bundle_file_count()
+
+        first = server.workspace_stage_command_bundle(title=title, cwd=self.project_cwd(), steps=steps)
+        self.bundle_ids.append(first.bundle_id)
+        after_first_count = command_bundle_file_count()
+        second = server.workspace_stage_command_bundle(title=title, cwd=self.project_cwd(), steps=steps)
+        after_second_count = command_bundle_file_count()
+
+        self.assertEqual(first.bundle_id, second.bundle_id)
+        self.assertEqual(after_first_count, before_count + 1)
+        self.assertEqual(after_second_count, after_first_count)
+
+        _, record = server._find_command_bundle(first.bundle_id)
+        self.assertTrue(str(record["request_key"]).startswith("sha256:"))
+        self.assertEqual(record["request_key_version"], 1)
+        self.assertIsNone(record["duplicate_of"])
+
+    def test_action_bundle_duplicate_returns_same_bundle_without_new_file(self) -> None:
+        title = f"Dedupe action {uuid4().hex[:8]}"
+        path = f"tmp-dedupe-action-{uuid4().hex[:8]}.txt"
+        actions = [
+            server.CommandBundleAction(
+                name="write",
+                type="write_file",
+                path=path,
+                content="dedupe action content",
+            )
+        ]
+        before_count = command_bundle_file_count()
+
+        first = server.workspace_stage_action_bundle(title=title, cwd=self.project_cwd(), actions=actions)
+        self.bundle_ids.append(first.bundle_id)
+        after_first_count = command_bundle_file_count()
+        second = server.workspace_stage_action_bundle(title=title, cwd=self.project_cwd(), actions=actions)
+        after_second_count = command_bundle_file_count()
+
+        self.assertEqual(first.bundle_id, second.bundle_id)
+        self.assertEqual(after_first_count, before_count + 1)
+        self.assertEqual(after_second_count, after_first_count)
+
+    def test_patch_bundle_duplicate_returns_same_bundle_and_key_omits_patch_text(self) -> None:
+        patch_path = f"tmp-dedupe-patch-{uuid4().hex[:8]}.txt"
+        patch = new_file_patch(patch_path, "dedupe patch body should not be in request key")
+        before_count = command_bundle_file_count()
+
+        first = server.workspace_stage_patch_bundle(title="Dedupe patch", cwd=self.project_cwd(), patch=patch)
+        self.bundle_ids.append(first.bundle_id)
+        after_first_count = command_bundle_file_count()
+        second = server.workspace_stage_patch_bundle(title="Dedupe patch", cwd=self.project_cwd(), patch=patch)
+        after_second_count = command_bundle_file_count()
+
+        self.assertEqual(first.bundle_id, second.bundle_id)
+        self.assertEqual(after_first_count, before_count + 1)
+        self.assertEqual(after_second_count, after_first_count)
+
+        _, record = server._find_command_bundle(first.bundle_id)
+        self.assertNotIn("dedupe patch body", str(record["request_key"]))
+        self.assertEqual(record["request_key_version"], 1)
+
+    def test_commit_bundle_duplicate_returns_same_bundle_without_new_file(self) -> None:
+        message = f"Dedupe commit {uuid4().hex[:8]}"
+        before_count = command_bundle_file_count()
+
+        first = server.workspace_stage_commit_bundle(
+            cwd=self.project_cwd(),
+            paths=["README.md"],
+            message=message,
+        )
+        self.bundle_ids.append(first.bundle_id)
+        after_first_count = command_bundle_file_count()
+        second = server.workspace_stage_commit_bundle(
+            cwd=self.project_cwd(),
+            paths=["README.md"],
+            message=message,
+        )
+        after_second_count = command_bundle_file_count()
+
+        self.assertEqual(first.bundle_id, second.bundle_id)
+        self.assertEqual(after_first_count, before_count + 1)
+        self.assertEqual(after_second_count, after_first_count)
+
+    def test_wrapper_benefits_from_stage_dedupe(self) -> None:
+        title = f"Dedupe wrapper {uuid4().hex[:8]}"
+        steps = [server.CommandBundleStep(name="status", argv=["git", "status", "--short"])]
+
+        first = server.workspace_stage_command_bundle_and_wait(
+            title=title,
+            cwd=self.project_cwd(),
+            steps=steps,
+            timeout_seconds=1,
+            poll_interval_seconds=0.2,
+        )
+        self.bundle_ids.append(first.bundle_id)
+        second = server.workspace_stage_command_bundle_and_wait(
+            title=title,
+            cwd=self.project_cwd(),
+            steps=steps,
+            timeout_seconds=1,
+            poll_interval_seconds=0.2,
+        )
+
+        self.assertEqual(first.bundle_id, second.bundle_id)
 
 
 class PatchBundleRunnerTests(unittest.TestCase):
