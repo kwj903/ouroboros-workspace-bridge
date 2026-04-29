@@ -547,6 +547,7 @@ class IntentFlowTests(unittest.TestCase):
         self.bundle_ids: list[str] = []
         self.original_audit = server._audit
         self.original_intent_secret_file = server.INTENT_SECRET_FILE
+        self.original_intent_import_dir = server.INTENT_IMPORT_DIR
         self.original_changed_paths = server._intent_changed_paths
         self.original_tool_call_dir = tool_calls.TOOL_CALL_DIR
         self.tmp = None
@@ -555,6 +556,7 @@ class IntentFlowTests(unittest.TestCase):
     def tearDown(self) -> None:
         server._audit = self.original_audit
         server.INTENT_SECRET_FILE = self.original_intent_secret_file
+        server.INTENT_IMPORT_DIR = self.original_intent_import_dir
         server._intent_changed_paths = self.original_changed_paths
         tool_calls.TOOL_CALL_DIR = self.original_tool_call_dir
         if self.tmp is not None:
@@ -571,6 +573,7 @@ class IntentFlowTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         server.INTENT_SECRET_FILE = root / "intent_secret"
+        server.INTENT_IMPORT_DIR = root / "intent_imports"
         tool_calls.TOOL_CALL_DIR = root / "tool_calls"
 
     def project_cwd(self) -> str:
@@ -601,8 +604,10 @@ class IntentFlowTests(unittest.TestCase):
             self.assertTrue(item["ok"])
             self.assertEqual(item["intent_type"], intent_type)
             self.assertIn("local_review_url", item)
+            self.assertIn("local_pending_url", item)
             self.assertIn("expires_at", item)
             self.assertIn("diagnosis", item)
+            self.assertIn("pending bundle UI", str(item["diagnosis"]))
             payload = server._validate_intent_token(self.token_from_intent(item))
             self.assertEqual(payload["intent_type"], intent_type)
 
@@ -623,39 +628,73 @@ class IntentFlowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             server._validate_intent_token(expired)
 
-    def test_review_endpoint_previews_valid_intent(self) -> None:
+    def test_preview_endpoint_previews_valid_intent_without_creating_bundle(self) -> None:
         self.use_temp_runtime_bits()
         intent = server.workspace_prepare_check_intent(cwd=self.project_cwd(), check="git_status")
+        token = self.token_from_intent(intent)
+        before_count = command_bundle_file_count()
+
+        response = asyncio.run(server._preview_intent_endpoint(SimpleNamespace(query_params={"token": token})))
+        after_count = command_bundle_file_count()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(after_count, before_count)
+        self.assertIn(b"Intent review", response.body)
+        self.assertIn(b"git_status", response.body)
+
+    def test_review_endpoint_imports_intent_and_redirects_to_pending_ui(self) -> None:
+        self.use_temp_runtime_bits()
+        events: list[tuple[str, dict[str, object]]] = []
+        server._audit = lambda event, **data: events.append((event, data))
+        server._intent_changed_paths = lambda cwd, include_untracked: ["README.md"]
+        message = f"Intent import {uuid4().hex[:8]}"
+        intent = server.workspace_prepare_commit_current_changes_intent(
+            self.project_cwd(),
+            message=message,
+            include_untracked=False,
+        )
         token = self.token_from_intent(intent)
 
         response = asyncio.run(server._review_intent_endpoint(SimpleNamespace(query_params={"token": token})))
 
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Intent review", response.body)
-        self.assertIn(b"git_status", response.body)
+        self.assertEqual(response.status_code, 303)
+        location = response.headers["location"]
+        self.assertIn("/pending?bundle_id=", location)
+        bundle_id = location.rsplit("bundle_id=", 1)[1]
+        self.bundle_ids.append(bundle_id)
 
-    def test_approval_endpoint_creates_expected_command_bundle(self) -> None:
+        record = server._read_json(server._command_bundle_path(bundle_id, "pending"))
+        self.assertEqual(record["status"], "pending")
+        self.assertEqual(record["title"], f"Commit: {message}")
+        self.assertFalse(server._command_bundle_path(bundle_id, "applied").exists())
+        self.assertTrue(any(event == "intent_imported" and data["bundle_id"] == bundle_id for event, data in events))
+
+        recovery = server.workspace_recover_last_activity(cwd=self.project_cwd())
+        latest_ids = {str(item.get("bundle_id")) for item in recovery["latest_bundles"]}
+        self.assertIn(bundle_id, latest_ids)
+
+    def test_review_endpoint_is_idempotent_for_same_intent_url(self) -> None:
         self.use_temp_runtime_bits()
-        title = f"Intent approve {uuid4().hex[:8]}"
-        intent = server._prepare_intent(
-            "check",
+        server._intent_changed_paths = lambda cwd, include_untracked: ["README.md"]
+        intent = server.workspace_prepare_commit_current_changes_intent(
             self.project_cwd(),
-            {"check": "git_status"},
-            "low",
-            title,
+            message=f"Intent duplicate {uuid4().hex[:8]}",
+            include_untracked=False,
         )
         token = self.token_from_intent(intent)
+        before_count = command_bundle_file_count()
 
-        response = asyncio.run(server._approve_intent_endpoint(SimpleNamespace(query_params={"token": token})))
+        first = asyncio.run(server._review_intent_endpoint(SimpleNamespace(query_params={"token": token})))
+        after_first_count = command_bundle_file_count()
+        second = asyncio.run(server._review_intent_endpoint(SimpleNamespace(query_params={"token": token})))
+        after_second_count = command_bundle_file_count()
 
-        self.assertEqual(response.status_code, 200)
-        pending = [
-            record
-            for record in (server._read_json(path) for path in server.COMMAND_BUNDLE_PENDING_DIR.glob("cmd-*.json"))
-            if record.get("title") == "Check: git_status"
-        ]
-        self.assertTrue(pending)
-        self.bundle_ids.extend(str(record["bundle_id"]) for record in pending)
+        self.assertEqual(first.status_code, 303)
+        self.assertEqual(second.status_code, 303)
+        self.assertEqual(after_first_count, before_count + 1)
+        self.assertEqual(after_second_count, after_first_count)
+        self.assertEqual(first.headers["location"], second.headers["location"])
+        self.bundle_ids.append(first.headers["location"].rsplit("bundle_id=", 1)[1])
 
     def test_clean_worktree_commit_intent_approval_refuses_no_changes(self) -> None:
         self.use_temp_runtime_bits()
@@ -667,7 +706,7 @@ class IntentFlowTests(unittest.TestCase):
         )
         token = self.token_from_intent(intent)
 
-        response = asyncio.run(server._approve_intent_endpoint(SimpleNamespace(query_params={"token": token})))
+        response = asyncio.run(server._review_intent_endpoint(SimpleNamespace(query_params={"token": token})))
 
         self.assertEqual(response.status_code, 400)
         self.assertIn(b"No changes to commit", response.body)

@@ -329,6 +329,7 @@ def _dedupe_command_bundle(request_key: str, *, kind: str, title: str | None = N
 
 INTENT_TOKEN_TTL_SECONDS = 15 * 60
 INTENT_SECRET_FILE = RUNTIME_ROOT / "intent_hmac_secret"
+INTENT_IMPORT_DIR = RUNTIME_ROOT / "intent_imports"
 
 
 def _intent_secret() -> bytes:
@@ -399,6 +400,15 @@ def _local_review_url(token: str) -> str:
     return f"http://{MCP_HOST}:{MCP_PORT}/review-intent?token={token}"
 
 
+def _local_pending_url(bundle_id: str | None = None) -> str:
+    host = os.getenv("BUNDLE_REVIEW_HOST", "127.0.0.1")
+    port = int(os.getenv("BUNDLE_REVIEW_PORT", "8790"))
+    base = f"http://{host}:{port}/pending"
+    if bundle_id:
+        return f"{base}?bundle_id={bundle_id}"
+    return base
+
+
 def _prepare_intent(intent_type: str, cwd: str, params: dict[str, object], risk: str, summary: str) -> dict[str, object]:
     target = _resolve_workspace_path(cwd)
     if not target.exists():
@@ -423,8 +433,9 @@ def _prepare_intent(intent_type: str, cwd: str, params: dict[str, object], risk:
         "risk": risk,
         "summary": summary,
         "local_review_url": _local_review_url(token),
+        "local_pending_url": _local_pending_url(),
         "expires_at": payload["expires_at"],
-        "diagnosis": "Open the local review URL to preview and approve bundle creation.",
+        "diagnosis": "Open the local URL to import this intent into the pending bundle UI.",
     }
 
 
@@ -526,11 +537,11 @@ def _approve_intent(payload: dict[str, object]) -> CommandBundleStageResult:
     if intent_type == "check":
         check = str(params.get("check", ""))
         step = _intent_command_step_for_check(check)
-        return workspace_stage_command_bundle(title=f"Check: {check}", cwd=cwd, steps=[step])
+        return workspace_stage_command_bundle(title=f"Check: {check} ({_intent_nonce(payload)[:8]})", cwd=cwd, steps=[step])
     if intent_type == "dev_session":
         action = str(params.get("action", ""))
         step = _intent_command_step_for_dev_session(action)
-        return workspace_stage_command_bundle(title=f"Dev session: {action}", cwd=cwd, steps=[step])
+        return workspace_stage_command_bundle(title=f"Dev session: {action} ({_intent_nonce(payload)[:8]})", cwd=cwd, steps=[step])
     if intent_type == "commit_current_changes":
         include_untracked = bool(params.get("include_untracked", False))
         paths = _intent_changed_paths(cwd, include_untracked)
@@ -538,6 +549,59 @@ def _approve_intent(payload: dict[str, object]) -> CommandBundleStageResult:
             raise ValueError("No changes to commit.")
         return workspace_stage_commit_bundle(cwd=cwd, paths=paths, message=str(params.get("message", "")), precheck_commands=None)
     raise ValueError(f"Unknown intent_type: {intent_type}")
+
+
+def _intent_nonce(payload: dict[str, object]) -> str:
+    nonce = str(payload.get("nonce", ""))
+    if not nonce or any(ch not in "0123456789abcdef" for ch in nonce.lower()):
+        raise ValueError("Intent token is missing a valid nonce.")
+    return nonce
+
+
+def _intent_import_path(payload: dict[str, object]) -> Path:
+    return INTENT_IMPORT_DIR / f"{_intent_nonce(payload)}.json"
+
+
+def _intent_result_from_import(record: dict[str, object]) -> CommandBundleStageResult | None:
+    bundle_id = record.get("bundle_id")
+    if not isinstance(bundle_id, str):
+        return None
+    try:
+        path, bundle_record = _find_command_bundle(bundle_id)
+    except FileNotFoundError:
+        return None
+    return _command_bundle_stage_result(path, bundle_record)
+
+
+def _import_intent(payload: dict[str, object]) -> CommandBundleStageResult:
+    import_path = _intent_import_path(payload)
+    if import_path.exists():
+        try:
+            imported = _intent_result_from_import(_read_json(import_path))
+        except Exception:
+            imported = None
+        if imported is not None:
+            return imported
+
+    result = _approve_intent(payload)
+    record = {
+        "nonce": _intent_nonce(payload),
+        "intent_type": str(payload.get("intent_type", "")),
+        "cwd": str(payload.get("cwd", ".")),
+        "bundle_id": result.bundle_id,
+        "imported_at": _now_iso(),
+    }
+    INTENT_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    _write_json(import_path, record)
+    _audit(
+        "intent_imported",
+        intent_type=record["intent_type"],
+        nonce=record["nonce"],
+        bundle_id=result.bundle_id,
+        cwd=record["cwd"],
+        risk=result.risk,
+    )
+    return result
 
 
 def _intent_response(
@@ -659,6 +723,7 @@ def _intent_preview_html(token: str, payload: dict[str, object], preview: dict[s
     title = html.escape(str(preview.get("summary", "Intent preview")))
     body = html.escape(json.dumps(preview, ensure_ascii=False, indent=2))
     expires_at = html.escape(str(payload.get("expires_at", "")))
+    import_url = f"/review-intent?token={escaped_token}"
     return f"""<!doctype html>
 <html>
 <head>
@@ -675,9 +740,7 @@ def _intent_preview_html(token: str, payload: dict[str, object], preview: dict[s
   <p>{title}</p>
   <p>Expires: <code>{expires_at}</code></p>
   <pre>{body}</pre>
-  <form method="post" action="/review-intent/approve?token={escaped_token}">
-    <button type="submit">Create command bundle</button>
-  </form>
+  <p><a href="{import_url}">Import into pending bundle UI</a></p>
 </body>
 </html>"""
 
@@ -685,19 +748,37 @@ def _intent_preview_html(token: str, payload: dict[str, object], preview: dict[s
 def _intent_approved_html(result: CommandBundleStageResult) -> str:
     body = html.escape(json.dumps(result.model_dump(), ensure_ascii=False, indent=2))
     bundle_id = html.escape(result.bundle_id)
+    pending_url = html.escape(_local_pending_url(result.bundle_id), quote=True)
     return f"""<!doctype html>
 <html>
 <head><meta charset="utf-8"><title>Intent approved</title></head>
 <body>
-  <h1>Command bundle created</h1>
+  <h1>Command bundle imported</h1>
   <p>Bundle: <code>{bundle_id}</code></p>
-  <p><a href="/pending">Open pending bundles</a></p>
+  <p>Status: <code>{html.escape(result.status)}</code></p>
+  <p><a href="{pending_url}">Open pending bundle UI</a></p>
+  <p>Next tool: <code>workspace_wait_command_bundle_status</code></p>
   <pre>{body}</pre>
 </body>
 </html>"""
 
 
 async def _review_intent_endpoint(request: object):
+    from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+
+    token = str(request.query_params.get("token", ""))  # type: ignore[attr-defined]
+    try:
+        payload = _validate_intent_token(token)
+        result = _import_intent(payload)
+        pending_url = _local_pending_url(result.bundle_id)
+    except Exception as exc:
+        return PlainTextResponse(f"Intent import failed: {type(exc).__name__}: {exc}", status_code=400)
+    if pending_url:
+        return RedirectResponse(pending_url, status_code=303)
+    return HTMLResponse(_intent_approved_html(result))
+
+
+async def _preview_intent_endpoint(request: object):
     from starlette.responses import HTMLResponse, PlainTextResponse
 
     token = str(request.query_params.get("token", ""))  # type: ignore[attr-defined]
@@ -715,7 +796,7 @@ async def _approve_intent_endpoint(request: object):
     token = str(request.query_params.get("token", ""))  # type: ignore[attr-defined]
     try:
         payload = _validate_intent_token(token)
-        result = _approve_intent(payload)
+        result = _import_intent(payload)
     except Exception as exc:
         return PlainTextResponse(f"Intent approval failed: {type(exc).__name__}: {exc}", status_code=400)
     return HTMLResponse(_intent_approved_html(result))
@@ -785,6 +866,7 @@ def _run_server() -> None:
     app = Starlette(
         routes=[
             Route("/review-intent", _review_intent_endpoint, methods=["GET"]),
+            Route("/review-intent/preview", _preview_intent_endpoint, methods=["GET"]),
             Route("/review-intent/approve", _approve_intent_endpoint, methods=["POST"]),
             Mount("/", app=protected_mcp_app),
         ],
