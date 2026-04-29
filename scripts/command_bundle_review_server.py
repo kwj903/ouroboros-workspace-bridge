@@ -32,6 +32,13 @@ from terminal_bridge.review_notifications import (
     review_url as notification_review_url,
     send_notification,
 )
+from terminal_bridge.approval_modes import (
+    VALID_APPROVAL_MODES,
+    load_approval_mode,
+    normalize_approval_mode,
+    save_approval_mode,
+    should_auto_approve,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = PROJECT_ROOT / "scripts" / "command_bundle_runner.py"
@@ -627,6 +634,18 @@ def embedded_watcher_loop(
                 continue
 
             print(f"[review-ui] 새 승인 대기 번들: {bundle_id}")
+            mode = load_approval_mode()
+            try:
+                _, record = find_bundle(bundle_id)
+            except Exception:
+                record = {}
+
+            if record and should_auto_approve(record, mode):
+                print(f"[review-ui] approval mode {mode}: 자동 승인 시도: {bundle_id}")
+                auto_apply_bundle(bundle_id, f"mode={mode}")
+                seen_pending_bundle_ids.add(bundle_id)
+                continue
+
             if notify_enabled:
                 send_notification(
                     base_url,
@@ -770,6 +789,111 @@ def status_badge(label: str, tone: str) -> str:
 
 def status_chip(label: str, tone: str) -> str:
     return status_badge(label, tone)
+
+
+def approval_mode_label(mode: str) -> str:
+    return {
+        "normal": "Normal",
+        "safe-auto": "Safe Auto",
+        "yolo": "YOLO",
+    }.get(normalize_approval_mode(mode), "Normal")
+
+
+def approval_mode_banner_html(mode: str) -> str:
+    current = normalize_approval_mode(mode)
+    if current == "safe-auto":
+        return (
+            '<div class="banner info">'
+            "Safe Auto mode is ON. Low-risk command-only check bundles may be auto-approved."
+            "</div>"
+        )
+    if current == "yolo":
+        return (
+            '<div class="banner warning">'
+            "YOLO mode is ON. Pending bundles may be auto-approved except blocked-risk bundles."
+            "</div>"
+        )
+    return ""
+
+
+def approval_mode_card_html(current_mode: str | None = None) -> str:
+    current = normalize_approval_mode(current_mode or load_approval_mode())
+    choices = [
+        (
+            "normal",
+            "Normal",
+            "수동 승인만 사용합니다. Pending bundle은 기존처럼 직접 승인해야 합니다.",
+            "neutral",
+        ),
+        (
+            "safe-auto",
+            "Safe Auto",
+            "보수적으로 low-risk command-only 확인 bundle만 자동 승인합니다.",
+            "ok",
+        ),
+        (
+            "yolo",
+            "YOLO",
+            "blocked risk를 제외한 pending bundle을 자동 승인할 수 있습니다. 명시 확인이 필요합니다.",
+            "danger",
+        ),
+    ]
+    items: list[str] = []
+    for mode, label, description, tone in choices:
+        selected = mode == current
+        warning_class = " warning" if mode == "yolo" else ""
+        selected_class = " selected" if selected else ""
+        button_class = "reject" if mode == "yolo" else "secondary"
+        button_text = "현재 모드" if selected else ("확인 후 켜기" if mode == "yolo" else "선택")
+        items.append(
+            f"""
+            <div class="mode-option{selected_class}{warning_class}">
+              <div>
+                <div class="mode-title">
+                  <span>{escape(label)}</span>
+                  {status_badge("active", tone) if selected else ""}
+                </div>
+                <p class="meta">{escape(description)}</p>
+              </div>
+              <form method="post" action="/settings/approval-mode">
+                <input type="hidden" name="mode" value="{escape(mode)}">
+                <button class="{button_class}" type="submit">{escape(button_text)}</button>
+              </form>
+            </div>
+            """
+        )
+
+    return f"""
+    <div class="card">
+      <h2>Approval mode</h2>
+      <p class="meta">현재 모드: <strong>{escape(approval_mode_label(current))}</strong></p>
+      <div class="mode-grid">
+        {''.join(items)}
+      </div>
+    </div>
+    """
+
+
+def approval_mode_confirm_html() -> str:
+    return """
+    <p><a href="/pending">← 승인 대기로 돌아가기</a></p>
+    <div class="card">
+      <h2>YOLO mode 확인</h2>
+      <p class="meta">
+        YOLO mode는 blocked risk를 제외한 pending bundle을 자동 승인할 수 있습니다.
+        이 모드는 기본값이 아니며, 신뢰할 수 있는 짧은 작업 중에만 사용하세요.
+      </p>
+      <form method="post" action="/settings/approval-mode">
+        <input type="hidden" name="mode" value="yolo">
+        <label for="confirm-yolo"><strong>계속하려면 YOLO를 입력하세요.</strong></label><br>
+        <input id="confirm-yolo" name="confirm" autocomplete="off" style="margin-top: 10px; padding: 10px; width: min(260px, 100%);">
+        <div class="button-row">
+          <button class="reject" type="submit">YOLO mode 켜기</button>
+          <a class="nav-link" href="/pending">취소</a>
+        </div>
+      </form>
+    </div>
+    """
 
 
 def bool_chip(value: object, true_label: str = "예", false_label: str = "아니오") -> str:
@@ -1270,6 +1394,52 @@ def app_shell(
       padding: 7px 10px;
       font-size: 13px;
     }}
+    .mode-grid {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }}
+    .mode-option {{
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 170px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--surface);
+    }}
+    .mode-option.selected {{
+      border-color: rgba(37, 99, 235, 0.55);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }}
+    .mode-option.warning {{
+      border-color: rgba(220, 38, 38, 0.28);
+    }}
+    .mode-title {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-weight: 800;
+    }}
+    .banner {{
+      border-radius: 14px;
+      padding: 12px 14px;
+      margin: 0 0 16px;
+      border: 1px solid var(--border);
+    }}
+    .banner.info {{
+      background: rgba(37, 99, 235, 0.08);
+      border-color: rgba(37, 99, 235, 0.16);
+    }}
+    .banner.warning {{
+      background: rgba(220, 38, 38, 0.08);
+      border-color: rgba(220, 38, 38, 0.18);
+    }}
     .badge {{
       display: inline-flex;
       align-items: center;
@@ -1383,6 +1553,9 @@ def app_shell(
       .side-link {{
         width: fit-content;
       }}
+      .mode-grid {{
+        grid-template-columns: 1fr;
+      }}
       .kv-row {{
         grid-template-columns: 1fr;
         gap: 6px;
@@ -1436,6 +1609,16 @@ def run_runner(args: list[str]) -> subprocess.CompletedProcess[str]:
         shell=False,
         check=False,
     )
+
+
+def auto_apply_bundle(bundle_id: str, source: str) -> None:
+    try:
+        completed = run_runner(["apply", bundle_id, "--yes"])
+    except Exception as exc:
+        print(f"[review-ui] auto-approval failed before runner completed: {bundle_id}: {type(exc).__name__}")
+        return
+
+    print(f"[review-ui] auto-approval {source}: {bundle_id}: exit={completed.returncode}")
 
 
 def run_supervisor_control(action: str, service: str) -> subprocess.CompletedProcess[str]:
@@ -2123,6 +2306,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Location", location)
         self.end_headers()
 
+    def read_form(self) -> dict[str, list[str]]:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw_body = self.rfile.read(min(length, 20_000)).decode("utf-8", errors="replace")
+        return parse_qs(raw_body, keep_blank_values=True)
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         parts = [part for part in parsed.path.split("/") if part]
@@ -2167,6 +2355,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/pending":
             rows = pending_bundles()
+            approval_mode = load_approval_mode()
             cards = []
             for record in rows:
                 bundle_id = str(record.get("bundle_id", ""))
@@ -2228,7 +2417,9 @@ class Handler(BaseHTTPRequestHandler):
             """
 
             body = (
-                "<p><a href='/history'>전체 이력 보기</a></p>"
+                approval_mode_banner_html(approval_mode)
+                + approval_mode_card_html(approval_mode)
+                + "<p><a href='/history'>전체 이력 보기</a></p>"
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
                 + pending_script
             )
@@ -2377,6 +2568,35 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         parts = [part for part in parsed.path.split("/") if part]
+
+        if parts == ["settings", "approval-mode"]:
+            if not is_local_client_address(str(self.client_address[0])):
+                self.send_html("Forbidden", "<p>Local requests only.</p>", status=403, active_nav="pending")
+                return
+
+            form = self.read_form()
+            raw_mode = str(form.get("mode", [""])[0]).strip().lower()
+            if raw_mode not in VALID_APPROVAL_MODES:
+                self.send_html(
+                    "Invalid approval mode",
+                    '<p><a href="/pending">← 승인 대기로 돌아가기</a></p><p>지원하지 않는 approval mode입니다.</p>',
+                    status=400,
+                    active_nav="pending",
+                )
+                return
+
+            if raw_mode == "yolo" and str(form.get("confirm", [""])[0]) != "YOLO":
+                self.send_html(
+                    "YOLO mode 확인",
+                    approval_mode_confirm_html(),
+                    active_nav="pending",
+                    subtitle="자동 승인 범위를 넓히기 전에 명시 확인이 필요합니다.",
+                )
+                return
+
+            save_approval_mode(raw_mode)
+            self.redirect("/pending")
+            return
 
         if parts == ["servers", "session", "stop"]:
             if not is_local_client_address(str(self.client_address[0])):
