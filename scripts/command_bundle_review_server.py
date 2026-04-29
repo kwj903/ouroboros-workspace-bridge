@@ -1207,9 +1207,20 @@ def app_shell(
       --warning: #b45309;
       --danger: #dc2626;
     }}
+    *,
+    *::before,
+    *::after {{
+      box-sizing: border-box;
+    }}
+    html {{
+      max-width: 100%;
+      overflow-x: hidden;
+    }}
     body {{
       margin: 0 auto;
       padding: 0;
+      max-width: 100%;
+      overflow-x: hidden;
       line-height: 1.6;
       background:
         linear-gradient(180deg, rgba(127, 127, 127, 0.05), transparent 260px);
@@ -1222,6 +1233,8 @@ def app_shell(
       display: grid;
       grid-template-columns: 280px minmax(0, 1fr);
       min-height: 100vh;
+      max-width: 100vw;
+      overflow-x: hidden;
     }}
     .sidebar {{
       border-right: 1px solid var(--border);
@@ -1259,11 +1272,14 @@ def app_shell(
     .main-content {{
       min-width: 0;
       padding: 32px min(5vw, 56px) 56px;
+      overflow-x: hidden;
     }}
     .content-inner {{
       display: grid;
       gap: 22px;
+      width: 100%;
       max-width: 1040px;
+      min-width: 0;
     }}
     .page-header {{
       display: grid;
@@ -1346,6 +1362,8 @@ def app_shell(
     .card {{
       padding: 20px;
       margin: 0;
+      min-width: 0;
+      max-width: 100%;
     }}
     .card.is-failed {{
       border-color: rgba(220, 38, 38, 0.36);
@@ -1517,15 +1535,17 @@ def app_shell(
     }}
     .mode-grid {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
       gap: 12px;
       margin-top: 14px;
+      min-width: 0;
     }}
     .mode-option {{
       display: flex;
       flex-direction: column;
       justify-content: space-between;
       gap: 12px;
+      min-width: 0;
       min-height: 170px;
       padding: 14px;
       border: 1px solid var(--border);
@@ -1543,6 +1563,7 @@ def app_shell(
       display: flex;
       align-items: center;
       justify-content: space-between;
+      flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 6px;
       font-weight: 800;
@@ -1605,14 +1626,26 @@ def app_shell(
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }}
     code {{
-      word-break: break-all;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }}
     pre {{
       background: var(--surface-strong);
       border-radius: 12px;
       padding: 14px;
+      max-width: 100%;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
       overflow-x: auto;
       margin: 0;
+    }}
+    textarea {{
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
     }}
     button {{
       font-size: 15px;

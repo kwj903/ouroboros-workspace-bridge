@@ -749,6 +749,19 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("환경", html)
         self.assertIn('aria-current="page"', html)
 
+    def test_app_shell_css_prevents_pending_page_horizontal_overflow(self) -> None:
+        html = review.app_shell(
+            "승인",
+            review.approval_mode_card_html("yolo") + review.latest_handoff_html() + review.intent_inbox_html(),
+            active_nav="pending",
+        ).decode("utf-8")
+
+        self.assertIn("overflow-x: hidden", html)
+        self.assertIn("grid-template-columns: repeat(auto-fit, minmax(260px, 1fr))", html)
+        self.assertIn("white-space: pre-wrap", html)
+        self.assertIn("overflow-wrap: anywhere", html)
+        self.assertIn("max-width: 100%", html)
+
 
 class WatcherHelperTests(unittest.TestCase):
     def test_embedded_watcher_config_defaults(self) -> None:
