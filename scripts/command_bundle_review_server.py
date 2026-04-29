@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -39,7 +39,8 @@ from terminal_bridge.approval_modes import (
     normalize_approval_mode,
     save_approval_mode,
 )
-from terminal_bridge.handoffs import handoff_json, list_handoffs
+from terminal_bridge.config import WORKSPACE_ROOT
+from terminal_bridge.handoffs import handoff_json, list_handoffs, next_handoff
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = PROJECT_ROOT / "scripts" / "command_bundle_runner.py"
@@ -366,8 +367,135 @@ def import_intent_token(value: object) -> str:
     return str(result.bundle_id)
 
 
+ALLOWED_COMPANION_INTENT_KEYS = {"version", "intent_kind", "intent_type", "cwd", "params"}
+COMPANION_CHECKS = {"git_status", "py_compile", "unit_tests", "check_all"}
+COMPANION_DEV_SESSION_ACTIONS = {"status", "doctor", "restart_mcp", "restart_session"}
+
+
+def normalize_companion_cwd(value: object) -> str:
+    if not isinstance(value, str) or value.strip() == "":
+        raise ValueError("cwd must be a non-empty string.")
+
+    raw = Path(value.strip())
+    if raw.is_absolute() or ".." in raw.parts:
+        raise ValueError("cwd must be a safe relative path.")
+
+    target = (WORKSPACE_ROOT / raw).resolve(strict=False)
+    if target != WORKSPACE_ROOT and not target.is_relative_to(WORKSPACE_ROOT):
+        raise ValueError("cwd must resolve under WORKSPACE_ROOT.")
+    if not target.exists() or not target.is_dir():
+        raise NotADirectoryError("cwd must exist and be a directory.")
+    return "." if target == WORKSPACE_ROOT else str(target.relative_to(WORKSPACE_ROOT))
+
+
+def validate_companion_intent(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError("Intent JSON must be an object.")
+
+    unknown_keys = set(value) - ALLOWED_COMPANION_INTENT_KEYS
+    if unknown_keys:
+        raise ValueError(f"Unknown top-level intent keys: {', '.join(sorted(unknown_keys))}")
+
+    if value.get("version") != 1:
+        raise ValueError("Unsupported intent version.")
+
+    if value.get("intent_kind") != "run":
+        raise ValueError("intent_kind must be 'run'.")
+
+    intent_type = str(value.get("intent_type", "")).strip()
+    if intent_type not in {"check", "commit_current_changes", "dev_session"}:
+        raise ValueError(f"Unsupported intent_type: {intent_type}")
+
+    cwd = normalize_companion_cwd(value.get("cwd"))
+    params = value.get("params")
+    if not isinstance(params, dict):
+        raise ValueError("Intent params must be an object.")
+
+    normalized_params: dict[str, object]
+    if intent_type == "check":
+        unknown_params = set(params) - {"check"}
+        if unknown_params:
+            raise ValueError(f"Unknown check params: {', '.join(sorted(unknown_params))}")
+        check = params.get("check")
+        if check not in COMPANION_CHECKS:
+            raise ValueError("Unsupported check intent.")
+        normalized_params = {"check": check}
+    elif intent_type == "dev_session":
+        unknown_params = set(params) - {"action"}
+        if unknown_params:
+            raise ValueError(f"Unknown dev_session params: {', '.join(sorted(unknown_params))}")
+        action = params.get("action")
+        if action not in COMPANION_DEV_SESSION_ACTIONS:
+            raise ValueError("Unsupported dev_session action.")
+        normalized_params = {"action": action}
+    else:
+        unknown_params = set(params) - {"message", "include_untracked"}
+        if unknown_params:
+            raise ValueError(f"Unknown commit_current_changes params: {', '.join(sorted(unknown_params))}")
+        message = params.get("message")
+        if not isinstance(message, str) or message.strip() == "":
+            raise ValueError("commit message must be a non-empty string.")
+        if "\n" in message or "\r" in message:
+            raise ValueError("commit message must be single-line.")
+        include_untracked = params.get("include_untracked", False)
+        if not isinstance(include_untracked, bool):
+            raise ValueError("include_untracked must be a boolean.")
+        normalized_params = {"message": message.strip(), "include_untracked": include_untracked}
+
+    return {
+        "version": 1,
+        "intent_kind": "run",
+        "intent_type": intent_type,
+        "cwd": cwd,
+        "params": normalized_params,
+    }
+
+
+def import_intent_json(value: object) -> str:
+    import server as mcp_server
+
+    intent = validate_companion_intent(value)
+    canonical = json.dumps(
+        intent,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    nonce = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+    created = datetime.now(timezone.utc)
+    payload = {
+        "intent_type": intent["intent_type"],
+        "cwd": intent["cwd"],
+        "params": intent["params"],
+        "created_at": created.isoformat(),
+        "expires_at": (created + timedelta(seconds=mcp_server.INTENT_TOKEN_TTL_SECONDS)).isoformat(),
+        "nonce": nonce,
+    }
+    result = mcp_server._import_intent(payload)
+    return str(result.bundle_id)
+
+
+def import_intent_value(value: object) -> str:
+    if isinstance(value, dict):
+        return import_intent_json(value)
+    return import_intent_token(value)
+
+
+def pending_bundle_url(bundle_id: str) -> str:
+    return f"/pending?bundle_id={bundle_id}"
+
+
+def intent_import_result(value: object) -> dict[str, object]:
+    bundle_id = import_intent_value(value)
+    return {
+        "ok": True,
+        "bundle_id": bundle_id,
+        "pending_url": pending_bundle_url(bundle_id),
+    }
+
+
 def intent_import_redirect_location(value: object) -> str:
-    return f"/pending?bundle_id={import_intent_token(value)}"
+    return str(intent_import_result(value)["pending_url"])
 
 
 def intent_import_error_html(message: object) -> str:
@@ -415,6 +543,11 @@ def latest_handoff_html() -> str:
       <pre>{body}</pre>
     </section>
     """
+
+
+def latest_handoff_payload() -> dict[str, object]:
+    record = next_handoff()
+    return {"ok": record is not None, "handoff": record}
 
 
 def history_state() -> dict[str, object]:
@@ -2559,10 +2692,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Location", location)
         self.end_headers()
 
-    def read_form(self) -> dict[str, list[str]]:
+    def read_body(self) -> str:
         length = int(self.headers.get("Content-Length", "0") or "0")
-        raw_body = self.rfile.read(min(length, 20_000)).decode("utf-8", errors="replace")
-        return parse_qs(raw_body, keep_blank_values=True)
+        return self.rfile.read(min(length, 200_000)).decode("utf-8", errors="replace")
+
+    def read_form(self) -> dict[str, list[str]]:
+        return parse_qs(self.read_body(), keep_blank_values=True)
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -2586,6 +2721,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/audit-state":
             self.send_json(audit_state())
+            return
+
+        if parsed.path == "/handoffs/latest":
+            self.send_json(latest_handoff_payload())
             return
 
         if parsed.path == "/api/events":
@@ -2749,6 +2888,27 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "ts": now_iso()})
             return
 
+        if parsed.path == "/review-intent":
+            if not is_local_client_address(str(self.client_address[0])):
+                self.send_html("Forbidden", "<p>Local requests only.</p>", status=403, active_nav="pending")
+                return
+
+            params = parse_qs(parsed.query)
+            token = params.get("token", [""])[0]
+            try:
+                location = intent_import_redirect_location(token)
+            except Exception as exc:
+                self.send_html(
+                    "Intent import failed",
+                    intent_import_error_html(f"{type(exc).__name__}: {exc}"),
+                    status=400,
+                    active_nav="pending",
+                )
+                return
+
+            self.redirect(location)
+            return
+
         self.send_html("찾을 수 없음", "<p>찾을 수 없습니다.</p>", status=404)
 
     def do_POST(self) -> None:
@@ -2760,11 +2920,21 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html("Forbidden", "<p>Local requests only.</p>", status=403, active_nav="pending")
                 return
 
-            form = self.read_form()
-            raw_token = form.get("token", [""])[0]
+            content_type = self.headers.get("Content-Type", "")
             try:
+                if "application/json" in content_type:
+                    payload = json.loads(self.read_body())
+                    result = intent_import_result(payload)
+                    self.send_json(result)
+                    return
+
+                form = self.read_form()
+                raw_token = form.get("token", [""])[0]
                 location = intent_import_redirect_location(raw_token)
             except Exception as exc:
+                if "application/json" in content_type:
+                    self.send_json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=400)
+                    return
                 self.send_html(
                     "Intent import failed",
                     intent_import_error_html(f"{type(exc).__name__}: {exc}"),

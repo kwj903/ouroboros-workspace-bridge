@@ -412,7 +412,9 @@ def _local_browser_host(host: str) -> str:
 
 
 def _local_review_url(token: str) -> str:
-    return f"http://{_local_browser_host(MCP_HOST)}:{MCP_PORT}/review-intent?token={token}"
+    host = _local_browser_host(os.getenv("BUNDLE_REVIEW_HOST", "127.0.0.1"))
+    port = int(os.getenv("BUNDLE_REVIEW_PORT", "8790"))
+    return f"http://{host}:{port}/review-intent?token={token}"
 
 
 def _local_pending_url(bundle_id: str | None = None) -> str:

@@ -63,6 +63,7 @@ Korean docs:
 
 - [빠른 시작](docs/ko/quickstart.md)
 - [로컬 세션 운영](docs/ko/local-session.md)
+- [권장 로컬 작업 흐름](docs/ko/workflow.md)
 - [문제 해결](docs/ko/troubleshooting.md)
 - [ChatGPT 에이전트 지침](docs/ko/chatgpt-agent-usage.md)
 
@@ -70,6 +71,7 @@ English docs:
 
 - [Quickstart](docs/en/quickstart.md)
 - [Local session guide](docs/en/local-session.md)
+- [Recommended local workflow](docs/en/workflow.md)
 - [Troubleshooting](docs/en/troubleshooting.md)
 - [ChatGPT agent instructions](docs/en/chatgpt-agent-usage.md)
 
