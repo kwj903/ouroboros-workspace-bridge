@@ -100,6 +100,34 @@ class BundleWatcherHelperTests(unittest.TestCase):
         self.assertEqual(notifications, ["cmd-test"])
         self.assertEqual(opened, ["cmd-test"])
 
+    def test_handle_pending_bundle_auto_apply_failure_falls_back_to_manual_notice(self) -> None:
+        calls: list[tuple[str, str]] = []
+        notifications: list[str] = []
+        opened: list[str] = []
+
+        def fake_auto_apply(bundle_id: str, _runner: Path, _project_root: Path, source: str, _prefix: str) -> bool:
+            calls.append((bundle_id, source))
+            return False
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = bundle_watcher.handle_pending_bundle(
+                "cmd-test",
+                low_risk_command_bundle(),
+                approval_mode="safe-auto",
+                runner=Path("runner.py"),
+                project_root=Path("."),
+                notify_enabled=True,
+                notify_bundle=notifications.append,
+                open_mode="bundle",
+                open_bundle=opened.append,
+                auto_apply_func=fake_auto_apply,
+            )
+
+        self.assertEqual(result, "manual")
+        self.assertEqual(calls, [("cmd-test", "mode=safe-auto")])
+        self.assertEqual(notifications, ["cmd-test"])
+        self.assertEqual(opened, ["cmd-test"])
+
     def test_handle_pending_bundle_uses_shared_approval_decision(self) -> None:
         original = bundle_watcher.should_auto_approve
         calls: list[tuple[dict[str, object], str]] = []

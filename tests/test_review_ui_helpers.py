@@ -369,6 +369,21 @@ class ReviewServerHelperTests(unittest.TestCase):
                     server._command_bundle_path(bundle_id, status).unlink(missing_ok=True)
             tmp.cleanup()
 
+    def test_validate_companion_intent_normalizes_commit_default(self) -> None:
+        payload = {
+            "version": 1,
+            "intent_kind": "run",
+            "intent_type": "commit_current_changes",
+            "cwd": safety._relative(config.PROJECT_ROOT),
+            "params": {"message": "Commit docs"},
+        }
+
+        normalized = review.validate_companion_intent(payload)
+
+        self.assertEqual(normalized["intent_kind"], "run")
+        self.assertEqual(normalized["intent_type"], "commit_current_changes")
+        self.assertEqual(normalized["params"], {"message": "Commit docs", "include_untracked": False})
+
     def test_validate_companion_intent_rejects_missing_run_kind(self) -> None:
         payload = {
             "version": 1,
@@ -500,8 +515,20 @@ class ReviewServerHelperTests(unittest.TestCase):
 
         self.assertIn("local companion", english.lower())
         self.assertIn("browser/ouroboros-companion.user.js", english)
+        self.assertIn("ChatGPT does not call an MCP tool", english)
+        self.assertIn("ordinary assistant message", english)
+        self.assertIn("intent_kind", english)
         self.assertIn("local companion", korean)
         self.assertIn("browser/ouroboros-companion.user.js", korean)
+        self.assertIn("ChatGPT는 MCP tool을 호출하지 않습니다", korean)
+        self.assertIn("일반 assistant message", korean)
+        self.assertIn("intent_kind", korean)
+
+    def test_companion_userscript_requires_run_kind(self) -> None:
+        script = (config.PROJECT_ROOT / "browser/ouroboros-companion.user.js").read_text(encoding="utf-8")
+
+        self.assertIn('intent.intent_kind === "run"', script)
+        self.assertIn("autoSubmit: false", script)
 
     def test_short_error_truncates_long_strings(self) -> None:
         error = review.short_error("x" * 200, max_chars=20)
@@ -1066,7 +1093,7 @@ class CompanionActionIntentValidationTests(unittest.TestCase):
     def _cwd(self) -> str:
         return safety._relative(config.PROJECT_ROOT)
 
-    def test_validate_companion_intent_accepts_action_intents(self) -> None:
+    def test_validate_companion_intent_rejects_action_intents(self) -> None:
         payloads = [
             {
                 "version": 1,
@@ -1103,43 +1130,5 @@ class CompanionActionIntentValidationTests(unittest.TestCase):
 
         for payload in payloads:
             with self.subTest(intent_type=payload["intent_type"]):
-                normalized = review.validate_companion_intent(payload)
-                self.assertEqual(normalized["intent_kind"], "run")
-                self.assertEqual(normalized["intent_type"], payload["intent_type"])
-
-    def test_validate_companion_intent_rejects_bad_action_params(self) -> None:
-        bad_payloads = [
-            {
-                "version": 1,
-                "intent_kind": "run",
-                "intent_type": "apply_patch",
-                "cwd": self._cwd(),
-                "params": {"title": "bad"},
-            },
-            {
-                "version": 1,
-                "intent_kind": "run",
-                "intent_type": "write_file",
-                "cwd": self._cwd(),
-                "params": {"path": "../bad.txt", "content": "no"},
-            },
-            {
-                "version": 1,
-                "intent_kind": "run",
-                "intent_type": "run_script",
-                "cwd": self._cwd(),
-                "params": {"script": "", "timeout_seconds": 10},
-            },
-            {
-                "version": 1,
-                "intent_kind": "run",
-                "intent_type": "command_bundle",
-                "cwd": self._cwd(),
-                "params": {"steps": [{"name": "bad", "argv": []}]},
-            },
-        ]
-
-        for payload in bad_payloads:
-            with self.subTest(intent_type=payload["intent_type"]):
-                with self.assertRaises(ValueError):
+                with self.assertRaisesRegex(ValueError, "Unsupported intent_type"):
                     review.validate_companion_intent(payload)

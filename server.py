@@ -12,7 +12,6 @@ import secrets
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Literal
@@ -41,7 +40,6 @@ from terminal_bridge.bundles import (
     _command_bundle_dirs,
     _command_bundle_path,
     _find_command_bundle,
-    _find_command_bundle_by_request_key,
     _move_command_bundle,
     _new_command_bundle_id,
     _request_key,
@@ -61,13 +59,7 @@ from terminal_bridge.commands import (
 )
 from terminal_bridge.config import (
     AUDIT_LOG,
-    BACKUP_DIR,
     BLOCKED_DIR_NAMES,
-    COMMAND_BUNDLE_APPLIED_DIR,
-    COMMAND_BUNDLE_FAILED_DIR,
-    COMMAND_BUNDLE_PENDING_DIR,
-    COMMAND_BUNDLE_REJECTED_DIR,
-    HANDOFF_DIR,
     MAX_STDERR_CHARS,
     MAX_STDOUT_CHARS,
     MAX_WRITE_CHARS,
@@ -79,12 +71,8 @@ from terminal_bridge.config import (
     OPERATION_DIR,
     PROJECT_ROOT,
     RUNTIME_ROOT,
-    TASK_DIR,
     TEXT_PAYLOAD_CHUNK_MAX_CHARS,
-    TEXT_PAYLOAD_DIR,
     TEXT_PAYLOAD_MAX_TOTAL_CHARS,
-    TOOL_CALL_DIR,
-    TRASH_DIR,
     WORKSPACE_ROOT,
 )
 from terminal_bridge.models import (
@@ -144,7 +132,6 @@ from terminal_bridge.operations import (
     _normalize_operation_id,
     _operation_path,
     _read_operation,
-    _set_audit_callback as _set_operation_audit_callback,
     _write_operation_record,
 )
 from terminal_bridge.payloads import (
@@ -178,18 +165,21 @@ from terminal_bridge.tasks import (
     _task_path,
     _write_task,
 )
-from terminal_bridge.tool_calls import (
-    list_tool_calls as _list_tool_call_records,
-    read_tool_call as _read_tool_call_record,
-    write_completed as _write_tool_call_completed,
-    write_failed as _write_tool_call_failed,
-    write_started as _write_tool_call_started,
-)
+from terminal_bridge.tool_calls import list_tool_calls as _list_tool_call_records
+from terminal_bridge.tool_calls import read_tool_call as _read_tool_call_record
 from terminal_bridge.trash import (
     _list_trash_entries,
     _move_to_trash,
     _prepare_trash_restore,
     _restore_trash_payload,
+)
+from terminal_bridge.mcp_runtime import (
+    _audit,
+    _command_bundle_stage_result,
+    _dedupe_command_bundle,
+    _ensure_runtime_dirs,
+    _record_tool_call,
+    _tool_call_status_result,
 )
 
 allowed_hosts = [
@@ -243,95 +233,6 @@ def _internal_tool(**_kwargs: object):
         return func
 
     return decorator
-
-
-def _ensure_runtime_dirs() -> None:
-    RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    TRASH_DIR.mkdir(parents=True, exist_ok=True)
-    OPERATION_DIR.mkdir(parents=True, exist_ok=True)
-    TASK_DIR.mkdir(parents=True, exist_ok=True)
-    TEXT_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    TOOL_CALL_DIR.mkdir(parents=True, exist_ok=True)
-    HANDOFF_DIR.mkdir(parents=True, exist_ok=True)
-    COMMAND_BUNDLE_PENDING_DIR.mkdir(parents=True, exist_ok=True)
-    COMMAND_BUNDLE_APPLIED_DIR.mkdir(parents=True, exist_ok=True)
-    COMMAND_BUNDLE_REJECTED_DIR.mkdir(parents=True, exist_ok=True)
-    COMMAND_BUNDLE_FAILED_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _audit(event: str, **data: object) -> None:
-    _ensure_runtime_dirs()
-    record = {
-        "ts": _now_iso(),
-        "event": event,
-        **data,
-    }
-    with AUDIT_LOG.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-
-_set_operation_audit_callback(_audit)
-
-
-def _tool_call_status_result(record: dict[str, object]) -> ToolCallStatusResult:
-    return ToolCallStatusResult(
-        call_id=str(record.get("call_id", "")),
-        tool_name=str(record.get("tool_name", "")),
-        status=str(record.get("status", "unknown")),
-        started_at=record.get("started_at") if isinstance(record.get("started_at"), str) else None,
-        completed_at=record.get("completed_at") if isinstance(record.get("completed_at"), str) else None,
-        failed_at=record.get("failed_at") if isinstance(record.get("failed_at"), str) else None,
-        duration_ms=record.get("duration_ms") if isinstance(record.get("duration_ms"), int) else None,
-        args_hash=record.get("args_hash") if isinstance(record.get("args_hash"), str) else None,
-        args_summary=record.get("args_summary") if isinstance(record.get("args_summary"), dict) else None,
-        result_summary=record.get("result_summary") if isinstance(record.get("result_summary"), dict) else None,
-        error=record.get("error") if isinstance(record.get("error"), str) else None,
-    )
-
-
-def _record_tool_call(tool_name: str, args: dict[str, object], action: Callable[[], object]) -> object:
-    call_id = _write_tool_call_started(tool_name, args)
-    try:
-        result = action()
-    except Exception as exc:
-        _write_tool_call_failed(call_id, exc)
-        raise
-
-    _write_tool_call_completed(call_id, result)
-    return result
-
-
-def _command_bundle_stage_result(path: Path, record: dict[str, object]) -> CommandBundleStageResult:
-    bundle_id = str(record.get("bundle_id", path.stem))
-    steps = record.get("steps") if isinstance(record.get("steps"), list) else []
-    return CommandBundleStageResult(
-        bundle_id=bundle_id,
-        title=str(record.get("title", "")),
-        cwd=str(record.get("cwd", "")),
-        status=str(record.get("status", "unknown")),
-        risk=str(record.get("risk", "unknown")),
-        approval_required=bool(record.get("approval_required", False)),
-        path=str(path),
-        review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
-        command_count=len(steps),
-    )
-
-
-def _dedupe_command_bundle(request_key: str, *, kind: str, title: str | None = None) -> CommandBundleStageResult | None:
-    existing = _find_command_bundle_by_request_key(request_key)
-    if existing is None:
-        return None
-
-    path, record = existing
-    _audit(
-        "dedupe_command_bundle",
-        request_key=request_key,
-        existing_bundle_id=str(record.get("bundle_id", path.stem)),
-        kind=kind,
-        requested_title=title,
-    )
-    return _command_bundle_stage_result(path, record)
 
 
 INTENT_TOKEN_TTL_SECONDS = 15 * 60
@@ -1330,7 +1231,7 @@ def workspace_read_file(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -1356,7 +1257,7 @@ def workspace_create_directory(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -1438,7 +1339,7 @@ def workspace_write_file(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -1490,7 +1391,7 @@ def workspace_append_file(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -1589,7 +1490,7 @@ def workspace_replace_text(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -1643,7 +1544,7 @@ def workspace_soft_delete(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -2133,7 +2034,7 @@ def workspace_list_backups(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -2196,7 +2097,7 @@ def workspace_list_trash(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -2505,7 +2406,7 @@ def workspace_project_snapshot(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -2565,7 +2466,7 @@ def workspace_task_status(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -2607,7 +2508,7 @@ def workspace_task_log_step(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -2634,7 +2535,7 @@ def workspace_task_update_plan(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -2753,7 +2654,7 @@ def workspace_preview_patch(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -2911,7 +2812,7 @@ def workspace_git_diff(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -2947,7 +2848,7 @@ def workspace_exec(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3010,7 +2911,7 @@ def _read_staged_text_payload(payload_ref: str) -> tuple[str, dict[str, object]]
 
 @_internal_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3137,7 +3038,7 @@ def workspace_stage_patch_bundle(
 
 @_internal_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3225,7 +3126,7 @@ def workspace_stage_action_bundle(
 
 @_internal_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3321,7 +3222,7 @@ def workspace_stage_commit_bundle(
 
 @_internal_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3504,7 +3405,7 @@ def _workspace_wait_command_bundle_status_impl(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3533,7 +3434,7 @@ def _workspace_submit_command_bundle_impl(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3564,7 +3465,7 @@ def _workspace_submit_patch_bundle_impl(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3593,7 +3494,7 @@ def _workspace_submit_action_bundle_impl(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3630,7 +3531,7 @@ def _workspace_submit_commit_bundle_impl(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3680,7 +3581,7 @@ def _workspace_stage_command_bundle_and_wait_impl(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3734,7 +3635,7 @@ def _workspace_stage_patch_bundle_and_wait_impl(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3784,7 +3685,7 @@ def _workspace_stage_action_bundle_and_wait_impl(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3878,7 +3779,7 @@ def workspace_list_command_bundles(
 
 @mcp.tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3922,7 +3823,7 @@ def workspace_cancel_command_bundle(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -3970,7 +3871,7 @@ def workspace_run_profile(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": False,
@@ -4014,7 +3915,7 @@ def workspace_git_add(
 
 @_direct_mutation_tool(
     annotations={
-        "readOnlyHint": False,
+        "readOnlyHint": True,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": False,

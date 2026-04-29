@@ -119,6 +119,18 @@ Do not use `precheck_commands` in commit bundles. Verification should happen bef
 
 `workspace_stage_text_payload` is an advanced fallback for long content, not the default editing path.
 
+## Internal module map
+
+The large entrypoint files should stay thin enough to review:
+
+- `server.py` owns MCP tool registration and high-level orchestration.
+- `terminal_bridge/mcp_runtime.py` owns runtime directory setup, audit logging, tool-call journal wrapping, and command-bundle stage result conversion.
+- `scripts/command_bundle_review_server.py` owns local review HTTP routes.
+- `terminal_bridge/review_layout.py` owns the shared review UI shell, navigation, and CSS.
+- `terminal_bridge/review_intents.py` owns local companion/signed intent import parsing and validation.
+
+When adding new behavior, prefer placing pure helpers in `terminal_bridge/` and keeping entrypoint files focused on wiring.
+
 Do not use payload refs for short edits such as README link updates, small paragraph replacements, import lines, config tweaks, or test snippets. For short edits, put `content`, `old_text`, or `new_text` directly in a single action bundle.
 
 Use payload refs when content is long enough to make the tool call JSON heavy or fragile.

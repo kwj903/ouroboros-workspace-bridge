@@ -111,8 +111,10 @@ def handle_pending_bundle(
     if record is not None and should_auto_approve(record, approval_mode):
         source = f"mode={approval_mode}"
         print(f"{log_prefix}approval mode {approval_mode}: 자동 승인 시도: {bundle_id}")
-        auto_apply_func(bundle_id, runner, project_root, source, log_prefix)
-        return "auto-applied"
+        if auto_apply_func(bundle_id, runner, project_root, source, log_prefix):
+            return "auto-applied"
+
+        print(f"{log_prefix}auto-approval failed; falling back to manual review: {bundle_id}")
 
     if notify_enabled and notify_bundle is not None:
         notify_bundle(bundle_id)

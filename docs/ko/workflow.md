@@ -40,7 +40,7 @@
 
 6. 로컬 UI에서 bundle을 승인합니다. 설정된 approval mode가 허용하면 Safe Auto 또는 YOLO가 처리할 수 있습니다.
 
-   Safe Auto와 YOLO는 로컬 승인 동작만 바꿉니다. ChatGPT가 따라야 할 기본 흐름은 그대로 read-only intent와 local pending UI입니다.
+   Safe Auto와 YOLO는 로컬 승인 동작만 바꿉니다. ChatGPT가 따라야 할 기본 흐름은 그대로 일반 `ouroboros-intent` 메시지, companion, local pending UI입니다.
 
 7. bundle-focused page에서 최종 상태를 확인합니다.
 
@@ -218,16 +218,12 @@ local checks가 통과했다면 이 skip은 성공으로 처리됩니다. remote
 - 로컬 실행 뒤 `workspace_next_handoff`가 최신 handoff를 반환한다.
 - local checks가 통과하고 `npx`가 없을 때 `bash scripts/check_all.sh`가 exit `0`으로 끝난다.
 
-### 지원하는 companion action intent
+### 지원하는 companion run intent
 
 companion JSON import 경로는 현재 다음 실행용 `intent_type` 값을 허용합니다.
 
 - `check`
 - `commit_current_changes`
 - `dev_session`
-- `apply_patch`
-- `write_file`
-- `run_script`
-- `command_bundle`
 
-마지막 네 가지는 ChatGPT가 MCP bundle tool을 직접 호출하지 않고 일반 `ouroboros-intent` 메시지만 출력해도 browser companion이 로컬 pending UI로 가져올 수 있게 하기 위한 타입입니다.
+설명용 예시는 `json` fence를 사용하세요. 실제 실행 요청에만 `ouroboros-intent` fence를 쓰고, companion이 문서 텍스트와 구분할 수 있도록 `intent_kind: "run"`을 포함합니다.

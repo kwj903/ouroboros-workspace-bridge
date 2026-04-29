@@ -2,13 +2,13 @@
 
 This workflow is the default path for using Ouroboros Workspace Bridge from ChatGPT.
 
-The default goal is to avoid ChatGPT MCP tool calls for routine local work. ChatGPT should write a normal assistant message containing an `ouroboros-intent` fenced block, and the browser companion should import that intent through local HTTP.
+The default goal is to avoid ChatGPT MCP tool calls for routine local work. ChatGPT should write an ordinary assistant message containing an `ouroboros-intent` fenced block, and the browser companion should import that intent through local HTTP.
 
 ## Normal Local Work
 
 1. ChatGPT does not call an MCP tool.
 
-2. ChatGPT prints a normal assistant message with an execution intent block.
+2. ChatGPT prints an ordinary assistant message with an execution intent block.
 
    The preferred prototype UX uses the local browser companion at:
 
@@ -218,16 +218,12 @@ Manual checks before considering this workflow healthy:
 - `workspace_next_handoff` returns the latest handoff after local execution.
 - `bash scripts/check_all.sh` exits `0` when local checks pass and `npx` is missing.
 
-### Supported companion action intents
+### Supported companion run intents
 
 The companion JSON import path currently accepts these executable `intent_type` values:
 
 - `check`
 - `commit_current_changes`
 - `dev_session`
-- `apply_patch`
-- `write_file`
-- `run_script`
-- `command_bundle`
 
-The last four exist so ChatGPT can emit a normal `ouroboros-intent` message and let the browser companion import it into the local pending UI, instead of calling an MCP bundle tool directly.
+Use `json` fences for explanatory examples. Use an `ouroboros-intent` fence only for a real execution request, and include `intent_kind: "run"` so the companion can distinguish it from documentation text.
