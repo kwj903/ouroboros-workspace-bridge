@@ -49,21 +49,93 @@ http://127.0.0.1:8790/pending
 
 ## ChatGPT 연결
 
-redacted MCP URL 미리보기:
+1. 로컬 세션을 시작합니다.
 
 ```bash
-uv run woojae mcp-url
+uv run woojae start
 ```
 
-macOS clipboard에 실제 MCP URL 복사:
+2. 로컬 review UI를 엽니다.
+
+```bash
+uv run woojae open
+```
+
+3. MCP URL을 복사합니다.
 
 ```bash
 uv run woojae copy-url
 ```
 
-`woojae mcp-url`은 실제 token을 출력하지 않습니다. `woojae copy-url`도 실제 URL을 출력하지 않고 redacted preview만 보여줍니다.
+`copy-url`은 실제 MCP URL을 macOS clipboard에 복사합니다. 터미널에는 token을 출력하지 않고 redacted preview만 보여줍니다.
 
-`NGROK_HOST`가 없으면 `woojae start` 후 ngrok 출력 또는 로그에서 temporary URL을 확인해야 합니다.
+URL 형식은 다음과 같습니다.
+
+```text
+https://<NGROK_HOST>/mcp?access_token=<TOKEN>
+```
+
+실제 token을 문서, screenshot, chat, GitHub issue에 붙여넣거나 공유하지 마세요.
+
+4. ChatGPT에서 app/connector 생성 화면을 엽니다.
+
+ChatGPT UI는 바뀔 수 있으므로 일반적으로는 settings, connector, apps 영역에서 custom app 또는 custom MCP connector 생성을 선택합니다.
+
+5. app creation form을 채웁니다.
+
+- 아이콘: 선택 사항입니다.
+- 이름: `Ouroboros Workspace Bridge` 또는 `Woojae Workspace Bridge`
+- 설명: `Local MCP bridge for approved workspace file and command operations.`
+- MCP 서버 URL: `uv run woojae copy-url`로 복사한 URL을 붙여넣습니다.
+- 인증: access token이 MCP URL query string에 이미 포함되어 있으면 `No auth` 또는 이에 해당하는 항목을 선택합니다.
+- 고급 OAuth 설정: 제품 UI가 요구하지 않는 한 비워둡니다.
+- warning checkbox: custom MCP server는 데이터와 도구에 접근할 수 있습니다. 본인이 신뢰하는 local bridge라는 점과 위험을 이해한 뒤에만 체크하세요.
+
+UI가 OAuth만 강제하는 경우 이 bridge는 그 모드를 사용하지 않을 수 있습니다. OAuth 없이 direct MCP URL을 넣을 수 있는 방식을 선택하세요.
+
+6. 생성 후 connector를 refresh/reconnect합니다.
+
+도구가 보이는지 확인하고, 로컬 review page도 열려 있는지 확인합니다.
+
+```text
+http://127.0.0.1:8790/pending
+```
+
+첫 테스트는 ChatGPT에게 harmless한 project status 또는 `git status` 확인을 요청하세요. 로컬 review UI에서는 예상한 bundle만 승인합니다.
+
+redacted URL 미리보기만 보고 싶으면 다음 명령을 사용할 수 있습니다.
+
+```bash
+uv run woojae mcp-url
+```
+
+## Approval mode
+
+- Normal: 기본값입니다. 모든 pending bundle을 직접 승인합니다.
+- Safe Auto: low-risk command-only 확인 bundle은 자동 승인될 수 있습니다. 일반 사용자에게는 Normal 또는 Safe Auto를 권장합니다.
+- YOLO: 신뢰할 수 있는 짧은 세션에서만 쓰세요. 켜둔 채로 오래 사용하지 마세요.
+
+## Temporary ngrok URL 주의
+
+`NGROK_HOST`가 없으면 `woojae copy-url`이 동작하지 않을 수 있습니다. temporary ngrok URL은 재시작 후 바뀔 수 있어서 ChatGPT app의 MCP URL도 다시 수정해야 할 수 있습니다.
+
+가장 안정적인 사용을 위해 ngrok reserved domain을 만들고 `uv run woojae setup`에서 `NGROK_HOST`를 설정하는 것을 권장합니다.
+
+## 기존 설치 업데이트
+
+```bash
+cd ouroboros-workspace-bridge
+git pull origin main
+uv sync
+uv run woojae restart-session
+uv run woojae status
+```
+
+- `git pull`은 local checkout의 파일을 업데이트합니다.
+- `uv sync`는 `pyproject.toml` 또는 lock file 변경이 있을 때 의존성을 갱신합니다.
+- `uv run woojae restart-session`은 review, MCP, ngrok 세션을 새 코드로 재시작합니다.
+- `uv run woojae status`에서 review와 mcp가 reachable인지 확인하세요.
+- MCP tool이 바뀐 업데이트 후에는 ChatGPT app connector를 refresh/reconnect하세요.
 
 ## Bundle 승인
 

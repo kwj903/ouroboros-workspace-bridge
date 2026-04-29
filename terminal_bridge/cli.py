@@ -139,6 +139,8 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("setup", "configure", "doctor", "start", "status", "stop"):
         subparsers.add_parser(name)
 
+    subparsers.add_parser("restart-session", help="Restart the full local review, MCP, and ngrok session.")
+
     restart = subparsers.add_parser("restart")
     restart.add_argument("service", choices=("mcp", "ngrok"))
 
@@ -159,6 +161,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_dev_session("configure")
     if args.command in {"doctor", "start", "status", "stop"}:
         return run_dev_session(args.command)
+    if args.command == "restart-session":
+        return run_dev_session("restart-session")
     if args.command == "restart":
         return run_dev_session("restart", args.service)
     if args.command == "logs":

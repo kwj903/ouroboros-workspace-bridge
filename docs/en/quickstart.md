@@ -53,19 +53,89 @@ http://127.0.0.1:8790/pending
 
 ## Connect ChatGPT
 
-Show a redacted MCP URL preview:
+1. Start the local session.
 
 ```bash
-uv run woojae mcp-url
+uv run woojae start
 ```
 
-Copy the real MCP URL to the macOS clipboard:
+2. Open the local review UI.
+
+```bash
+uv run woojae open
+```
+
+3. Copy the MCP URL.
 
 ```bash
 uv run woojae copy-url
 ```
 
-`woojae mcp-url` prints only a redacted preview. `woojae copy-url` does not print the real token. If `NGROK_HOST` is not configured, start the session and check ngrok output or logs for the temporary URL.
+`copy-url` copies the real MCP URL to the macOS clipboard. It does not print the token. The URL format is:
+
+```text
+https://<NGROK_HOST>/mcp?access_token=<TOKEN>
+```
+
+Do not paste or share the real token in docs, screenshots, chats, or GitHub issues.
+
+4. In ChatGPT, open the app/connector creation UI.
+
+The UI may change, so use the settings, connector, or apps area that allows creating a custom app or custom MCP connector.
+
+5. Fill the app creation form.
+
+- Icon: optional.
+- Name: `Ouroboros Workspace Bridge` or `Woojae Workspace Bridge`
+- Description: `Local MCP bridge for approved workspace file and command operations.`
+- MCP server URL: paste the URL copied by `uv run woojae copy-url`.
+- Authentication: choose `No auth` or equivalent if the access token is already included in the MCP URL query string.
+- Advanced OAuth settings: leave empty unless the product UI requires otherwise.
+- Security warning checkbox: custom MCP servers can access data and tools. Enable it only for your own trusted local bridge after understanding the risk.
+
+If the UI forces OAuth, this bridge may not use that mode. Choose the mode that allows a direct MCP URL without OAuth.
+
+After creating the app, refresh or reconnect the connector. Confirm tools are visible and that the local review page is open:
+
+```text
+http://127.0.0.1:8790/pending
+```
+
+For a first test, ask ChatGPT to run a harmless project status or `git status` check. Approve only expected bundles in the local review UI.
+
+To print only a redacted URL preview:
+
+```bash
+uv run woojae mcp-url
+```
+
+## Approval Mode
+
+- Normal: default, manual approval.
+- Safe Auto: low-risk command-only bundles may be auto-approved. Normal or Safe Auto is recommended for regular users.
+- YOLO: for trusted short sessions only. Do not leave it on.
+
+## Temporary ngrok URL Caveat
+
+If `NGROK_HOST` is not configured, `woojae copy-url` may not work. A temporary ngrok URL can change after restart, so the ChatGPT app MCP URL may need to be updated.
+
+For stable usage, create a reserved ngrok domain and set `NGROK_HOST` during `uv run woojae setup`.
+
+## Update Existing Installation
+
+```bash
+cd ouroboros-workspace-bridge
+git pull origin main
+uv sync
+uv run woojae restart-session
+uv run woojae status
+```
+
+- `git pull` updates local files.
+- `uv sync` refreshes dependencies if `pyproject.toml` or the lock file changed.
+- `uv run woojae restart-session` restarts review, MCP, and ngrok with the new code.
+- `uv run woojae status` should show review and mcp reachable.
+- After MCP tool changes, refresh or reconnect the ChatGPT app connector.
 
 ## Approve Bundles
 
