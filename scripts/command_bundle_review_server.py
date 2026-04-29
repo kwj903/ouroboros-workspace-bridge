@@ -336,6 +336,67 @@ def copy_for_chatgpt_summary(record: dict[str, object]) -> dict[str, object]:
     }
 
 
+def extract_intent_token(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("Intent token is required.")
+
+    parsed = urlparse(text)
+    if parsed.query:
+        token_values = parse_qs(parsed.query).get("token")
+        if token_values and token_values[0].strip():
+            return token_values[0].strip()
+
+    if "token=" in text:
+        query = text.split("?", 1)[1] if "?" in text else text
+        token_values = parse_qs(query).get("token")
+        if token_values and token_values[0].strip():
+            return token_values[0].strip()
+
+    return text
+
+
+def import_intent_token(value: object) -> str:
+    import server as mcp_server
+
+    token = extract_intent_token(value)
+    payload = mcp_server._validate_intent_token(token)
+    result = mcp_server._import_intent(payload)
+    return str(result.bundle_id)
+
+
+def intent_import_redirect_location(value: object) -> str:
+    return f"/pending?bundle_id={import_intent_token(value)}"
+
+
+def intent_import_error_html(message: object) -> str:
+    return f"""
+    <p><a href="/pending">← 승인 대기로 돌아가기</a></p>
+    <div class="notice danger">
+      <strong>Intent import failed</strong><br>
+      {escape(short_error(message, 500))}
+    </div>
+    {intent_inbox_html()}
+    """
+
+
+def intent_inbox_html() -> str:
+    return """
+    <section class="card">
+      <h2>Intent Inbox</h2>
+      <p class="meta">
+        ChatGPT가 만든 <code>local_review_url</code> 전체 URL 또는 <code>token</code> 값만 붙여넣어 pending bundle로 가져옵니다.
+      </p>
+      <form method="post" action="/intents/import">
+        <textarea name="token" rows="3" placeholder="http://127.0.0.1:8765/review-intent?token=..."></textarea>
+        <div class="button-row">
+          <button class="approve" type="submit">Import intent</button>
+        </div>
+      </form>
+    </section>
+    """
+
+
 def history_state() -> dict[str, object]:
     return {
         "counts": bundle_status_counts(),
@@ -2538,7 +2599,8 @@ class Handler(BaseHTTPRequestHandler):
                 )
 
             body = (
-                approval_mode_banner_html(approval_mode)
+                intent_inbox_html()
+                + approval_mode_banner_html(approval_mode)
                 + approval_mode_card_html(approval_mode)
                 + "<p><a href='/history'>전체 이력 보기</a></p>"
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
@@ -2638,6 +2700,27 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         parts = [part for part in parsed.path.split("/") if part]
+
+        if parts == ["intents", "import"]:
+            if not is_local_client_address(str(self.client_address[0])):
+                self.send_html("Forbidden", "<p>Local requests only.</p>", status=403, active_nav="pending")
+                return
+
+            form = self.read_form()
+            raw_token = form.get("token", [""])[0]
+            try:
+                location = intent_import_redirect_location(raw_token)
+            except Exception as exc:
+                self.send_html(
+                    "Intent import failed",
+                    intent_import_error_html(f"{type(exc).__name__}: {exc}"),
+                    status=400,
+                    active_nav="pending",
+                )
+                return
+
+            self.redirect(location)
+            return
 
         if parts == ["settings", "approval-mode"]:
             if not is_local_client_address(str(self.client_address[0])):

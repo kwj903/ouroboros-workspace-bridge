@@ -7,9 +7,12 @@ import socket
 import tempfile
 import unittest
 from pathlib import Path
+from uuid import uuid4
 
+import server
 from scripts import command_bundle_review_server as review
 from scripts import command_bundle_watcher as watcher
+from terminal_bridge import config, safety, tool_calls
 from terminal_bridge import review_notifications as notifications
 
 
@@ -235,6 +238,82 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn('/bundles/cmd-pending/approve', html)
         self.assertIn('/bundles/cmd-pending/reject', html)
         self.assertIn("&quot;status&quot;: &quot;pending&quot;", html)
+
+    def test_intent_inbox_form_is_rendered_on_pending_page(self) -> None:
+        html = review.intent_inbox_html()
+
+        self.assertIn("Intent Inbox", html)
+        self.assertIn('action="/intents/import"', html)
+        self.assertIn('name="token"', html)
+        self.assertIn("Import intent", html)
+
+    def test_extract_intent_token_accepts_raw_token_and_full_url(self) -> None:
+        raw = "abc.def"
+        url = "http://127.0.0.1:8765/review-intent?token=abc.def"
+
+        self.assertEqual(review.extract_intent_token(raw), raw)
+        self.assertEqual(review.extract_intent_token(url), raw)
+
+    def test_import_intent_token_accepts_raw_and_full_url_idempotently(self) -> None:
+        original_secret_file = server.INTENT_SECRET_FILE
+        original_import_dir = server.INTENT_IMPORT_DIR
+        original_changed_paths = server._intent_changed_paths
+        original_audit = server._audit
+        original_tool_call_dir = tool_calls.TOOL_CALL_DIR
+        bundle_ids: list[str] = []
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            root = Path(tmp.name)
+            server.INTENT_SECRET_FILE = root / "intent_secret"
+            server.INTENT_IMPORT_DIR = root / "intent_imports"
+            tool_calls.TOOL_CALL_DIR = root / "tool_calls"
+            server._intent_changed_paths = lambda cwd, include_untracked: ["README.md"]
+            server._audit = lambda *args, **kwargs: None
+
+            before_count = sum(
+                1
+                for directory in server._command_bundle_dirs()
+                if directory.exists()
+                for _ in directory.glob("cmd-*.json")
+            )
+            intent = server.workspace_prepare_commit_current_changes_intent(
+                cwd=safety._relative(config.PROJECT_ROOT),
+                message=f"Inbox intent import {uuid4().hex[:8]}",
+                include_untracked=False,
+            )
+            token = str(intent["local_review_url"]).split("token=", 1)[1]
+
+            first_bundle_id = review.import_intent_token(token)
+            second_bundle_id = review.import_intent_token(str(intent["local_review_url"]))
+            redirect_location = review.intent_import_redirect_location(token)
+            after_count = sum(
+                1
+                for directory in server._command_bundle_dirs()
+                if directory.exists()
+                for _ in directory.glob("cmd-*.json")
+            )
+            bundle_ids.append(first_bundle_id)
+
+            self.assertEqual(first_bundle_id, second_bundle_id)
+            self.assertEqual(redirect_location, f"/pending?bundle_id={first_bundle_id}")
+            self.assertEqual(after_count, before_count + 1)
+        finally:
+            server.INTENT_SECRET_FILE = original_secret_file
+            server.INTENT_IMPORT_DIR = original_import_dir
+            server._intent_changed_paths = original_changed_paths
+            server._audit = original_audit
+            tool_calls.TOOL_CALL_DIR = original_tool_call_dir
+            for bundle_id in bundle_ids:
+                for status in ("pending", "applied", "rejected", "failed"):
+                    server._command_bundle_path(bundle_id, status).unlink(missing_ok=True)
+            tmp.cleanup()
+
+    def test_intent_import_error_html_is_clear(self) -> None:
+        html = review.intent_import_error_html("ValueError: Intent token has expired.")
+
+        self.assertIn("Intent import failed", html)
+        self.assertIn("expired", html)
+        self.assertIn("Intent Inbox", html)
 
     def test_short_error_truncates_long_strings(self) -> None:
         error = review.short_error("x" * 200, max_chars=20)
