@@ -275,6 +275,67 @@ def summarize_bundle_result(record: dict[str, object]) -> dict[str, object]:
     }
 
 
+def compact_tail(value: object, max_chars: int = 800) -> str:
+    text = mask_sensitive_text(value)
+    if len(text) <= max_chars:
+        return text
+    return text[-max_chars:].lstrip()
+
+
+def bundle_result_tails(record: dict[str, object], max_chars: int = 800) -> tuple[str, str]:
+    result = record.get("result")
+    if not isinstance(result, dict):
+        return "", ""
+
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    steps = result.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            stdout = step.get("stdout")
+            stderr = step.get("stderr")
+            if stdout:
+                stdout_parts.append(str(stdout))
+            if stderr:
+                stderr_parts.append(str(stderr))
+
+    return compact_tail("\n".join(stdout_parts), max_chars), compact_tail("\n".join(stderr_parts), max_chars)
+
+
+def copy_for_chatgpt_summary(record: dict[str, object]) -> dict[str, object]:
+    status = str(record.get("status", "unknown"))
+    error = record.get("error")
+    stdout_tail, stderr_tail = bundle_result_tails(record)
+
+    ok: bool | None
+    next_step: str
+    if status == "applied" and not error:
+        ok = True
+        next_step = "continue"
+    elif status == "failed":
+        ok = False
+        next_step = "fix_failure"
+    elif status == "rejected":
+        ok = False
+        next_step = "inspect_logs"
+    else:
+        ok = None
+        next_step = "continue"
+
+    return {
+        "bundle_id": str(record.get("bundle_id", "")),
+        "status": status,
+        "ok": ok,
+        "risk": str(record.get("risk", "unknown")),
+        "title": str(record.get("title", "")),
+        "next": next_step,
+        "stdout_tail": stdout_tail,
+        "stderr_tail": stderr_tail or compact_tail(error),
+    }
+
+
 def history_state() -> dict[str, object]:
     return {
         "counts": bundle_status_counts(),
@@ -1942,6 +2003,111 @@ def result_html(result: object) -> str:
     """
 
 
+def command_bundle_poll_script() -> str:
+    return """
+    <script>
+    (function () {
+      let revision = "";
+
+      async function loadState() {
+        const response = await fetch("/api/state", { cache: "no-store" });
+        const state = await response.json();
+        revision = state.revision || "";
+      }
+
+      async function poll() {
+        try {
+          const response = await fetch("/api/events?since=" + encodeURIComponent(revision), { cache: "no-store" });
+          const event = await response.json();
+          if (event.revision) {
+            revision = event.revision;
+          }
+          if (event.changed) {
+            location.reload();
+            return;
+          }
+          poll();
+        } catch (error) {
+          setTimeout(poll, 2500);
+        }
+      }
+
+      loadState().then(poll).catch(function () {
+        setTimeout(poll, 2500);
+      });
+    }());
+    </script>
+    """
+
+
+def bundle_detail_html(path: Path, record: dict[str, object]) -> str:
+    bundle_id = str(record.get("bundle_id", path.stem))
+    status = str(record.get("status", "unknown"))
+    result = record.get("result")
+    error = record.get("error")
+    summary = summarize_bundle_result(record)
+    copy_summary = copy_for_chatgpt_summary(record)
+
+    controls = ""
+    if status == "pending":
+        controls = f"""
+        <div class="button-row">
+          <form class="inline" method="post" action="/bundles/{escape(bundle_id)}/approve">
+            <button class="approve" type="submit">승인하고 실행</button>
+          </form>
+          <form class="inline" method="post" action="/bundles/{escape(bundle_id)}/reject">
+            <button class="reject" type="submit">거절</button>
+          </form>
+        </div>
+        """
+
+    result_block = ""
+    if result is not None:
+        result_block = result_html(result)
+    if error:
+        result_block += f"<h2>오류</h2><pre>{escape(error)}</pre>"
+
+    bundle_error_block = ""
+    if error:
+        bundle_error_block = f"""
+        <div class="notice">
+          <strong>Bundle error</strong><br>
+          {escape(short_error(error, 300))}
+        </div>
+        """
+
+    copy_json = escape(json.dumps(copy_summary, ensure_ascii=False, indent=2))
+
+    return f"""
+    <p><a href="/pending">← 승인으로 돌아가기</a> · <a href="/history">전체 목록</a></p>
+    {bundle_error_block}
+    <div class="card">
+      <h2>{escape(record.get("title", bundle_id))}</h2>
+      <p class="meta">
+        ID: <code>{escape(bundle_id)}</code><br>
+        작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
+        상태: <span class="{escape(status)}">{escape(status_label(status))}</span><br>
+        위험도: <code>{escape(risk_label(record.get("risk", "")))}</code><br>
+        단계 수: <code>{escape(summary.get("command_count", 0))}</code><br>
+        결과 step 수: <code>{escape(summary.get("result_step_count", 0))}</code><br>
+        실패 step 수: <code>{escape(summary.get("failed_step_count", 0))}</code><br>
+        승인 필요: <code>{escape(bool_label(record.get("approval_required", False)))}</code><br>
+        생성: {escape(record.get("created_at", ""))}<br>
+        수정: {escape(record.get("updated_at", ""))}<br>
+        파일: <code>{escape(path)}</code>
+      </p>
+      <p><a href="/history?status={escape(status)}">같은 상태 이력 보기</a> · <a href="/api/audit-state">최근 audit event</a></p>
+      {controls}
+    </div>
+    <h2>Copy for ChatGPT</h2>
+    <pre>{copy_json}</pre>
+    <h2>실행 단계</h2>
+    {bundle_summary_html(record)}
+    {result_block}
+    {command_bundle_poll_script()}
+    """
+
+
 def bool_status(value: object) -> str:
     return "installed" if bool(value) else "missing"
 
@@ -2327,6 +2493,23 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/pending":
+            params = parse_qs(parsed.query)
+            focused_bundle_id = params.get("bundle_id", [""])[0]
+            if focused_bundle_id:
+                try:
+                    path, record = find_bundle(focused_bundle_id)
+                except FileNotFoundError as exc:
+                    self.send_html("찾을 수 없음", f"<pre>{escape(exc)}</pre>", status=404, active_nav="history")
+                    return
+                status = str(record.get("status", "unknown"))
+                self.send_html(
+                    str(record.get("title", focused_bundle_id)),
+                    bundle_detail_html(path, record),
+                    active_nav="pending" if status == "pending" else "history",
+                    subtitle="bundle 상태와 ChatGPT 전달용 요약을 확인합니다.",
+                )
+                return
+
             rows = pending_bundles()
             approval_mode = load_approval_mode()
             cards = []
@@ -2354,47 +2537,12 @@ class Handler(BaseHTTPRequestHandler):
                     """
                 )
 
-            pending_script = """
-            <script>
-            (function () {
-              let revision = "";
-
-              async function loadState() {
-                const response = await fetch("/api/state", { cache: "no-store" });
-                const state = await response.json();
-                revision = state.revision || "";
-              }
-
-              async function poll() {
-                try {
-                  const response = await fetch("/api/events?since=" + encodeURIComponent(revision), { cache: "no-store" });
-                  const event = await response.json();
-                  if (event.revision) {
-                    revision = event.revision;
-                  }
-                  if (event.changed) {
-                    location.reload();
-                    return;
-                  }
-                  poll();
-                } catch (error) {
-                  setTimeout(poll, 2500);
-                }
-              }
-
-              loadState().then(poll).catch(function () {
-                setTimeout(poll, 2500);
-              });
-            }());
-            </script>
-            """
-
             body = (
                 approval_mode_banner_html(approval_mode)
                 + approval_mode_card_html(approval_mode)
                 + "<p><a href='/history'>전체 이력 보기</a></p>"
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
-                + pending_script
+                + command_bundle_poll_script()
             )
             self.send_html(
                 "승인",
@@ -2472,61 +2620,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             status = str(record.get("status", "unknown"))
-            result = record.get("result")
-            error = record.get("error")
-
-            controls = ""
-            if status == "pending":
-                controls = f"""
-                <div class="button-row">
-                  <form class="inline" method="post" action="/bundles/{escape(bundle_id)}/approve">
-                    <button class="approve" type="submit">승인하고 실행</button>
-                  </form>
-                  <form class="inline" method="post" action="/bundles/{escape(bundle_id)}/reject">
-                    <button class="reject" type="submit">거절</button>
-                  </form>
-                </div>
-                """
-
-            result_block = ""
-            if result is not None:
-                result_block = result_html(result)
-            if error:
-                result_block += f"<h2>오류</h2><pre>{escape(error)}</pre>"
-
-            bundle_error_block = ""
-            if error:
-                bundle_error_block = f"""
-                <div class="notice">
-                  <strong>Bundle error</strong><br>
-                  {escape(short_error(error, 300))}
-                </div>
-                """
-
-            body = f"""
-            <p><a href="/pending">← 승인으로 돌아가기</a> · <a href="/history">전체 목록</a></p>
-            {bundle_error_block}
-            <div class="card">
-              <p class="meta">
-                ID: <code>{escape(bundle_id)}</code><br>
-                작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
-                상태: <span class="{escape(status)}">{escape(status_label(status))}</span><br>
-                위험도: <code>{escape(risk_label(record.get("risk", "")))}</code><br>
-                승인 필요: <code>{escape(bool_label(record.get("approval_required", False)))}</code><br>
-                생성: {escape(record.get("created_at", ""))}<br>
-                수정: {escape(record.get("updated_at", ""))}<br>
-                파일: <code>{escape(path)}</code>
-              </p>
-              {controls}
-            </div>
-            <h2>실행 단계</h2>
-            {bundle_summary_html(record)}
-            {result_block}
-            """
             active_nav = "pending" if status == "pending" else "history"
             self.send_html(
                 str(record.get("title", bundle_id)),
-                body,
+                bundle_detail_html(path, record),
                 active_nav=active_nav,
                 subtitle="bundle 단계, 실행 결과, 원본 JSON을 확인합니다.",
             )

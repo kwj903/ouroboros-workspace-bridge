@@ -158,6 +158,84 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertEqual(summary["failed_step_count"], 1)
         self.assertEqual(summary["error_summary"], "One or more bundle steps failed.")
 
+    def test_copy_for_chatgpt_summary_for_applied_bundle(self) -> None:
+        summary = review.copy_for_chatgpt_summary(
+            {
+                "bundle_id": "cmd-applied",
+                "title": "Applied bundle",
+                "status": "applied",
+                "risk": "low",
+                "result": {
+                    "steps": [
+                        {
+                            "stdout": "line one\nline two",
+                            "stderr": "",
+                            "exit_code": 0,
+                        }
+                    ]
+                },
+            }
+        )
+
+        self.assertEqual(summary["bundle_id"], "cmd-applied")
+        self.assertEqual(summary["status"], "applied")
+        self.assertEqual(summary["title"], "Applied bundle")
+        self.assertEqual(summary["risk"], "low")
+        self.assertEqual(summary["ok"], True)
+        self.assertEqual(summary["next"], "continue")
+        self.assertIn("line two", summary["stdout_tail"])
+
+    def test_bundle_detail_html_can_show_applied_bundle(self) -> None:
+        self.write_bundle_record(
+            "applied",
+            {
+                "bundle_id": "cmd-applied",
+                "title": "Applied bundle",
+                "cwd": ".",
+                "status": "applied",
+                "risk": "low",
+                "approval_required": True,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:01:00+00:00",
+                "steps": [{"name": "Git status", "type": "command", "risk": "low"}],
+                "result": {"steps": [{"name": "Git status", "stdout": "## main", "exit_code": 0}]},
+            },
+        )
+
+        path, record = review.find_bundle("cmd-applied")
+        html = review.bundle_detail_html(path, record)
+
+        self.assertIn("Copy for ChatGPT", html)
+        self.assertIn("&quot;bundle_id&quot;: &quot;cmd-applied&quot;", html)
+        self.assertIn("&quot;status&quot;: &quot;applied&quot;", html)
+        self.assertIn("&quot;title&quot;: &quot;Applied bundle&quot;", html)
+        self.assertIn("&quot;risk&quot;: &quot;low&quot;", html)
+        self.assertIn("&quot;next&quot;: &quot;continue&quot;", html)
+        self.assertIn("## main", html)
+
+    def test_bundle_detail_html_keeps_pending_approval_controls(self) -> None:
+        self.write_bundle_record(
+            "pending",
+            {
+                "bundle_id": "cmd-pending",
+                "title": "Pending bundle",
+                "cwd": ".",
+                "status": "pending",
+                "risk": "medium",
+                "approval_required": True,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:01:00+00:00",
+                "steps": [],
+            },
+        )
+
+        path, record = review.find_bundle("cmd-pending")
+        html = review.bundle_detail_html(path, record)
+
+        self.assertIn('/bundles/cmd-pending/approve', html)
+        self.assertIn('/bundles/cmd-pending/reject', html)
+        self.assertIn("&quot;status&quot;: &quot;pending&quot;", html)
+
     def test_short_error_truncates_long_strings(self) -> None:
         error = review.short_error("x" * 200, max_chars=20)
 
