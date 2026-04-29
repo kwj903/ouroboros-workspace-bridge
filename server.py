@@ -396,12 +396,21 @@ def _validate_intent_token(token: str, *, now: datetime | None = None) -> dict[s
     return payload
 
 
+def _local_browser_host(host: str) -> str:
+    normalized = host.strip()
+    if normalized in {"", "0.0.0.0", "::"}:
+        return "127.0.0.1"
+    if ":" in normalized and not normalized.startswith("["):
+        return f"[{normalized}]"
+    return normalized
+
+
 def _local_review_url(token: str) -> str:
-    return f"http://{MCP_HOST}:{MCP_PORT}/review-intent?token={token}"
+    return f"http://{_local_browser_host(MCP_HOST)}:{MCP_PORT}/review-intent?token={token}"
 
 
 def _local_pending_url(bundle_id: str | None = None) -> str:
-    host = os.getenv("BUNDLE_REVIEW_HOST", "127.0.0.1")
+    host = _local_browser_host(os.getenv("BUNDLE_REVIEW_HOST", "127.0.0.1"))
     port = int(os.getenv("BUNDLE_REVIEW_PORT", "8790"))
     base = f"http://{host}:{port}/pending"
     if bundle_id:
@@ -746,7 +755,14 @@ def _intent_preview_html(token: str, payload: dict[str, object], preview: dict[s
 
 
 def _intent_approved_html(result: CommandBundleStageResult) -> str:
-    body = html.escape(json.dumps(result.model_dump(), ensure_ascii=False, indent=2))
+    summary = {
+        "bundle_id": result.bundle_id,
+        "status": result.status,
+        "risk": result.risk,
+        "command_count": result.command_count,
+        "next_tool": "workspace_wait_command_bundle_status",
+    }
+    body = html.escape(json.dumps(summary, ensure_ascii=False, indent=2))
     bundle_id = html.escape(result.bundle_id)
     pending_url = html.escape(_local_pending_url(result.bundle_id), quote=True)
     return f"""<!doctype html>
@@ -758,6 +774,7 @@ def _intent_approved_html(result: CommandBundleStageResult) -> str:
   <p>Status: <code>{html.escape(result.status)}</code></p>
   <p><a href="{pending_url}">Open pending bundle UI</a></p>
   <p>Next tool: <code>workspace_wait_command_bundle_status</code></p>
+  <p>Copyable JSON summary:</p>
   <pre>{body}</pre>
 </body>
 </html>"""
@@ -1795,6 +1812,8 @@ def _workspace_recover_last_activity_impl(cwd: str, bundle_limit: int, audit_lim
             "cwd",
             "title",
             "risk",
+            "intent_type",
+            "nonce",
             "command_count",
             "path_count",
             "exit_code",

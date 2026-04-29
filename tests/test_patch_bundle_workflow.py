@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import asyncio
 import json
+import os
 import shutil
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -550,6 +551,8 @@ class IntentFlowTests(unittest.TestCase):
         self.original_intent_import_dir = server.INTENT_IMPORT_DIR
         self.original_changed_paths = server._intent_changed_paths
         self.original_tool_call_dir = tool_calls.TOOL_CALL_DIR
+        self.original_mcp_host = server.MCP_HOST
+        self.original_bundle_review_host = os.environ.get("BUNDLE_REVIEW_HOST")
         self.tmp = None
         server._audit = lambda *args, **kwargs: None
 
@@ -559,6 +562,11 @@ class IntentFlowTests(unittest.TestCase):
         server.INTENT_IMPORT_DIR = self.original_intent_import_dir
         server._intent_changed_paths = self.original_changed_paths
         tool_calls.TOOL_CALL_DIR = self.original_tool_call_dir
+        server.MCP_HOST = self.original_mcp_host
+        if self.original_bundle_review_host is None:
+            os.environ.pop("BUNDLE_REVIEW_HOST", None)
+        else:
+            os.environ["BUNDLE_REVIEW_HOST"] = self.original_bundle_review_host
         if self.tmp is not None:
             self.tmp.cleanup()
 
@@ -610,6 +618,16 @@ class IntentFlowTests(unittest.TestCase):
             self.assertIn("pending bundle UI", str(item["diagnosis"]))
             payload = server._validate_intent_token(self.token_from_intent(item))
             self.assertEqual(payload["intent_type"], intent_type)
+
+    def test_intent_local_urls_use_loopback_for_wildcard_hosts(self) -> None:
+        self.use_temp_runtime_bits()
+        server.MCP_HOST = "0.0.0.0"
+        os.environ["BUNDLE_REVIEW_HOST"] = "0.0.0.0"
+
+        intent = server.workspace_prepare_check_intent(cwd=self.project_cwd(), check="git_status")
+
+        self.assertTrue(str(intent["local_review_url"]).startswith("http://127.0.0.1:"))
+        self.assertTrue(str(intent["local_pending_url"]).startswith("http://127.0.0.1:"))
 
     def test_invalid_and_expired_intent_tokens_are_rejected(self) -> None:
         self.use_temp_runtime_bits()
@@ -668,6 +686,9 @@ class IntentFlowTests(unittest.TestCase):
         self.assertEqual(record["title"], f"Commit: {message}")
         self.assertFalse(server._command_bundle_path(bundle_id, "applied").exists())
         self.assertTrue(any(event == "intent_imported" and data["bundle_id"] == bundle_id for event, data in events))
+        fallback_html = server._intent_approved_html(server._command_bundle_stage_result(server._command_bundle_path(bundle_id, "pending"), record))
+        self.assertIn("Copyable JSON summary", fallback_html)
+        self.assertIn("workspace_wait_command_bundle_status", fallback_html)
 
         recovery = server.workspace_recover_last_activity(cwd=self.project_cwd())
         latest_ids = {str(item.get("bundle_id")) for item in recovery["latest_bundles"]}

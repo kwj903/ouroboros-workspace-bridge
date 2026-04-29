@@ -19,8 +19,16 @@ fi
 uv run python scripts/smoke_check.py
 
 if [[ -n "${MCP_ACCESS_TOKEN:-}" && -n "$NGROK_HOST" ]]; then
-  mcp_url="https://${NGROK_HOST}/mcp?access_token=${MCP_ACCESS_TOKEN}"
-  uv run python scripts/smoke_check.py --mcp-url "$mcp_url"
+  if ! command -v npx >/dev/null 2>&1; then
+    cat <<'EOF'
+
+Remote MCP smoke skipped: npx not found on PATH.
+Local checks passed; install Node.js/npm if you want MCP Inspector checks.
+EOF
+  else
+    mcp_url="https://${NGROK_HOST}/mcp?access_token=${MCP_ACCESS_TOKEN}"
+    uv run python scripts/smoke_check.py --mcp-url "$mcp_url"
+  fi
 else
   cat <<'EOF'
 
