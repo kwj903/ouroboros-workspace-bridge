@@ -344,24 +344,6 @@ def run_git(cwd: Path, args: list[str], timeout_seconds: int = 30) -> subprocess
     )
 
 
-def git_repo_root(cwd: Path) -> Path:
-    completed = run_git(cwd, ["rev-parse", "--show-toplevel"])
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
-        raise RuntimeError(f"git rev-parse --show-toplevel failed: {detail}")
-    return Path(completed.stdout.strip()).resolve()
-
-
-def ensure_clean_worktree(cwd: Path) -> None:
-    completed = run_git(cwd, ["status", "--porcelain"])
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
-        raise RuntimeError(f"git status --porcelain failed: {detail}")
-
-    if completed.stdout.strip():
-        raise RuntimeError("worktree is not clean; commit/stash/revert changes first")
-
-
 def step_patch_paths(step: dict[str, Any], patch: str) -> list[str]:
     raw_files = step.get("files")
     if isinstance(raw_files, list) and raw_files:
@@ -413,35 +395,24 @@ def action_step_targets(steps: list[Any]) -> list[Path]:
     return targets
 
 
-def is_git_tracked(repo_root: Path, rel_path: str) -> bool:
-    completed = run_git(repo_root, ["ls-files", "--error-unmatch", "--", rel_path])
-    return completed.returncode == 0
-
-
-def snapshot_action_targets(cwd: Path, steps: list[Any]) -> tuple[Path, list[dict[str, Any]]]:
-    repo_root = git_repo_root(cwd)
+def snapshot_action_targets(cwd: Path, steps: list[Any]) -> list[dict[str, Any]]:
     snapshots: list[dict[str, Any]] = []
 
     for target in action_step_targets(steps):
-        if target != repo_root and not target.is_relative_to(repo_root):
-            raise ValueError(f"action target is outside git repository: {relative(target)}")
-
-        rel_path = str(target.relative_to(repo_root))
-        tracked = is_git_tracked(repo_root, rel_path)
         existed = target.exists()
-        content = target.read_bytes() if existed and not tracked and target.is_file() else None
+        content = target.read_bytes() if existed and target.is_file() else None
+        stop_at = cwd if target == cwd or target.is_relative_to(cwd) else WORKSPACE_ROOT
 
         snapshots.append(
             {
                 "path": target,
-                "repo_path": rel_path,
-                "tracked": tracked,
+                "stop_at": stop_at,
                 "existed": existed,
                 "content": content,
             }
         )
 
-    return repo_root, snapshots
+    return snapshots
 
 
 def remove_empty_parent_dirs(path: Path, stop_at: Path) -> None:
@@ -456,7 +427,7 @@ def remove_empty_parent_dirs(path: Path, stop_at: Path) -> None:
         current = current.parent
 
 
-def rollback_action_changes(repo_root: Path, snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+def rollback_action_changes(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "attempted": True,
         "completed": False,
@@ -465,20 +436,10 @@ def rollback_action_changes(repo_root: Path, snapshots: list[dict[str, Any]]) ->
         "errors": [],
     }
 
-    tracked_paths = [str(item["repo_path"]) for item in snapshots if bool(item.get("tracked"))]
-    if tracked_paths:
-        completed = run_git(repo_root, ["checkout", "--", *tracked_paths])
-        if completed.returncode != 0:
-            result["errors"].append(completed.stderr.strip() or completed.stdout.strip())
-        else:
-            result["restored"].extend(tracked_paths)
-
     for item in snapshots:
-        if bool(item.get("tracked")):
-            continue
-
         target = item["path"]
-        rel_path = str(item["repo_path"])
+        stop_at = item.get("stop_at")
+        rel_path = relative(target)
         existed = bool(item.get("existed"))
         content = item.get("content")
 
@@ -492,30 +453,10 @@ def rollback_action_changes(repo_root: Path, snapshots: list[dict[str, Any]]) ->
                     shutil.rmtree(target)
                 else:
                     target.unlink()
-                remove_empty_parent_dirs(target, repo_root)
+                remove_empty_parent_dirs(target, stop_at if isinstance(stop_at, Path) else WORKSPACE_ROOT)
                 result["removed"].append(rel_path)
         except Exception as exc:
             result["errors"].append(f"{rel_path}: {exc}")
-
-    checkout_all = run_git(repo_root, ["checkout", "--", "."])
-    if checkout_all.returncode != 0:
-        result["errors"].append(checkout_all.stderr.strip() or checkout_all.stdout.strip())
-
-    clean_all = run_git(repo_root, ["clean", "-fd", "--", "."])
-    if clean_all.returncode != 0:
-        result["errors"].append(clean_all.stderr.strip() or clean_all.stdout.strip())
-    elif clean_all.stdout.strip():
-        result["removed"].extend(
-            line.strip().removeprefix("Removing ")
-            for line in clean_all.stdout.splitlines()
-            if line.strip()
-        )
-
-    remaining = run_git(repo_root, ["status", "--porcelain"])
-    if remaining.returncode != 0:
-        result["errors"].append(remaining.stderr.strip() or remaining.stdout.strip())
-    elif remaining.stdout.strip():
-        result["errors"].append(f"worktree still dirty after rollback:\n{remaining.stdout.strip()}")
 
     result["completed"] = len(result["errors"]) == 0
     return result
@@ -853,20 +794,18 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
     failed = False
     failure_error: str | None = None
     rollback_result: dict[str, Any] | None = None
-    action_repo_root: Path | None = None
     action_snapshots: list[dict[str, Any]] = []
 
     if action_bundle:
         try:
-            ensure_clean_worktree(cwd)
-            action_repo_root, action_snapshots = snapshot_action_targets(cwd, raw_steps)
+            action_snapshots = snapshot_action_targets(cwd, raw_steps)
         except Exception as exc:
             failed = True
             failure_error = str(exc)
             results.append(
                 {
                     "type": "preflight",
-                    "name": "Action bundle clean worktree check",
+                    "name": "Action bundle file snapshot",
                     "exit_code": None,
                     "stdout": "",
                     "stderr": str(exc),
@@ -913,8 +852,8 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
                 print(str(exc), file=sys.stderr)
                 break
 
-    if action_bundle and failed and action_repo_root is not None:
-        rollback_result = rollback_action_changes(action_repo_root, action_snapshots)
+    if action_bundle and failed:
+        rollback_result = rollback_action_changes(action_snapshots)
         rollback_status = "completed" if rollback_result.get("completed") else "failed"
         failed_step = next((step for step in reversed(results) if step.get("type") != "preflight"), None)
         if failed_step is not None:

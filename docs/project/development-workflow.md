@@ -127,7 +127,7 @@ The large entrypoint files should stay thin enough to review:
 - `terminal_bridge/mcp_runtime.py` owns runtime directory setup, audit logging, tool-call journal wrapping, and command-bundle stage result conversion.
 - `scripts/command_bundle_review_server.py` owns local review HTTP routes.
 - `terminal_bridge/review_layout.py` owns the shared review UI shell, navigation, and CSS.
-- `terminal_bridge/review_intents.py` owns local companion/signed intent import parsing and validation.
+- `terminal_bridge/review_intents.py` owns signed intent token import parsing for the local review UI.
 
 When adding new behavior, prefer placing pure helpers in `terminal_bridge/` and keeping entrypoint files focused on wiring.
 

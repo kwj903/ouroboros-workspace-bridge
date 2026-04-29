@@ -165,15 +165,15 @@ class ActionBundleAtomicApplyTests(unittest.TestCase):
         self.assertEqual(self.git_status(), "")
         self.assertIn("rollback: completed", str(self.failed_record(bundle_id)["error"]))
 
-    def test_dirty_worktree_rejects_action_bundle_without_touching_changes(self) -> None:
+    def test_dirty_worktree_does_not_block_action_bundle_preflight(self) -> None:
         self.readme.write_text("dirty\n", encoding="utf-8")
         bundle_id = self.write_action_bundle(
             [
                 {
                     "type": "replace_text",
-                    "name": "Would replace README",
+                    "name": "Replace dirty README",
                     "path": "project/README.md",
-                    "old_text": "initial",
+                    "old_text": "dirty",
                     "new_text": "changed",
                     "replace_all": False,
                     "risk": "medium",
@@ -183,10 +183,47 @@ class ActionBundleAtomicApplyTests(unittest.TestCase):
 
         self.apply_bundle(bundle_id)
 
-        record = self.failed_record(bundle_id)
-        self.assertEqual(self.readme.read_text(encoding="utf-8"), "dirty\n")
-        self.assertIn("worktree is not clean", str(record["error"]))
-        self.assertIn("commit/stash/revert changes first", str(record["error"]))
+        record = self.applied_record(bundle_id)
+        self.assertTrue(record["result"]["ok"])
+        self.assertEqual(self.readme.read_text(encoding="utf-8"), "changed\n")
+        self.assertNotIn("worktree is not clean", str(record.get("error")))
+
+    def test_action_bundle_applies_without_git_repository(self) -> None:
+        no_git_dir = self.workspace_root / "no-git-project"
+        no_git_dir.mkdir()
+        target = no_git_dir / "generated.txt"
+        bundle_id = f"cmd-action-nogit-{uuid4().hex[:8]}"
+        record = {
+            "version": 2,
+            "bundle_id": bundle_id,
+            "title": "No git action bundle",
+            "cwd": "no-git-project",
+            "status": "pending",
+            "risk": "medium",
+            "approval_required": True,
+            "created_at": runner.now_iso(),
+            "updated_at": runner.now_iso(),
+            "steps": [
+                {
+                    "type": "write_file",
+                    "name": "Create generated file",
+                    "path": "no-git-project/generated.txt",
+                    "content": "created without git\n",
+                    "overwrite": False,
+                    "create_parent_dirs": True,
+                    "risk": "medium",
+                }
+            ],
+            "result": None,
+            "error": None,
+        }
+        runner.write_json(runner.PENDING_DIR / f"{bundle_id}.json", record)
+
+        self.apply_bundle(bundle_id)
+
+        applied = self.applied_record(bundle_id)
+        self.assertTrue(applied["result"]["ok"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "created without git\n")
 
     def test_clean_action_bundle_still_applies(self) -> None:
         bundle_id = self.write_action_bundle(

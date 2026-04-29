@@ -13,6 +13,7 @@ import server
 from scripts import command_bundle_review_server as review
 from scripts import command_bundle_watcher as watcher
 from terminal_bridge import config, handoffs, safety, tool_calls
+from terminal_bridge import review_intents as intents
 from terminal_bridge import review_notifications as notifications
 
 
@@ -256,8 +257,8 @@ class ReviewServerHelperTests(unittest.TestCase):
         raw = "abc.def"
         url = "http://127.0.0.1:8765/review-intent?token=abc.def"
 
-        self.assertEqual(review.extract_intent_token(raw), raw)
-        self.assertEqual(review.extract_intent_token(url), raw)
+        self.assertEqual(intents.extract_intent_token(raw), raw)
+        self.assertEqual(intents.extract_intent_token(url), raw)
 
     def test_import_intent_token_accepts_raw_and_full_url_idempotently(self) -> None:
         original_secret_file = server.INTENT_SECRET_FILE
@@ -288,8 +289,8 @@ class ReviewServerHelperTests(unittest.TestCase):
             )
             token = str(intent["local_review_url"]).split("token=", 1)[1]
 
-            first_bundle_id = review.import_intent_token(token)
-            second_bundle_id = review.import_intent_token(str(intent["local_review_url"]))
+            first_bundle_id = intents.import_intent_token(token)
+            second_bundle_id = intents.import_intent_token(str(intent["local_review_url"]))
             redirect_location = review.intent_import_redirect_location(token)
             after_count = sum(
                 1
@@ -313,78 +314,7 @@ class ReviewServerHelperTests(unittest.TestCase):
                     server._command_bundle_path(bundle_id, status).unlink(missing_ok=True)
             tmp.cleanup()
 
-    def test_import_intent_json_accepts_companion_payload_idempotently(self) -> None:
-        original_secret_file = server.INTENT_SECRET_FILE
-        original_import_dir = server.INTENT_IMPORT_DIR
-        original_changed_paths = server._intent_changed_paths
-        original_audit = server._audit
-        original_tool_call_dir = tool_calls.TOOL_CALL_DIR
-        bundle_ids: list[str] = []
-        tmp = tempfile.TemporaryDirectory()
-        try:
-            root = Path(tmp.name)
-            server.INTENT_SECRET_FILE = root / "intent_secret"
-            server.INTENT_IMPORT_DIR = root / "intent_imports"
-            tool_calls.TOOL_CALL_DIR = root / "tool_calls"
-            server._intent_changed_paths = lambda cwd, include_untracked: ["README.md"]
-            server._audit = lambda *args, **kwargs: None
-
-            before_count = sum(
-                1
-                for directory in server._command_bundle_dirs()
-                if directory.exists()
-                for _ in directory.glob("cmd-*.json")
-            )
-            payload = {
-                "version": 1,
-                "intent_kind": "run",
-                "intent_type": "commit_current_changes",
-                "cwd": safety._relative(config.PROJECT_ROOT),
-                "params": {"message": f"Companion intent {uuid4().hex[:8]}", "include_untracked": False},
-            }
-
-            first_bundle_id = review.import_intent_json(payload)
-            second_bundle_id = review.import_intent_json(payload)
-            result = review.intent_import_result(payload)
-            after_count = sum(
-                1
-                for directory in server._command_bundle_dirs()
-                if directory.exists()
-                for _ in directory.glob("cmd-*.json")
-            )
-            bundle_ids.append(first_bundle_id)
-
-            self.assertEqual(first_bundle_id, second_bundle_id)
-            self.assertEqual(result["bundle_id"], first_bundle_id)
-            self.assertEqual(result["pending_url"], f"/pending?bundle_id={first_bundle_id}")
-            self.assertEqual(after_count, before_count + 1)
-        finally:
-            server.INTENT_SECRET_FILE = original_secret_file
-            server.INTENT_IMPORT_DIR = original_import_dir
-            server._intent_changed_paths = original_changed_paths
-            server._audit = original_audit
-            tool_calls.TOOL_CALL_DIR = original_tool_call_dir
-            for bundle_id in bundle_ids:
-                for status in ("pending", "applied", "rejected", "failed"):
-                    server._command_bundle_path(bundle_id, status).unlink(missing_ok=True)
-            tmp.cleanup()
-
-    def test_validate_companion_intent_normalizes_commit_default(self) -> None:
-        payload = {
-            "version": 1,
-            "intent_kind": "run",
-            "intent_type": "commit_current_changes",
-            "cwd": safety._relative(config.PROJECT_ROOT),
-            "params": {"message": "Commit docs"},
-        }
-
-        normalized = review.validate_companion_intent(payload)
-
-        self.assertEqual(normalized["intent_kind"], "run")
-        self.assertEqual(normalized["intent_type"], "commit_current_changes")
-        self.assertEqual(normalized["params"], {"message": "Commit docs", "include_untracked": False})
-
-    def test_validate_companion_intent_rejects_missing_run_kind(self) -> None:
+    def test_intent_import_result_rejects_json_payloads(self) -> None:
         payload = {
             "version": 1,
             "intent_type": "check",
@@ -392,78 +322,8 @@ class ReviewServerHelperTests(unittest.TestCase):
             "params": {"check": "git_status"},
         }
 
-        with self.assertRaisesRegex(ValueError, "intent_kind"):
-            review.validate_companion_intent(payload)
-
-    def test_validate_companion_intent_rejects_non_run_kind(self) -> None:
-        payload = {
-            "version": 1,
-            "intent_kind": "example",
-            "intent_type": "check",
-            "cwd": safety._relative(config.PROJECT_ROOT),
-            "params": {"check": "git_status"},
-        }
-
-        with self.assertRaisesRegex(ValueError, "intent_kind"):
-            review.validate_companion_intent(payload)
-
-    def test_validate_companion_intent_rejects_unknown_keys_and_params(self) -> None:
-        payload = {
-            "version": 1,
-            "intent_kind": "run",
-            "intent_type": "check",
-            "cwd": safety._relative(config.PROJECT_ROOT),
-            "params": {"check": "git_status", "extra": True},
-            "extra": True,
-        }
-
-        with self.assertRaisesRegex(ValueError, "Unknown top-level intent keys"):
-            review.validate_companion_intent(payload)
-
-        payload.pop("extra")
-        with self.assertRaisesRegex(ValueError, "Unknown check params"):
-            review.validate_companion_intent(payload)
-
-    def test_validate_companion_intent_rejects_bad_type_and_cwd(self) -> None:
-        payload = {
-            "version": 1,
-            "intent_kind": "run",
-            "intent_type": "unknown",
-            "cwd": safety._relative(config.PROJECT_ROOT),
-            "params": {},
-        }
-        with self.assertRaisesRegex(ValueError, "Unsupported intent_type"):
-            review.validate_companion_intent(payload)
-
-        payload["intent_type"] = "check"
-        payload["params"] = {"check": "git_status"}
-        payload["cwd"] = "/tmp"
-        with self.assertRaisesRegex(ValueError, "cwd"):
-            review.validate_companion_intent(payload)
-
-        payload["cwd"] = ".."
-        with self.assertRaisesRegex(ValueError, "cwd"):
-            review.validate_companion_intent(payload)
-
-    def test_validate_companion_intent_rejects_bad_commit_params(self) -> None:
-        payload = {
-            "version": 1,
-            "intent_kind": "run",
-            "intent_type": "commit_current_changes",
-            "cwd": safety._relative(config.PROJECT_ROOT),
-            "params": {"message": "bad" + chr(10) + "message", "include_untracked": False},
-        }
-
-        with self.assertRaisesRegex(ValueError, "single-line"):
-            review.validate_companion_intent(payload)
-
-        payload["params"] = {"message": "", "include_untracked": False}
-        with self.assertRaisesRegex(ValueError, "non-empty"):
-            review.validate_companion_intent(payload)
-
-        payload["params"] = {"message": "valid", "include_untracked": "false"}
-        with self.assertRaisesRegex(ValueError, "boolean"):
-            review.validate_companion_intent(payload)
+        with self.assertRaises(ValueError):
+            intents.intent_import_result(payload)
 
     def test_intent_import_error_html_is_clear(self) -> None:
         html = review.intent_import_error_html("ValueError: Intent token has expired.")
@@ -509,26 +369,20 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIs(payload["ok"], True)
         self.assertEqual(payload["handoff"]["bundle_id"], "cmd-latest-json")
 
-    def test_docs_mention_local_companion(self) -> None:
+    def test_docs_describe_bundle_tool_workflow(self) -> None:
         english = (config.PROJECT_ROOT / "docs/en/workflow.md").read_text(encoding="utf-8")
         korean = (config.PROJECT_ROOT / "docs/ko/workflow.md").read_text(encoding="utf-8")
 
-        self.assertIn("local companion", english.lower())
-        self.assertIn("browser/ouroboros-companion.user.js", english)
-        self.assertIn("ChatGPT does not call an MCP tool", english)
-        self.assertIn("ordinary assistant message", english)
-        self.assertIn("intent_kind", english)
-        self.assertIn("local companion", korean)
-        self.assertIn("browser/ouroboros-companion.user.js", korean)
-        self.assertIn("ChatGPT는 MCP tool을 호출하지 않습니다", korean)
-        self.assertIn("일반 assistant message", korean)
-        self.assertIn("intent_kind", korean)
-
-    def test_companion_userscript_requires_run_kind(self) -> None:
-        script = (config.PROJECT_ROOT / "browser/ouroboros-companion.user.js").read_text(encoding="utf-8")
-
-        self.assertIn('intent.intent_kind === "run"', script)
-        self.assertIn("autoSubmit: false", script)
+        self.assertIn("workspace_submit_command_bundle", english)
+        self.assertIn("local pending review UI", english)
+        self.assertIn("browser companion", english.lower())
+        self.assertIn("is discontinued", english)
+        self.assertIn("workspace_recover_last_activity", english)
+        self.assertIn("workspace_submit_command_bundle", korean)
+        self.assertIn("local pending review UI", korean)
+        self.assertIn("browser companion", korean.lower())
+        self.assertIn("중단", korean)
+        self.assertIn("workspace_recover_last_activity", korean)
 
     def test_short_error_truncates_long_strings(self) -> None:
         error = review.short_error("x" * 200, max_chars=20)
@@ -1087,48 +941,3 @@ class WatcherHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class CompanionActionIntentValidationTests(unittest.TestCase):
-    def _cwd(self) -> str:
-        return safety._relative(config.PROJECT_ROOT)
-
-    def test_validate_companion_intent_rejects_action_intents(self) -> None:
-        payloads = [
-            {
-                "version": 1,
-                "intent_kind": "run",
-                "intent_type": "apply_patch",
-                "cwd": self._cwd(),
-                "params": {"title": "Patch docs", "patch": "diff --git a/README.md b/README.md\n"},
-            },
-            {
-                "version": 1,
-                "intent_kind": "run",
-                "intent_type": "write_file",
-                "cwd": self._cwd(),
-                "params": {"path": "tmp/example.txt", "content": "hello", "overwrite": True},
-            },
-            {
-                "version": 1,
-                "intent_kind": "run",
-                "intent_type": "run_script",
-                "cwd": self._cwd(),
-                "params": {"title": "Echo", "script": "echo ok", "timeout_seconds": 10},
-            },
-            {
-                "version": 1,
-                "intent_kind": "run",
-                "intent_type": "command_bundle",
-                "cwd": self._cwd(),
-                "params": {
-                    "title": "Git status",
-                    "steps": [{"name": "status", "argv": ["git", "status", "--short"], "timeout_seconds": 30}],
-                },
-            },
-        ]
-
-        for payload in payloads:
-            with self.subTest(intent_type=payload["intent_type"]):
-                with self.assertRaisesRegex(ValueError, "Unsupported intent_type"):
-                    review.validate_companion_intent(payload)

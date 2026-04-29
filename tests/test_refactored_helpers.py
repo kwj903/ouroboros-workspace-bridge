@@ -170,6 +170,23 @@ class RefactoredCommandHelperTests(unittest.TestCase):
             ["git", "status", "--short"],
         )
 
+    def test_validate_exec_argv_allows_larger_shell_body(self) -> None:
+        body = "printf 'ok'\\n" + ("x" * 2000)
+
+        self.assertEqual(
+            commands._validate_exec_argv(["bash", "-lc", body]),
+            ["bash", "-lc", body],
+        )
+
+    def test_classifies_large_shell_body_without_path_scanning_body(self) -> None:
+        risk, reason = commands._classify_exec_command(
+            config.PROJECT_ROOT,
+            ["bash", "-lc", "cat > tmp/generated.txt <<'EOF'\nhello\nEOF"],
+        )
+
+        self.assertEqual(risk, "medium")
+        self.assertIn("bash", reason)
+
     def test_classifies_exec_commands(self) -> None:
         risk, _reason = commands._classify_exec_command(
             config.PROJECT_ROOT,

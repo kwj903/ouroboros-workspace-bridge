@@ -15,6 +15,9 @@ from terminal_bridge.config import (
 )
 from terminal_bridge.safety import _is_blocked_name
 
+MAX_EXEC_ARG_CHARS = 32_768
+MAX_EXEC_ARGV_TOTAL_CHARS = 65_536
+
 
 def _safe_env() -> dict[str, str]:
     """Return a minimal child-process environment for workspace commands.
@@ -97,6 +100,21 @@ def _validate_command_args(cwd: Path, args: list[str]) -> list[str]:
     return safe_args
 
 
+def _shell_command_body_index(argv: list[str]) -> int | None:
+    if not argv:
+        return None
+
+    executable = Path(argv[0]).name
+    if executable not in {"bash", "sh", "zsh"} or len(argv) < 3:
+        return None
+
+    for index, item in enumerate(argv[1:-1], 1):
+        if item in {"-c", "-lc"}:
+            return len(argv) - 1
+
+    return None
+
+
 def _validate_exec_argv(argv: list[str]) -> list[str]:
     if not argv:
         raise ValueError("argv cannot be empty.")
@@ -104,16 +122,23 @@ def _validate_exec_argv(argv: list[str]) -> list[str]:
     if len(argv) > 64:
         raise ValueError("argv has too many items.")
 
+    shell_body_index = _shell_command_body_index(argv)
+    total_chars = 0
     safe: list[str] = []
-    for item in argv:
+    for index, item in enumerate(argv):
         if not isinstance(item, str):
             raise ValueError("All argv items must be strings.")
         if item == "":
             raise ValueError("argv items cannot be empty.")
-        if len(item) > 1000:
-            raise ValueError("argv item is too long.")
-        if "\x00" in item or "\n" in item or "\r" in item:
+        if len(item) > MAX_EXEC_ARG_CHARS:
+            raise ValueError(f"argv item is too long. Max characters: {MAX_EXEC_ARG_CHARS}")
+        total_chars += len(item)
+        if total_chars > MAX_EXEC_ARGV_TOTAL_CHARS:
+            raise ValueError(f"argv is too large. Max total characters: {MAX_EXEC_ARGV_TOTAL_CHARS}")
+        if "\x00" in item:
             raise ValueError("argv items cannot contain control characters.")
+        if index != shell_body_index and ("\n" in item or "\r" in item):
+            raise ValueError("argv items cannot contain newlines except shell command bodies.")
         safe.append(item)
 
     return safe
@@ -156,7 +181,9 @@ def _classify_exec_command(
     if executable in {"bash", "sh", "zsh"} and "-c" in argv[1:]:
         return "blocked", "Shell -c execution is blocked in workspace_exec."
 
-    if any(pathish_arg_touches_blocked_location(arg) for arg in argv[1:]):
+    shell_body_index = _shell_command_body_index(argv)
+    path_args = [arg for index, arg in enumerate(argv[1:], 1) if index != shell_body_index]
+    if any(pathish_arg_touches_blocked_location(arg) for arg in path_args):
         return "blocked", "Command argument touches a blocked or out-of-workspace path."
 
     if executable in APPROVAL_REQUIRED_EXECUTABLES:

@@ -117,7 +117,7 @@ Core implementation files:
 - `scripts/command_bundle_review_server.py`: local HTTP review server routes and request handling.
 - `terminal_bridge/mcp_runtime.py`: shared MCP runtime helpers for audit logging, tool-call journal wrapping, runtime directories, and command-bundle result conversion.
 - `terminal_bridge/review_layout.py`: review UI shell, navigation, and shared CSS.
-- `terminal_bridge/review_intents.py`: local companion and signed intent import parsing/validation helpers.
+- `terminal_bridge/review_intents.py`: signed intent token import parsing helpers for the local review UI.
 
 ## Safety Notes
 

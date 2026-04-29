@@ -39,17 +39,7 @@ from terminal_bridge.approval_modes import (
     save_approval_mode,
 )
 from terminal_bridge.handoffs import handoff_json, list_handoffs, next_handoff
-from terminal_bridge.review_intents import (
-    extract_intent_token,
-    import_intent_token,
-    import_intent_json,
-    import_intent_value,
-    intent_import_redirect_location,
-    intent_import_result,
-    normalize_companion_cwd,
-    pending_bundle_url,
-    validate_companion_intent,
-)
+from terminal_bridge.review_intents import intent_import_redirect_location
 from terminal_bridge.review_layout import (
     SERVER_TAB_LABELS,
     app_shell,
@@ -2160,9 +2150,13 @@ class Handler(BaseHTTPRequestHandler):
             content_type = self.headers.get("Content-Type", "")
             try:
                 if "application/json" in content_type:
-                    payload = json.loads(self.read_body())
-                    result = intent_import_result(payload)
-                    self.send_json(result)
+                    self.send_json(
+                        {
+                            "ok": False,
+                            "error": "JSON intent import is no longer supported. Paste a signed local_review_url or raw intent token.",
+                        },
+                        status=400,
+                    )
                     return
 
                 form = self.read_form()
