@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import server
 from scripts import command_bundle_runner as runner
-from terminal_bridge import config, payloads, safety
+from terminal_bridge import config, payloads, safety, tool_calls
 
 
 DIRECT_RISKY_TOOLS = {
@@ -29,6 +29,10 @@ DIRECT_RISKY_TOOLS = {
 
 BUNDLE_TOOLS = {
     "workspace_stage_text_payload",
+    "workspace_submit_command_bundle",
+    "workspace_submit_action_bundle",
+    "workspace_submit_patch_bundle",
+    "workspace_submit_commit_bundle",
     "workspace_command_bundle_status",
     "workspace_wait_command_bundle_status",
     "workspace_stage_command_bundle_and_wait",
@@ -289,10 +293,15 @@ class CommandBundleDedupeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.bundle_ids: list[str] = []
         self.original_audit = server._audit
+        self.original_tool_call_dir = tool_calls.TOOL_CALL_DIR
+        self.tmp_tool_calls = None
         server._audit = lambda *args, **kwargs: None
 
     def tearDown(self) -> None:
         server._audit = self.original_audit
+        tool_calls.TOOL_CALL_DIR = self.original_tool_call_dir
+        if self.tmp_tool_calls is not None:
+            self.tmp_tool_calls.cleanup()
 
         for bundle_id in self.bundle_ids:
             for status in ("pending", "applied", "rejected", "failed"):
@@ -300,6 +309,13 @@ class CommandBundleDedupeTests(unittest.TestCase):
 
     def project_cwd(self) -> str:
         return safety._relative(config.PROJECT_ROOT)
+
+    def use_temp_tool_calls(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        self.tmp_tool_calls = tempfile.TemporaryDirectory()
+        tool_calls.TOOL_CALL_DIR = Path(self.tmp_tool_calls.name)
 
     def test_command_bundle_duplicate_returns_same_bundle_without_new_file(self) -> None:
         title = f"Dedupe command {uuid4().hex[:8]}"
@@ -406,6 +422,76 @@ class CommandBundleDedupeTests(unittest.TestCase):
         )
 
         self.assertEqual(first.bundle_id, second.bundle_id)
+
+    def test_submit_tools_return_stage_results_and_dedupe(self) -> None:
+        command_title = f"Submit command {uuid4().hex[:8]}"
+        command_steps = [server.CommandBundleStep(name="status", argv=["git", "status", "--short"])]
+        command_first = server.workspace_submit_command_bundle(
+            title=command_title,
+            cwd=self.project_cwd(),
+            steps=command_steps,
+        )
+        self.bundle_ids.append(command_first.bundle_id)
+        command_second = server.workspace_submit_command_bundle(
+            title=command_title,
+            cwd=self.project_cwd(),
+            steps=command_steps,
+        )
+
+        action_title = f"Submit action {uuid4().hex[:8]}"
+        action_path = f"tmp-submit-action-{uuid4().hex[:8]}.txt"
+        action_first = server.workspace_submit_action_bundle(
+            title=action_title,
+            cwd=self.project_cwd(),
+            actions=[
+                server.CommandBundleAction(
+                    name="write",
+                    type="write_file",
+                    path=action_path,
+                    content="submit action content",
+                )
+            ],
+        )
+        self.bundle_ids.append(action_first.bundle_id)
+
+        patch_path = f"tmp-submit-patch-{uuid4().hex[:8]}.txt"
+        patch_first = server.workspace_submit_patch_bundle(
+            title="Submit patch",
+            cwd=self.project_cwd(),
+            patch=new_file_patch(patch_path),
+        )
+        self.bundle_ids.append(patch_first.bundle_id)
+
+        commit_message = f"Submit commit {uuid4().hex[:8]}"
+        commit_first = server.workspace_submit_commit_bundle(
+            cwd=self.project_cwd(),
+            paths=["README.md"],
+            message=commit_message,
+        )
+        self.bundle_ids.append(commit_first.bundle_id)
+
+        self.assertIsInstance(command_first, server.CommandBundleStageResult)
+        self.assertIsInstance(action_first, server.CommandBundleStageResult)
+        self.assertIsInstance(patch_first, server.CommandBundleStageResult)
+        self.assertIsInstance(commit_first, server.CommandBundleStageResult)
+        self.assertEqual(command_first.bundle_id, command_second.bundle_id)
+
+    def test_submit_tool_creates_tool_call_journal_record(self) -> None:
+        self.use_temp_tool_calls()
+        title = f"Submit journal {uuid4().hex[:8]}"
+
+        result = server.workspace_submit_command_bundle(
+            title=title,
+            cwd=self.project_cwd(),
+            steps=[server.CommandBundleStep(name="status", argv=["git", "status", "--short"])],
+        )
+        self.bundle_ids.append(result.bundle_id)
+
+        records = tool_calls.list_tool_calls()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["tool_name"], "workspace_submit_command_bundle")
+        self.assertEqual(records[0]["status"], "completed")
+        self.assertEqual(records[0]["result_summary"]["bundle_id"], result.bundle_id)
 
 
 class PatchBundleRunnerTests(unittest.TestCase):

@@ -7,7 +7,12 @@ import unittest
 
 import server
 from terminal_bridge import tool_calls
-from terminal_bridge.models import CommandBundleAction, CommandBundleStatusResult, CommandBundleStep
+from terminal_bridge.models import (
+    CommandBundleAction,
+    CommandBundleStageResult,
+    CommandBundleStatusResult,
+    CommandBundleStep,
+)
 
 
 class StageAndWaitWrapperTests(unittest.TestCase):
@@ -16,6 +21,10 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.original_stage_patch = server.workspace_stage_patch_bundle
         self.original_stage_action = server.workspace_stage_action_bundle
         self.original_stage_commit = server.workspace_stage_commit_bundle
+        self.original_submit_command_impl = server._workspace_submit_command_bundle_impl
+        self.original_submit_patch_impl = server._workspace_submit_patch_bundle_impl
+        self.original_submit_action_impl = server._workspace_submit_action_bundle_impl
+        self.original_submit_commit_impl = server._workspace_submit_commit_bundle_impl
         self.original_wait = server.workspace_wait_command_bundle_status
         self.original_wait_impl = server._workspace_wait_command_bundle_status_impl
         self.original_tool_call_dir = tool_calls.TOOL_CALL_DIR
@@ -27,6 +36,10 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         server.workspace_stage_patch_bundle = self.original_stage_patch
         server.workspace_stage_action_bundle = self.original_stage_action
         server.workspace_stage_commit_bundle = self.original_stage_commit
+        server._workspace_submit_command_bundle_impl = self.original_submit_command_impl
+        server._workspace_submit_patch_bundle_impl = self.original_submit_patch_impl
+        server._workspace_submit_action_bundle_impl = self.original_submit_action_impl
+        server._workspace_submit_commit_bundle_impl = self.original_submit_commit_impl
         server.workspace_wait_command_bundle_status = self.original_wait
         server._workspace_wait_command_bundle_status_impl = self.original_wait_impl
         tool_calls.TOOL_CALL_DIR = self.original_tool_call_dir
@@ -45,14 +58,27 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             updated_at="",
         )
 
+    def stage_result(self, bundle_id: str) -> CommandBundleStageResult:
+        return CommandBundleStageResult(
+            bundle_id=bundle_id,
+            title="fake",
+            cwd=".",
+            status="pending",
+            risk="low",
+            approval_required=True,
+            path=f"/tmp/{bundle_id}.json",
+            review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
+            command_count=1,
+        )
+
     def test_command_bundle_and_wait_calls_stage_then_wait(self) -> None:
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-command")
         steps = [CommandBundleStep(name="status", argv=["git", "status"])]
 
-        def fake_stage(**kwargs: object) -> SimpleNamespace:
-            calls["stage"] = kwargs
-            return SimpleNamespace(bundle_id="cmd-test-command")
+        def fake_submit(title: str, cwd: str, steps: list[CommandBundleStep]) -> CommandBundleStageResult:
+            calls["submit"] = {"title": title, "cwd": cwd, "steps": steps}
+            return self.stage_result("cmd-test-command")
 
         def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
             calls["wait"] = {
@@ -62,7 +88,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             }
             return expected
 
-        server.workspace_stage_command_bundle = fake_stage
+        server._workspace_submit_command_bundle_impl = fake_submit
         server._workspace_wait_command_bundle_status_impl = fake_wait
 
         result = server.workspace_stage_command_bundle_and_wait(
@@ -74,7 +100,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         )
 
         self.assertIs(result, expected)
-        self.assertEqual(calls["stage"], {"title": "Run status", "cwd": ".", "steps": steps})
+        self.assertEqual(calls["submit"], {"title": "Run status", "cwd": ".", "steps": steps})
         self.assertEqual(
             calls["wait"],
             {"bundle_id": "cmd-test-command", "timeout_seconds": 7, "poll_interval_seconds": 0.5},
@@ -84,9 +110,9 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-patch")
 
-        def fake_stage(**kwargs: object) -> SimpleNamespace:
-            calls["stage"] = kwargs
-            return SimpleNamespace(bundle_id="cmd-test-patch")
+        def fake_submit(title: str, cwd: str, patch: str | None, patch_ref: str | None) -> CommandBundleStageResult:
+            calls["submit"] = {"title": title, "cwd": cwd, "patch": patch, "patch_ref": patch_ref}
+            return self.stage_result("cmd-test-patch")
 
         def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
             calls["wait"] = {
@@ -96,7 +122,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             }
             return expected
 
-        server.workspace_stage_patch_bundle = fake_stage
+        server._workspace_submit_patch_bundle_impl = fake_submit
         server._workspace_wait_command_bundle_status_impl = fake_wait
 
         result = server.workspace_stage_patch_bundle_and_wait(
@@ -110,7 +136,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
 
         self.assertIs(result, expected)
         self.assertEqual(
-            calls["stage"],
+            calls["submit"],
             {"title": "Apply patch", "cwd": ".", "patch": "diff --git a/file b/file", "patch_ref": None},
         )
         self.assertEqual(
@@ -123,9 +149,9 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         expected = self.status_result("cmd-test-action")
         actions = [CommandBundleAction(name="write", type="write_file", path="file.txt", content="hello")]
 
-        def fake_stage(**kwargs: object) -> SimpleNamespace:
-            calls["stage"] = kwargs
-            return SimpleNamespace(bundle_id="cmd-test-action")
+        def fake_submit(title: str, cwd: str, actions: list[CommandBundleAction]) -> CommandBundleStageResult:
+            calls["submit"] = {"title": title, "cwd": cwd, "actions": actions}
+            return self.stage_result("cmd-test-action")
 
         def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
             calls["wait"] = {
@@ -135,7 +161,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             }
             return expected
 
-        server.workspace_stage_action_bundle = fake_stage
+        server._workspace_submit_action_bundle_impl = fake_submit
         server._workspace_wait_command_bundle_status_impl = fake_wait
 
         result = server.workspace_stage_action_bundle_and_wait(
@@ -147,7 +173,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         )
 
         self.assertIs(result, expected)
-        self.assertEqual(calls["stage"], {"title": "Write file", "cwd": ".", "actions": actions})
+        self.assertEqual(calls["submit"], {"title": "Write file", "cwd": ".", "actions": actions})
         self.assertEqual(
             calls["wait"],
             {"bundle_id": "cmd-test-action", "timeout_seconds": 9, "poll_interval_seconds": 1.25},
@@ -157,9 +183,9 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-commit")
 
-        def fake_stage(**kwargs: object) -> SimpleNamespace:
-            calls["stage"] = kwargs
-            return SimpleNamespace(bundle_id="cmd-test-commit")
+        def fake_submit(cwd: str, paths: list[str], message: str) -> CommandBundleStageResult:
+            calls["submit"] = {"cwd": cwd, "paths": paths, "message": message}
+            return self.stage_result("cmd-test-commit")
 
         def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
             calls["wait"] = {
@@ -169,7 +195,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             }
             return expected
 
-        server.workspace_stage_commit_bundle = fake_stage
+        server._workspace_submit_commit_bundle_impl = fake_submit
         server._workspace_wait_command_bundle_status_impl = fake_wait
 
         result = server.workspace_stage_commit_bundle_and_wait(
@@ -182,8 +208,8 @@ class StageAndWaitWrapperTests(unittest.TestCase):
 
         self.assertIs(result, expected)
         self.assertEqual(
-            calls["stage"],
-            {"cwd": ".", "paths": ["README.md"], "message": "Update docs", "precheck_commands": None},
+            calls["submit"],
+            {"cwd": ".", "paths": ["README.md"], "message": "Update docs"},
         )
         self.assertEqual(
             calls["wait"],
@@ -198,6 +224,10 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertIn("workspace_stage_patch_bundle_and_wait", tools)
         self.assertIn("workspace_stage_action_bundle_and_wait", tools)
         self.assertIn("workspace_stage_commit_bundle_and_wait", tools)
+        self.assertIn("workspace_submit_command_bundle", tools)
+        self.assertIn("workspace_submit_patch_bundle", tools)
+        self.assertIn("workspace_submit_action_bundle", tools)
+        self.assertIn("workspace_submit_commit_bundle", tools)
         self.assertIn("workspace_list_tool_calls", tools)
         self.assertIn("workspace_tool_call_status", tools)
         self.assertNotIn("workspace_stage_command_bundle", tools)
@@ -208,7 +238,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
     def test_instrumented_function_creates_completed_tool_call_record(self) -> None:
         expected = self.status_result("cmd-test-journal")
 
-        server.workspace_stage_command_bundle = lambda **kwargs: SimpleNamespace(bundle_id="cmd-test-journal")
+        server._workspace_submit_command_bundle_impl = lambda *args, **kwargs: self.stage_result("cmd-test-journal")
         server._workspace_wait_command_bundle_status_impl = lambda *args, **kwargs: expected
 
         result = server.workspace_stage_command_bundle_and_wait(
@@ -226,7 +256,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertEqual(records[0]["result_summary"]["bundle_id"], "cmd-test-journal")
 
     def test_failed_instrumentation_records_failed_status(self) -> None:
-        server.workspace_stage_command_bundle = lambda **kwargs: (_ for _ in ()).throw(ValueError("bad stage"))
+        server._workspace_submit_command_bundle_impl = lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bad submit"))
 
         with self.assertRaises(ValueError):
             server.workspace_stage_command_bundle_and_wait(

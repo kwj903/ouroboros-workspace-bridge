@@ -701,6 +701,10 @@ def workspace_info() -> WorkspaceInfo:
         "workspace_task_finish",
         "workspace_list_tasks",
         "workspace_stage_text_payload",
+        "workspace_submit_command_bundle",
+        "workspace_submit_action_bundle",
+        "workspace_submit_patch_bundle",
+        "workspace_submit_commit_bundle",
         "workspace_command_bundle_status",
         "workspace_wait_command_bundle_status",
         "workspace_stage_command_bundle_and_wait",
@@ -2787,6 +2791,132 @@ def _workspace_wait_command_bundle_status_impl(
         "openWorldHint": False,
     },
 )
+def workspace_submit_command_bundle(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
+    steps: Annotated[list[CommandBundleStep], Field(min_length=1, max_length=20)],
+) -> CommandBundleStageResult:
+    """Submit a command bundle for local approval and return immediately."""
+    return _record_tool_call(
+        "workspace_submit_command_bundle",
+        {"title": title, "cwd": cwd, "steps": steps},
+        lambda: _workspace_submit_command_bundle_impl(title, cwd, steps),
+    )
+
+
+def _workspace_submit_command_bundle_impl(
+    title: str,
+    cwd: str,
+    steps: list[CommandBundleStep],
+) -> CommandBundleStageResult:
+    return workspace_stage_command_bundle(title=title, cwd=cwd, steps=steps)
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_submit_patch_bundle(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
+    patch: Annotated[str | None, Field(description="Unified diff patch text. Prefer patch_ref for large patches.")] = None,
+    patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
+) -> CommandBundleStageResult:
+    """Submit a patch bundle for local approval and return immediately."""
+    return _record_tool_call(
+        "workspace_submit_patch_bundle",
+        {"title": title, "cwd": cwd, "patch": patch, "patch_ref": patch_ref},
+        lambda: _workspace_submit_patch_bundle_impl(title, cwd, patch, patch_ref),
+    )
+
+
+def _workspace_submit_patch_bundle_impl(
+    title: str,
+    cwd: str,
+    patch: str | None,
+    patch_ref: str | None,
+) -> CommandBundleStageResult:
+    return workspace_stage_patch_bundle(title=title, cwd=cwd, patch=patch, patch_ref=patch_ref)
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_submit_action_bundle(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
+    actions: Annotated[list[CommandBundleAction], Field(min_length=1, max_length=30)],
+) -> CommandBundleStageResult:
+    """Submit an action bundle for local approval and return immediately."""
+    return _record_tool_call(
+        "workspace_submit_action_bundle",
+        {"title": title, "cwd": cwd, "actions": actions},
+        lambda: _workspace_submit_action_bundle_impl(title, cwd, actions),
+    )
+
+
+def _workspace_submit_action_bundle_impl(
+    title: str,
+    cwd: str,
+    actions: list[CommandBundleAction],
+) -> CommandBundleStageResult:
+    return workspace_stage_action_bundle(title=title, cwd=cwd, actions=actions)
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_submit_commit_bundle(
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
+    paths: Annotated[
+        list[str],
+        Field(min_length=1, max_length=100, description="Relative paths to stage and commit. Use ['.'] with care."),
+    ],
+    message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
+) -> CommandBundleStageResult:
+    """Submit a git add/commit bundle for local approval and return immediately."""
+    return _record_tool_call(
+        "workspace_submit_commit_bundle",
+        {"cwd": cwd, "paths": paths, "message": message},
+        lambda: _workspace_submit_commit_bundle_impl(cwd, paths, message),
+    )
+
+
+def _workspace_submit_commit_bundle_impl(
+    cwd: str,
+    paths: list[str],
+    message: str,
+) -> CommandBundleStageResult:
+    return workspace_stage_commit_bundle(
+        cwd=cwd,
+        paths=paths,
+        message=message,
+        precheck_commands=None,
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
 def workspace_stage_command_bundle_and_wait(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
@@ -2821,7 +2951,7 @@ def _workspace_stage_command_bundle_and_wait_impl(
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
-    staged = workspace_stage_command_bundle(title=title, cwd=cwd, steps=steps)
+    staged = _workspace_submit_command_bundle_impl(title, cwd, steps)
     return _workspace_wait_command_bundle_status_impl(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
@@ -2875,7 +3005,7 @@ def _workspace_stage_patch_bundle_and_wait_impl(
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
-    staged = workspace_stage_patch_bundle(title=title, cwd=cwd, patch=patch, patch_ref=patch_ref)
+    staged = _workspace_submit_patch_bundle_impl(title, cwd, patch, patch_ref)
     return _workspace_wait_command_bundle_status_impl(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
@@ -2925,7 +3055,7 @@ def _workspace_stage_action_bundle_and_wait_impl(
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
-    staged = workspace_stage_action_bundle(title=title, cwd=cwd, actions=actions)
+    staged = _workspace_submit_action_bundle_impl(title, cwd, actions)
     return _workspace_wait_command_bundle_status_impl(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
@@ -2978,12 +3108,7 @@ def _workspace_stage_commit_bundle_and_wait_impl(
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
-    staged = workspace_stage_commit_bundle(
-        cwd=cwd,
-        paths=paths,
-        message=message,
-        precheck_commands=None,
-    )
+    staged = _workspace_submit_commit_bundle_impl(cwd, paths, message)
     return _workspace_wait_command_bundle_status_impl(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
