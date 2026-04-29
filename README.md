@@ -39,6 +39,16 @@ Stop the local session:
 uv run woojae stop
 ```
 
+## Version and Updates
+
+```bash
+uv run woojae version
+```
+
+Run `uv run woojae version` to inspect your local version and git state. Version numbers are manually bumped for releases; they do not auto-bump on every push.
+
+See [CHANGELOG.md](CHANGELOG.md) for user-facing changes and [docs/project/update-info.md](docs/project/update-info.md) for generated update metadata. Run `uv run python scripts/update_version_info.py` before release or documentation updates. CI checks the stable generated update-info sections; Recent Commits is a generated snapshot and can be refreshed with the same command.
+
 ## Platform Support / 플랫폼 지원
 
 - macOS: supported and tested.

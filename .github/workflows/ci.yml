@@ -38,5 +38,8 @@ jobs:
       - name: Run smoke check
         run: uv run python scripts/smoke_check.py
 
+      - name: Check update info
+        run: uv run python scripts/update_version_info.py --check
+
       - name: Check diff whitespace
         run: git diff --check

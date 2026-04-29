@@ -8,6 +8,8 @@ import sys
 import webbrowser
 from pathlib import Path
 
+from terminal_bridge.version import version_summary
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEV_SESSION = PROJECT_ROOT / "scripts" / "dev_session.sh"
@@ -129,6 +131,15 @@ def copy_mcp_url() -> int:
     return 0
 
 
+def print_version_info() -> int:
+    summary = version_summary()
+    print(f"{summary['name']} {summary['version']}")
+    print(f"commit: {summary['commit']}")
+    print(f"branch: {summary['branch']}")
+    print(f"dirty: {summary['dirty']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="woojae",
@@ -150,6 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("open")
     subparsers.add_parser("mcp-url")
     subparsers.add_parser("copy-url")
+    subparsers.add_parser("version", help="Show version and git metadata.")
     return parser
 
 
@@ -175,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
         return print_mcp_url_preview()
     if args.command == "copy-url":
         return copy_mcp_url()
+    if args.command == "version":
+        return print_version_info()
 
     parser.print_help()
     return 2
