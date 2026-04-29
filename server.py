@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import contextlib
+import base64
 import fnmatch
+import html
 import hmac
 import json
 import os
+import secrets
 import subprocess
 import tempfile
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import parse_qs
@@ -323,6 +327,229 @@ def _dedupe_command_bundle(request_key: str, *, kind: str, title: str | None = N
     return _command_bundle_stage_result(path, record)
 
 
+INTENT_TOKEN_TTL_SECONDS = 15 * 60
+INTENT_SECRET_FILE = RUNTIME_ROOT / "intent_hmac_secret"
+
+
+def _intent_secret() -> bytes:
+    _ensure_runtime_dirs()
+    if INTENT_SECRET_FILE.exists():
+        return INTENT_SECRET_FILE.read_bytes()
+
+    secret = secrets.token_bytes(32)
+    INTENT_SECRET_FILE.write_bytes(secret)
+    try:
+        INTENT_SECRET_FILE.chmod(0o600)
+    except OSError:
+        pass
+    return secret
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode("ascii"))
+
+
+def _sign_intent_payload(payload: dict[str, object]) -> str:
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    body = _b64url_encode(serialized)
+    signature = hmac.new(_intent_secret(), body.encode("ascii"), "sha256").digest()
+    return f"{body}.{_b64url_encode(signature)}"
+
+
+def _validate_intent_token(token: str, *, now: datetime | None = None) -> dict[str, object]:
+    try:
+        body, signature = token.split(".", 1)
+    except ValueError as exc:
+        raise ValueError("Invalid intent token format.") from exc
+
+    expected = _b64url_encode(hmac.new(_intent_secret(), body.encode("ascii"), "sha256").digest())
+    if not hmac.compare_digest(signature, expected):
+        raise ValueError("Invalid intent token signature.")
+
+    try:
+        payload = json.loads(_b64url_decode(body).decode("utf-8"))
+    except Exception as exc:
+        raise ValueError("Invalid intent token payload.") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid intent token payload.")
+
+    expires_at = payload.get("expires_at")
+    if not isinstance(expires_at, str):
+        raise ValueError("Intent token is missing expires_at.")
+
+    current = now or datetime.now(timezone.utc)
+    try:
+        expires = datetime.fromisoformat(expires_at)
+    except ValueError as exc:
+        raise ValueError("Intent token has invalid expires_at.") from exc
+
+    if current > expires:
+        raise ValueError("Intent token has expired.")
+
+    return payload
+
+
+def _local_review_url(token: str) -> str:
+    return f"http://{MCP_HOST}:{MCP_PORT}/review-intent?token={token}"
+
+
+def _prepare_intent(intent_type: str, cwd: str, params: dict[str, object], risk: str, summary: str) -> dict[str, object]:
+    target = _resolve_workspace_path(cwd)
+    if not target.exists():
+        raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
+    if not target.is_dir():
+        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+
+    created = datetime.now(timezone.utc)
+    expires = created + timedelta(seconds=INTENT_TOKEN_TTL_SECONDS)
+    payload: dict[str, object] = {
+        "intent_type": intent_type,
+        "cwd": _relative(target),
+        "params": params,
+        "created_at": created.isoformat(),
+        "expires_at": expires.isoformat(),
+        "nonce": secrets.token_hex(12),
+    }
+    token = _sign_intent_payload(payload)
+    return {
+        "ok": True,
+        "intent_type": intent_type,
+        "risk": risk,
+        "summary": summary,
+        "local_review_url": _local_review_url(token),
+        "expires_at": payload["expires_at"],
+        "diagnosis": "Open the local review URL to preview and approve bundle creation.",
+    }
+
+
+def _intent_command_step_for_check(check: str) -> CommandBundleStep:
+    mapping = {
+        "git_status": CommandBundleStep(name="Git status", argv=["git", "status", "--short", "--branch"], timeout_seconds=30),
+        "py_compile": CommandBundleStep(
+            name="Python compile check",
+            argv=["bash", "-lc", "uv run python -m py_compile server.py terminal_bridge/*.py"],
+            timeout_seconds=120,
+        ),
+        "unit_tests": CommandBundleStep(
+            name="Unit tests",
+            argv=["uv", "run", "python", "-m", "unittest", "discover", "-s", "tests"],
+            timeout_seconds=120,
+        ),
+        "check_all": CommandBundleStep(name="Full local check", argv=["bash", "scripts/check_all.sh"], timeout_seconds=240),
+    }
+    try:
+        return mapping[check]
+    except KeyError as exc:
+        raise ValueError(f"Unknown check intent: {check}") from exc
+
+
+def _intent_command_step_for_dev_session(action: str) -> CommandBundleStep:
+    mapping = {
+        "status": CommandBundleStep(name="Dev session status", argv=["bash", "scripts/dev_session.sh", "status"], timeout_seconds=30),
+        "doctor": CommandBundleStep(name="Dev session doctor", argv=["bash", "scripts/dev_session.sh", "doctor"], timeout_seconds=60),
+        "restart_mcp": CommandBundleStep(name="Restart MCP service", argv=["bash", "scripts/dev_session.sh", "restart", "mcp"], timeout_seconds=60),
+        "restart_session": CommandBundleStep(name="Restart full dev session", argv=["bash", "scripts/dev_session.sh", "restart-session"], timeout_seconds=60),
+    }
+    try:
+        return mapping[action]
+    except KeyError as exc:
+        raise ValueError(f"Unknown dev session intent: {action}") from exc
+
+
+def _intent_changed_paths(cwd: str, include_untracked: bool) -> list[str]:
+    target = _resolve_workspace_path(cwd)
+    completed = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=str(target),
+        env=_safe_env(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=10,
+        shell=False,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"git status failed: {completed.stderr or completed.stdout}")
+
+    paths: list[str] = []
+    for line in completed.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        status = line[:2]
+        path = line[3:]
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        if status == "??" and not include_untracked:
+            continue
+        paths.append(path)
+
+    return paths
+
+
+def _intent_preview(payload: dict[str, object]) -> dict[str, object]:
+    intent_type = str(payload.get("intent_type", ""))
+    cwd = str(payload.get("cwd", "."))
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    if intent_type == "check":
+        check = str(params.get("check", ""))
+        step = _intent_command_step_for_check(check)
+        return {"intent_type": intent_type, "cwd": cwd, "summary": f"Prepare check bundle: {check}", "steps": [step.model_dump()]}
+    if intent_type == "dev_session":
+        action = str(params.get("action", ""))
+        step = _intent_command_step_for_dev_session(action)
+        return {"intent_type": intent_type, "cwd": cwd, "summary": f"Prepare dev session bundle: {action}", "steps": [step.model_dump()]}
+    if intent_type == "commit_current_changes":
+        include_untracked = bool(params.get("include_untracked", False))
+        paths = _intent_changed_paths(cwd, include_untracked)
+        return {
+            "intent_type": intent_type,
+            "cwd": cwd,
+            "summary": f"Prepare commit bundle: {params.get('message', '')}",
+            "paths": paths,
+            "include_untracked": include_untracked,
+        }
+    raise ValueError(f"Unknown intent_type: {intent_type}")
+
+
+def _approve_intent(payload: dict[str, object]) -> CommandBundleStageResult:
+    intent_type = str(payload.get("intent_type", ""))
+    cwd = str(payload.get("cwd", "."))
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    if intent_type == "check":
+        check = str(params.get("check", ""))
+        step = _intent_command_step_for_check(check)
+        return workspace_stage_command_bundle(title=f"Check: {check}", cwd=cwd, steps=[step])
+    if intent_type == "dev_session":
+        action = str(params.get("action", ""))
+        step = _intent_command_step_for_dev_session(action)
+        return workspace_stage_command_bundle(title=f"Dev session: {action}", cwd=cwd, steps=[step])
+    if intent_type == "commit_current_changes":
+        include_untracked = bool(params.get("include_untracked", False))
+        paths = _intent_changed_paths(cwd, include_untracked)
+        if not paths:
+            raise ValueError("No changes to commit.")
+        return workspace_stage_commit_bundle(cwd=cwd, paths=paths, message=str(params.get("message", "")), precheck_commands=None)
+    raise ValueError(f"Unknown intent_type: {intent_type}")
+
+
+def _intent_response(
+    cwd: str,
+    intent_type: str,
+    params: dict[str, object],
+    risk: str,
+    summary: str,
+) -> dict[str, object]:
+    return _prepare_intent(intent_type, cwd, params, risk, summary)
+
+
 def _read_operation_record(operation_id: str) -> dict[str, object] | None:
     return _read_operation(operation_id)
 
@@ -427,6 +654,73 @@ def _is_authorized_mcp_request(
     )
 
 
+def _intent_preview_html(token: str, payload: dict[str, object], preview: dict[str, object]) -> str:
+    escaped_token = html.escape(token, quote=True)
+    title = html.escape(str(preview.get("summary", "Intent preview")))
+    body = html.escape(json.dumps(preview, ensure_ascii=False, indent=2))
+    expires_at = html.escape(str(payload.get("expires_at", "")))
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Intent review</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 32px; max-width: 920px; }}
+    pre {{ background: #f6f8fa; padding: 16px; overflow: auto; }}
+    button {{ padding: 8px 12px; }}
+  </style>
+</head>
+<body>
+  <h1>Intent review</h1>
+  <p>{title}</p>
+  <p>Expires: <code>{expires_at}</code></p>
+  <pre>{body}</pre>
+  <form method="post" action="/review-intent/approve?token={escaped_token}">
+    <button type="submit">Create command bundle</button>
+  </form>
+</body>
+</html>"""
+
+
+def _intent_approved_html(result: CommandBundleStageResult) -> str:
+    body = html.escape(json.dumps(result.model_dump(), ensure_ascii=False, indent=2))
+    bundle_id = html.escape(result.bundle_id)
+    return f"""<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Intent approved</title></head>
+<body>
+  <h1>Command bundle created</h1>
+  <p>Bundle: <code>{bundle_id}</code></p>
+  <p><a href="/pending">Open pending bundles</a></p>
+  <pre>{body}</pre>
+</body>
+</html>"""
+
+
+async def _review_intent_endpoint(request: object):
+    from starlette.responses import HTMLResponse, PlainTextResponse
+
+    token = str(request.query_params.get("token", ""))  # type: ignore[attr-defined]
+    try:
+        payload = _validate_intent_token(token)
+        preview = _intent_preview(payload)
+    except Exception as exc:
+        return PlainTextResponse(f"Invalid intent: {type(exc).__name__}: {exc}", status_code=400)
+    return HTMLResponse(_intent_preview_html(token, payload, preview))
+
+
+async def _approve_intent_endpoint(request: object):
+    from starlette.responses import HTMLResponse, PlainTextResponse
+
+    token = str(request.query_params.get("token", ""))  # type: ignore[attr-defined]
+    try:
+        payload = _validate_intent_token(token)
+        result = _approve_intent(payload)
+    except Exception as exc:
+        return PlainTextResponse(f"Intent approval failed: {type(exc).__name__}: {exc}", status_code=400)
+    return HTMLResponse(_intent_approved_html(result))
+
+
 class AccessTokenMiddleware:
     def __init__(self, app: object, access_token: str | None) -> None:
         self.app = app
@@ -478,7 +772,7 @@ def _run_server() -> None:
         )
 
     from starlette.applications import Starlette
-    from starlette.routing import Mount
+    from starlette.routing import Mount, Route
     import uvicorn
 
     protected_mcp_app = AccessTokenMiddleware(mcp.streamable_http_app(), MCP_ACCESS_TOKEN)
@@ -490,6 +784,8 @@ def _run_server() -> None:
 
     app = Starlette(
         routes=[
+            Route("/review-intent", _review_intent_endpoint, methods=["GET"]),
+            Route("/review-intent/approve", _approve_intent_endpoint, methods=["POST"]),
             Mount("/", app=protected_mcp_app),
         ],
         lifespan=lifespan,
@@ -688,6 +984,9 @@ def workspace_info() -> WorkspaceInfo:
         "workspace_git_diff",
         "workspace_preview_patch",
         "workspace_transport_probe",
+        "workspace_prepare_check_intent",
+        "workspace_prepare_commit_current_changes_intent",
+        "workspace_prepare_dev_session_intent",
         "workspace_read_audit_log",
         "workspace_recover_last_activity",
         "workspace_list_tool_calls",
@@ -1271,6 +1570,74 @@ def _workspace_transport_probe_impl(cwd: str, include_git_status: bool) -> dict[
         "git_status_summary": git_status,
         "diagnosis": "Transport probe reached the MCP server.",
     }
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_prepare_check_intent(
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
+    check: Annotated[Literal["git_status", "py_compile", "unit_tests", "check_all"], Field(description="Check bundle to prepare.")],
+) -> dict[str, object]:
+    """Prepare a signed local review URL for a check command bundle without creating it."""
+    return _record_tool_call(
+        "workspace_prepare_check_intent",
+        {"cwd": cwd, "check": check},
+        lambda: _intent_response(cwd, "check", {"check": check}, "low", f"Prepare check bundle: {check}"),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_prepare_commit_current_changes_intent(
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
+    message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
+    include_untracked: Annotated[bool, Field(description="Whether approval should include untracked files.")] = False,
+) -> dict[str, object]:
+    """Prepare a signed local review URL for committing current changes without creating a bundle."""
+    return _record_tool_call(
+        "workspace_prepare_commit_current_changes_intent",
+        {"cwd": cwd, "message": message, "include_untracked": include_untracked},
+        lambda: _intent_response(
+            cwd,
+            "commit_current_changes",
+            {"message": message, "include_untracked": include_untracked},
+            "medium",
+            "Prepare commit bundle for current changes.",
+        ),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_prepare_dev_session_intent(
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
+    action: Annotated[Literal["status", "doctor", "restart_mcp", "restart_session"], Field(description="Dev session action to prepare.")],
+) -> dict[str, object]:
+    """Prepare a signed local review URL for a dev-session command bundle without creating it."""
+    risk = "low" if action in {"status", "doctor"} else "medium"
+    return _record_tool_call(
+        "workspace_prepare_dev_session_intent",
+        {"cwd": cwd, "action": action},
+        lambda: _intent_response(cwd, "dev_session", {"action": action}, risk, f"Prepare dev session bundle: {action}"),
+    )
 
 
 @mcp.tool(
