@@ -32,6 +32,8 @@ EXPECTED_TOOLS = {
     "workspace_prepare_commit_current_changes_intent",
     "workspace_prepare_dev_session_intent",
     "workspace_recover_last_activity",
+    "workspace_next_handoff",
+    "workspace_list_handoffs",
     "workspace_list_tool_calls",
     "workspace_tool_call_status",
     "workspace_stage_text_payload",

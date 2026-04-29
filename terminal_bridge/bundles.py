@@ -16,6 +16,7 @@ from terminal_bridge.config import (
     COMMAND_BUNDLE_REJECTED_DIR,
 )
 from terminal_bridge.storage import _now_iso, _read_json, _write_json
+from terminal_bridge.handoffs import write_handoff_from_bundle
 
 
 def _command_bundle_dirs() -> list[Path]:
@@ -116,6 +117,8 @@ def _move_command_bundle(
 
     target_path = _command_bundle_path(bundle_id, target_status)
     _write_command_bundle(target_path, record)
+    if target_status in {"applied", "failed", "rejected"}:
+        write_handoff_from_bundle(record)
 
     if source_path != target_path and source_path.exists():
         source_path.unlink()

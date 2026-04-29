@@ -66,6 +66,7 @@ from terminal_bridge.config import (
     COMMAND_BUNDLE_FAILED_DIR,
     COMMAND_BUNDLE_PENDING_DIR,
     COMMAND_BUNDLE_REJECTED_DIR,
+    HANDOFF_DIR,
     MAX_STDERR_CHARS,
     MAX_STDOUT_CHARS,
     MAX_WRITE_CHARS,
@@ -101,6 +102,8 @@ from terminal_bridge.models import (
     FileMatchEntry,
     FindFilesResult,
     GitCommitResult,
+    HandoffEntry,
+    HandoffListResult,
     ListResult,
     OperationListResult,
     OperationStatusResult,
@@ -129,6 +132,8 @@ from terminal_bridge.models import (
     WorkspaceInfo,
     WriteFileResult,
 )
+from terminal_bridge.handoffs import list_handoffs as _list_handoff_records
+from terminal_bridge.handoffs import next_handoff as _next_handoff_record
 from terminal_bridge.operations import (
     _begin_operation,
     _complete_operation,
@@ -247,6 +252,7 @@ def _ensure_runtime_dirs() -> None:
     TASK_DIR.mkdir(parents=True, exist_ok=True)
     TEXT_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
     TOOL_CALL_DIR.mkdir(parents=True, exist_ok=True)
+    HANDOFF_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_PENDING_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_APPLIED_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_REJECTED_DIR.mkdir(parents=True, exist_ok=True)
@@ -1088,6 +1094,8 @@ def workspace_info() -> WorkspaceInfo:
         "workspace_prepare_dev_session_intent",
         "workspace_read_audit_log",
         "workspace_recover_last_activity",
+        "workspace_next_handoff",
+        "workspace_list_handoffs",
         "workspace_list_tool_calls",
         "workspace_tool_call_status",
         "workspace_get_operation",
@@ -1837,6 +1845,53 @@ def _workspace_recover_last_activity_impl(cwd: str, bundle_limit: int, audit_lim
         "latest_audit_events": audit_entries,
         "diagnosis": diagnosis,
     }
+
+
+def _handoff_entry(record: dict[str, object]) -> HandoffEntry:
+    return HandoffEntry(
+        handoff_id=str(record.get("handoff_id", "")),
+        bundle_id=str(record.get("bundle_id", "")),
+        status=str(record.get("status", "unknown")),
+        ok=record.get("ok") if isinstance(record.get("ok"), bool) else None,
+        risk=str(record.get("risk", "unknown")),
+        title=str(record.get("title", "")),
+        cwd=str(record.get("cwd", "")),
+        next=str(record.get("next", "inspect_logs")),
+        stdout_tail=str(record.get("stdout_tail", "")),
+        stderr_tail=str(record.get("stderr_tail", "")),
+        created_at=str(record.get("created_at", "")),
+        updated_at=str(record.get("updated_at", "")),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_next_handoff() -> HandoffEntry | None:
+    """Return the latest local bundle handoff, if one exists."""
+    record = _next_handoff_record()
+    return _handoff_entry(record) if record is not None else None
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_list_handoffs(
+    limit: Annotated[int, Field(ge=1, le=100, description="Maximum handoff records to return.")] = 20,
+) -> HandoffListResult:
+    """List recent local bundle handoffs, newest first."""
+    entries = [_handoff_entry(record) for record in _list_handoff_records(limit)]
+    return HandoffListResult(entries=entries, count=len(entries))
 
 
 @mcp.tool(

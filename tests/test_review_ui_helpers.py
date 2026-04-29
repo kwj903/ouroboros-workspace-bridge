@@ -12,7 +12,7 @@ from uuid import uuid4
 import server
 from scripts import command_bundle_review_server as review
 from scripts import command_bundle_watcher as watcher
-from terminal_bridge import config, safety, tool_calls
+from terminal_bridge import config, handoffs, safety, tool_calls
 from terminal_bridge import review_notifications as notifications
 
 
@@ -29,12 +29,14 @@ class ReviewServerHelperTests(unittest.TestCase):
         )
         self.original_audit_log = review.AUDIT_LOG
         self.original_runtime_root = review.RUNTIME_ROOT
+        self.original_handoff_dir = handoffs.HANDOFF_DIR
 
         review.PENDING_DIR = root / "pending"
         review.APPLIED_DIR = root / "applied"
         review.REJECTED_DIR = root / "rejected"
         review.FAILED_DIR = root / "failed"
         review.AUDIT_LOG = root / "audit.jsonl"
+        handoffs.HANDOFF_DIR = root / "handoffs"
 
         for directory in review.bundle_dirs():
             directory.mkdir(parents=True, exist_ok=True)
@@ -48,6 +50,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         ) = self.original_dirs
         review.AUDIT_LOG = self.original_audit_log
         review.RUNTIME_ROOT = self.original_runtime_root
+        handoffs.HANDOFF_DIR = self.original_handoff_dir
         self.tmp.cleanup()
 
     def write_bundle(self, status: str, bundle_id: str, updated_at: str) -> None:
@@ -316,6 +319,25 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("Intent import failed", html)
         self.assertIn("expired", html)
         self.assertIn("고급: Intent 직접 가져오기", html)
+
+    def test_latest_handoff_html_links_to_focused_bundle(self) -> None:
+        handoffs.write_handoff_from_bundle(
+            {
+                "bundle_id": "cmd-latest",
+                "title": "Latest handoff",
+                "cwd": ".",
+                "status": "applied",
+                "risk": "low",
+                "result": {"ok": True, "steps": [{"stdout": "done", "stderr": "", "exit_code": 0}]},
+                "error": None,
+            }
+        )
+
+        html = review.latest_handoff_html()
+
+        self.assertIn("Latest handoff / Copy for ChatGPT", html)
+        self.assertIn("/pending?bundle_id=cmd-latest", html)
+        self.assertIn("&quot;bundle_id&quot;: &quot;cmd-latest&quot;", html)
 
     def test_short_error_truncates_long_strings(self) -> None:
         error = review.short_error("x" * 200, max_chars=20)

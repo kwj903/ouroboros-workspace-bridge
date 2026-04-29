@@ -249,6 +249,26 @@ class ToolCallListResult(BaseModel):
     count: int
 
 
+class HandoffEntry(BaseModel):
+    handoff_id: str
+    bundle_id: str
+    status: str
+    ok: bool | None
+    risk: str
+    title: str
+    cwd: str
+    next: str
+    stdout_tail: str
+    stderr_tail: str
+    created_at: str
+    updated_at: str
+
+
+class HandoffListResult(BaseModel):
+    entries: list[HandoffEntry]
+    count: int
+
+
 class FileMatchEntry(BaseModel):
     path: str
     kind: str

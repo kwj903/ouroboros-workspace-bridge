@@ -39,6 +39,7 @@ from terminal_bridge.approval_modes import (
     normalize_approval_mode,
     save_approval_mode,
 )
+from terminal_bridge.handoffs import handoff_json, list_handoffs
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = PROJECT_ROOT / "scripts" / "command_bundle_runner.py"
@@ -394,6 +395,25 @@ def intent_inbox_html() -> str:
         </div>
       </form>
     </details>
+    """
+
+
+def latest_handoff_html() -> str:
+    records = list_handoffs(1)
+    if not records:
+        return ""
+
+    record = records[0]
+    bundle_id = str(record.get("bundle_id", ""))
+    body = escape(handoff_json(record))
+    return f"""
+    <section class="card">
+      <h2>Latest handoff / Copy for ChatGPT</h2>
+      <p class="meta">
+        최근 완료된 bundle: <a href="/pending?bundle_id={escape(bundle_id)}"><code>{escape(bundle_id)}</code></a>
+      </p>
+      <pre>{body}</pre>
+    </section>
     """
 
 
@@ -2603,6 +2623,7 @@ class Handler(BaseHTTPRequestHandler):
                 + approval_mode_card_html(approval_mode)
                 + "<p><a href='/history'>전체 이력 보기</a></p>"
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
+                + latest_handoff_html()
                 + intent_inbox_html()
                 + command_bundle_poll_script()
             )

@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from terminal_bridge.config import RUNTIME_ROOT, WORKSPACE_ROOT
+from terminal_bridge.handoffs import write_handoff_from_bundle
 
 COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
 PENDING_DIR = COMMAND_BUNDLES_DIR / "pending"
@@ -544,6 +545,8 @@ def move_bundle(source: Path, record: dict[str, Any], status: str) -> None:
     record["status"] = status
     record["updated_at"] = now_iso()
     write_json(target, record)
+    if status in {"applied", "failed", "rejected"}:
+        write_handoff_from_bundle(record)
 
     if source != target and source.exists():
         source.unlink()
