@@ -71,7 +71,9 @@ uv run woojae start
 uv run woojae mcp-url
 ```
 
-During setup, choose the `WORKSPACE_ROOT` ChatGPT may access. Existing shell environment values such as `WORKSPACE_ROOT`, `NGROK_HOST`, and `MCP_ACCESS_TOKEN` are respected.
+During setup, choose the `WORKSPACE_ROOT` ChatGPT may access and the default help language. Existing shell environment values such as `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and `WOOJAE_HELP_LANG` are respected.
+
+Project-specific command help is available with `uv run woojae help`. Use `uv run woojae help --lang ko` or set `Help language` to `ko` during setup for Korean help by default.
 
 If `NGROK_HOST` is not configured, `uv run woojae start` uses ngrok temporary URL mode. `uv run woojae copy-url` requires both `NGROK_HOST` and `MCP_ACCESS_TOKEN`; it uses `pbcopy` on macOS, `xclip` on Linux, and `clip` on Windows when available. Use `uv run woojae mcp-url` to print a redacted URL preview.
 

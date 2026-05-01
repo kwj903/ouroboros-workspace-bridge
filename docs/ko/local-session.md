@@ -18,7 +18,9 @@ cd ouroboros-workspace-bridge
 uv run woojae setup
 ```
 
-설정 과정에서 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`를 선택합니다. shell에 이미 설정된 `WORKSPACE_ROOT`, `MCP_ACCESS_TOKEN`, `NGROK_HOST`는 runtime `session.env`보다 우선합니다.
+설정 과정에서 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 기본 도움말 언어를 선택합니다. shell에 이미 설정된 `WORKSPACE_ROOT`, `MCP_ACCESS_TOKEN`, `NGROK_HOST`, `WOOJAE_HELP_LANG`은 runtime `session.env`보다 우선합니다.
+
+프로젝트 명령어 도움말은 `uv run woojae help`로 확인할 수 있습니다. 한국어 도움말을 기본으로 보려면 setup 중 `Help language`를 `ko`로 저장하거나 `uv run woojae help --lang ko`를 사용하세요.
 
 환경을 점검합니다.
 

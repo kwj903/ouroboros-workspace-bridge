@@ -20,7 +20,9 @@ Run the initial setup when configuring a checkout for the first time:
 uv run woojae setup
 ```
 
-This writes private runtime settings outside the repository. During setup, choose the allowed `WORKSPACE_ROOT`. Existing shell environment values such as `WORKSPACE_ROOT`, `MCP_ACCESS_TOKEN`, and `NGROK_HOST` take precedence over values loaded from runtime `session.env`.
+This writes private runtime settings outside the repository. During setup, choose the allowed `WORKSPACE_ROOT` and the default help language. Existing shell environment values such as `WORKSPACE_ROOT`, `MCP_ACCESS_TOKEN`, `NGROK_HOST`, and `WOOJAE_HELP_LANG` take precedence over values loaded from runtime `session.env`.
+
+Use `uv run woojae help` for project-specific command help. Use `uv run woojae help --lang ko` for Korean help, or save `Help language` as `ko` during setup.
 
 Check the local environment:
 

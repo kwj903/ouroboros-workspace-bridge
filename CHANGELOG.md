@@ -2,6 +2,23 @@
 
 This project uses a lightweight changelog format inspired by Keep a Changelog.
 
+## Unreleased
+
+### Added
+
+- Project-specific `woojae help` command with English and Korean command descriptions.
+- Setup-time `Help language` preference stored in runtime session settings.
+
+### Changed
+
+- User documentation now explains help language selection, `WOOJAE_HELP_LANG`, and Korean help usage.
+
+### Verified
+
+- `uv run python -m compileall -q server.py terminal_bridge scripts`
+- `env PYTHONPATH=. uv run --with pytest pytest`
+- `git diff --check`
+
 ## 0.3.1
 
 ### Added

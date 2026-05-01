@@ -63,10 +63,13 @@ uv run woojae setup
 During setup:
 
 - choose the `WORKSPACE_ROOT` that ChatGPT is allowed to access
+- choose the default help language with `Help language [auto/en/ko]`
 - keep any existing shell environment values when they are already set
 - save private runtime settings outside the repository
 
-Existing shell values such as `WORKSPACE_ROOT`, `NGROK_HOST`, and `MCP_ACCESS_TOKEN` take precedence over runtime `session.env`.
+Existing shell values such as `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and `WOOJAE_HELP_LANG` take precedence over runtime `session.env`.
+
+Project-specific command help is available with `uv run woojae help`. Use `uv run woojae help --lang ko` for Korean help, or save `Help language` as `ko` during setup.
 
 ## Start
 
