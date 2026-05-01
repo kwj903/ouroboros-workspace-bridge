@@ -1,6 +1,6 @@
 # Update Info
 
-Version: 0.1.0
+Version: 0.2.0
 
 For live local version and git state, run:
 
@@ -12,26 +12,26 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
+- 890ce7c Clean up companion flow and relax bundle limits
+- 18c9442 Refactor MCP and review server helpers
+- 21708cc Add local pending action intents
+- a10a7a3 Add ChatGPT companion workflow prototype
+- 20dd5d4 Fix review UI horizontal overflow
+- 5adb855 Add bundle handoff queue
+- 25b799a Collapse intent inbox in review UI
+- 0afd266 Add intent inbox to review UI
+- 510f9f3 Show bundle handoff summaries in review UI
+- 37814d3 Polish intent workflow and check handling
+- 8ec0505 Import intents into pending review UI
+- 905085e Add read-only intent review flow
+- 469bfc7 Add transport probe tool
+- d68f8ef Add submit-first command bundle tools
+- ccc5877 Add request key dedupe for command bundles
+- f09bd37 Add tool call journal
+- e04225b Add recovery snapshot tool
+- 944856c Hide primitive stage tools from MCP schema
+- 1331602 Add version and update info tooling
 - 1954b91 Share watcher logic across review modes
-- 6ef7baa Add restart-session CLI command and connection docs
-- ae6f208 Add approval mode controls
-- d9eafed Add stage-and-wait bundle tools
-- ae113bd Add optional MCP token generation in setup
-- 46b7b02 Set workspace root in CI
-- 1259dcd Align bilingual user docs
-- e124f34 Document platform support
-- ce0f8ec Add non-commercial license metadata
-- 70665bf Document contribution license
-- a1cfa62 Document non-commercial license
-- ec8d961 Adopt non-commercial license
-- 668b50c Update README repository URL
-- 1d3f43e Organize bilingual user docs
-- f1503ef Show Ouroboros logo in README
-- 5bafdce Add Ouroboros brand assets
-- 2634482 Add repository hygiene docs and CI
-- e1c73fa Add configurable workspace root and woojae CLI
-- b87660e Document payload ref usage thresholds
-- 62ff809 Link ChatGPT project instructions guide from README
 
 ## How to Update Existing Installation
 

@@ -24,10 +24,10 @@
 
 Ouroboros Workspace Bridge를 사용할 때는 아래 규칙을 최우선으로 따른다.
 
-- `workspace_stage_action_bundle.actions.length`는 반드시 1이어야 한다.
-- `workspace_stage_command_bundle.steps.length`는 반드시 1이어야 한다.
+- `workspace_stage_action_bundle_and_wait.actions.length`는 반드시 1이어야 한다.
+- `workspace_stage_command_bundle_and_wait.steps.length`는 반드시 1이어야 한다.
 - 파일 수정, 테스트, git add, git commit을 절대 하나의 bundle에 섞지 않는다.
-- `workspace_stage_commit_bundle.precheck_commands`는 사용하지 않는다.
+- 커밋 proposal에는 테스트나 precheck 명령을 섞지 않는다.
 - 하나의 bundle은 하나의 작업만 수행한다.
 - pending bundle을 만든 뒤에는 사용자 승인/거부와 bundle status 확인 전까지 다음 mutation bundle을 만들지 않는다.
 - 효율성보다 안전한 단계 분리가 우선이다.
@@ -63,7 +63,7 @@ Ouroboros Workspace Bridge mutation tool을 호출하기 직전에 반드시 점
 - 테스트 코드 일부 추가
 - 2KB 이하의 `old_text` / `new_text`
 
-이런 경우에는 `workspace_stage_action_bundle`의 action 1개에 `content`, `old_text`, `new_text`를 직접 넣는다.
+이런 경우에는 `workspace_stage_action_bundle_and_wait`의 action 1개에 `content`, `old_text`, `new_text`를 직접 넣는다.
 
 payload ref를 사용하는 경우:
 

@@ -12,13 +12,24 @@ Preferred flow:
 
 1. Inspect current state.
 2. Read the relevant files.
-3. Stage one small bundle.
+3. Stage one small proposal bundle.
 4. Approve locally in the review UI.
 5. Check bundle status.
 6. Verify with one command at a time.
 7. Commit only after verification.
 
 Do not mix file edits, tests, and commits in the same bundle.
+
+The default public mutation path is the stage-and-wait proposal flow:
+
+```text
+workspace_stage_action_bundle_and_wait
+workspace_stage_command_bundle_and_wait
+workspace_stage_patch_bundle_and_wait
+workspace_stage_commit_bundle_and_wait
+```
+
+Submit-first tools, signed-intent preparation tools, and direct operation/trash tools may remain in the implementation for internal or advanced workflows, but they are hidden from the default public MCP schema.
 
 ## Read-only inspection
 
@@ -45,7 +56,7 @@ Then inspect files before staging any mutation bundle.
 
 ## Action bundles
 
-Use action bundles for small file edits.
+Use `workspace_stage_action_bundle_and_wait` for small file edits.
 
 Typical use cases:
 
@@ -55,16 +66,18 @@ Typical use cases:
 
 Rules:
 
-- One action per bundle.
+- One action per proposal bundle.
 - Do not include tests in the same bundle.
 - Do not include git add or commit in the same bundle.
+- The proposal does not directly edit project files; files change only after local approval.
+- File action apply captures target file snapshots before execution and rolls back action changes on failure.
 - Check bundle status after approval.
 
 Large content should be stored first with `workspace_stage_text_payload`, then referenced by `content_ref`, `old_text_ref`, or `new_text_ref`.
 
 ## Command bundles
 
-Use command bundles for one local command at a time.
+Use `workspace_stage_command_bundle_and_wait` for one local command at a time.
 
 Examples:
 
@@ -76,9 +89,10 @@ git diff --check
 
 Rules:
 
-- One command per bundle.
+- One command step per proposal bundle.
 - Do not use long `bash -lc` chains.
 - Do not combine unit tests, smoke checks, and commits.
+- The proposal does not directly execute commands; commands run only after local approval.
 - Check command bundle status after approval.
 
 If a verification sequence becomes long, create a small `scripts/check_*.sh` or `scripts/check_*.py` file first, then run that script as a single command bundle.
@@ -91,7 +105,7 @@ Recommended flow:
 
 1. Generate a unified diff.
 2. Store large patch text with `workspace_stage_text_payload`.
-3. Stage the patch with `workspace_stage_patch_bundle`.
+3. Stage the patch with `workspace_stage_patch_bundle_and_wait`.
 4. Review and approve in the local review UI.
 5. Check bundle status.
 6. Inspect the resulting diff.
@@ -108,12 +122,12 @@ Recommended flow:
 1. Check `workspace_git_status`.
 2. Confirm only expected files changed.
 3. Run the needed verification commands.
-4. Stage a commit-only bundle.
+4. Stage a commit-only bundle with `workspace_stage_commit_bundle_and_wait`.
 5. Approve locally.
 6. Check bundle status.
 7. Confirm final `workspace_git_status` is clean.
 
-Do not use `precheck_commands` in commit bundles. Verification should happen before the commit bundle as separate command bundles.
+Do not use `precheck_commands` in commit proposals. Verification should happen before the commit proposal as separate command bundles.
 
 ## Text payload refs
 
@@ -238,11 +252,14 @@ Workspace Terminal Bridge uses several guardrails:
 - workspace root is constrained under the configured `WORKSPACE_ROOT`
 - path traversal is blocked
 - sensitive directories and secret-like files are blocked
-- direct mutation tools are hidden by default
+- direct mutation, submit-first, signed-intent, and direct operation/trash tools are hidden by default
 - file changes are staged through local approval bundles
-- action bundle apply requires a clean worktree
+- public action proposals enforce one action per call
+- public command proposals enforce one command step per call
+- file action bundles snapshot target files before apply and roll back action changes on failure
+- patch bundles validate paths, run `git apply --check`, and back up touched files before apply
 - backups are created for file-changing operations
-- audit and operation records are stored under runtime data
+- audit, tool-call, bundle, and handoff records are stored under runtime data
 
 Direct mutation tools should only be exposed for local debugging with explicit environment configuration.
 

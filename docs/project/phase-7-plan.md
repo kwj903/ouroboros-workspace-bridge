@@ -1,89 +1,75 @@
 # Phase 7 Plan
 
-Phase 7 should build on the completed Phase 6 local session supervisor work. The goal is to improve stability, observability, and operator confidence before adding larger new capabilities.
+Phase 7 should build on the completed Phase 6 local session supervisor work and the later cleanup that made the stage-and-wait proposal tools the default public mutation path. The goal is to improve stability, observability, documentation alignment, and operator confidence before adding larger new capabilities.
 
 ## Goal
 
-Make Workspace Terminal Bridge easier to operate, debug, and recover when local sessions, command bundles, or review UI flows get stuck.
+Make Workspace Terminal Bridge easier to operate, debug, document, and recover when local sessions, command bundles, or review UI flows get stuck.
 
 ## Guiding principles
 
 - Keep local control explicit and reviewable.
 - Prefer small, testable changes over broad rewrites.
 - Do not expose secrets in UI, logs, bundle output, diagnostics, or docs.
-- Keep Workspace Terminal Bridge tool calls small by using scripts, payload refs, and short bundles.
+- Keep Workspace Terminal Bridge tool calls small by using scripts, payload refs, and short proposal bundles.
 - Preserve the current safe workflow: inspect first, stage changes, approve locally, verify, then commit.
+- Treat `workspace_stage_*_and_wait` as the default public mutation path.
+- Keep action and command proposals intentionally small: one action or one command step per proposal.
 
 ## Recommended scope
 
-### 1. Regression tests for Phase 6 behavior
+### 1. Regression tests for current public proposal behavior
 
-Add targeted tests for the behaviors that were fixed or stabilized during Phase 6.
+Add targeted tests for the behaviors that now define the default ChatGPT workflow.
 
 Candidate tests:
 
-- Full session restart scheduling launches a detached helper.
+- `workspace_stage_action_bundle_and_wait` rejects proposals with more than one action.
+- `workspace_stage_command_bundle_and_wait` rejects proposals with more than one command step.
+- The default public MCP schema exposes stage-and-wait proposal tools.
+- Submit-first tools, signed-intent preparation tools, and direct operation/trash tools stay hidden from the default public MCP schema.
+- File action bundles snapshot target files before apply and roll back action changes on failure.
+- JSON companion imports to `/intents/import` continue to be rejected.
 - Sensitive stdout/stderr masking covers `access_token`, Bearer tokens, `MCP_ACCESS_TOKEN`, and `NGROK_AUTHTOKEN` patterns.
-- Process table rendering keeps full paths in `title` while displaying short filenames.
-- MCP/ngrok controls render the correct Start, Stop, and Restart buttons by state.
-- Review service renders as terminal-only and cannot be individually controlled from the UI.
 
 Success criteria:
 
-- Existing 102 tests continue to pass.
-- New tests focus on pure helper/rendering behavior where possible.
-- No live process control is required in unit tests.
+- The existing test suite continues to pass.
+- New tests focus on pure helper, schema, wrapper, or runner behavior where possible.
+- No live process control is required in unit tests unless the test is explicitly scoped as an integration check.
 
-### 2. Troubleshooting guide
+### 2. Documentation alignment
 
-Create a short operator guide for common failure modes.
+The project now has focused bilingual user documentation and project maintenance docs. Phase 7 should keep them accurate as the MCP schema and local workflow evolve.
 
-Candidate file:
-
-```text
-docs/troubleshooting.md
-```
-
-Recommended sections:
-
-- Review UI is unreachable.
-- MCP server is unreachable.
-- ngrok is not connected.
-- Bundle is stuck in pending/applied/failed state.
-- PID file is stale.
-- Full session restart did not recover.
-- ChatGPT app MCP connection needs refresh.
-- A tool call appeared to fail but may have already staged a bundle.
-
-Success criteria:
-
-- Each failure mode has commands to check status, logs, and bundle state.
-- Commands are short enough to copy safely.
-- Recovery steps prefer `scripts/dev_session.sh status`, `logs`, `restart`, `restart-session`, and `stop/start`.
-
-### 3. README decomposition
-
-The README now covers product overview, security, session operations, bundle workflows, testing, and troubleshooting. It may become easier to maintain if long operational sections move into focused docs.
-
-Candidate docs:
+Key files:
 
 ```text
-docs/local-session.md
-docs/command-bundles.md
-docs/security.md
-docs/troubleshooting.md
+docs/en/quickstart.md
+docs/en/local-session.md
+docs/en/workflow.md
+docs/en/troubleshooting.md
+docs/en/chatgpt-agent-usage.md
+docs/ko/quickstart.md
+docs/ko/local-session.md
+docs/ko/workflow.md
+docs/ko/troubleshooting.md
+docs/ko/chatgpt-agent-usage.md
+docs/project/development-workflow.md
+docs/project/update-info.md
 ```
 
 Success criteria:
 
 - README remains the entrypoint.
-- Detailed workflows move to docs without losing important warnings.
-- Existing command examples remain accurate.
-- Secret handling warnings stay visible in README.
+- Detailed workflows stay in focused docs without losing important warnings.
+- Korean and English docs describe the same default public workflow.
+- No user-facing doc presents submit-first tools, signed intents, direct operation tools, or companion JSON imports as the normal path.
+- Secret handling warnings stay visible in README and local session docs.
 
-### 4. Process management UX polish
+### 3. Process management UX polish
 
-Improve the `/servers?tab=processes` page after the Phase 6 functionality is stable.
+Improve the `/servers?tab=processes` page after the current safe workflow is stable.
 
 Candidate improvements:
 
@@ -99,21 +85,39 @@ Success criteria:
 - UI controls do not attempt to individually control the review process.
 - Failure output continues to be masked.
 
-### 5. Release workflow hardening
+### 4. Release workflow hardening
 
 Add a small repeatable release checklist flow.
 
 Candidate improvements:
 
-- Add `docs/release-process.md`.
+- Add `docs/project/release-process.md` if the release workflow grows beyond the current update info and checklist docs.
 - Add a lightweight checklist command or script only if it does not duplicate existing smoke checks.
 - Standardize final verification commands for docs-only, UI-only, and server/tool-schema changes.
+- Keep `docs/project/update-info.md` generated by `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
 Success criteria:
 
 - A release can be closed from clean `main` with documented commands.
 - Docs-only changes do not require unnecessary MCP restart.
 - MCP schema changes explicitly require MCP restart and ChatGPT app refresh.
+- Recent commit metadata and changelog notes are refreshed before release.
+
+### 5. Changelog and operator handoff hygiene
+
+Keep high-level release notes aligned with the actual operator-facing behavior.
+
+Candidate improvements:
+
+- Update `CHANGELOG.md` when the default public tool flow changes.
+- Keep generated update metadata separate from human-written changelog notes.
+- Make final handoff summaries mention verification commands, bundle IDs, and whether MCP restart is required.
+
+Success criteria:
+
+- Users can tell what changed without reading `server.py`.
+- Generated metadata and human-written notes do not contradict each other.
+- Handoff summaries stay short and actionable.
 
 ## Suggested execution order
 
@@ -121,10 +125,10 @@ Success criteria:
 
 Focus on the behaviors most likely to regress:
 
-1. Sensitive output masking.
-2. Detached full session restart scheduling.
-3. Process control button rendering.
-4. Terminal-only review service behavior.
+1. Public proposal wrapper limits: one action and one command step.
+2. Default MCP schema visibility: stage-and-wait tools exposed, internal tools hidden.
+3. File action snapshot and rollback behavior.
+4. Sensitive output masking.
 
 Recommended verification:
 
@@ -133,19 +137,9 @@ uv run python -m unittest discover -s tests
 git diff --check
 ```
 
-### Phase 7B: Troubleshooting docs
+### Phase 7B: Documentation alignment
 
-Add `docs/troubleshooting.md` after the tests clarify expected behavior.
-
-Recommended verification:
-
-```bash
-git diff --check
-```
-
-### Phase 7C: README split
-
-Move detailed operational content gradually. Avoid rewriting the whole README in one change.
+Keep the bilingual user docs and project docs synchronized with the current public MCP schema.
 
 Recommended verification:
 
@@ -153,7 +147,7 @@ Recommended verification:
 git diff --check
 ```
 
-### Phase 7D: Process UX polish
+### Phase 7C: Process UX polish
 
 Make one UI improvement at a time and verify rendering helpers through tests.
 
@@ -162,6 +156,17 @@ Recommended verification:
 ```bash
 uv run python -m unittest discover -s tests
 uv run python scripts/smoke_check.py
+git diff --check
+```
+
+### Phase 7D: Release hardening
+
+Tighten update metadata, changelog, and release checklist behavior.
+
+Recommended verification:
+
+```bash
+uv run python scripts/update_version_info.py --check
 git diff --check
 ```
 
@@ -177,11 +182,12 @@ Avoid these until stability and docs are stronger:
 
 ## Current recommended next task
 
-Start with Phase 7A and add regression tests for the Phase 6 fixes.
+Start with Phase 7A and add regression tests for the current public proposal workflow.
 
 Initial target:
 
-- Add or extend review UI helper tests for sensitive output masking and process control rendering.
-- Add a small test around full session restart scheduling if it can be tested without starting real services.
+- Add or extend tests for `workspace_stage_action_bundle_and_wait` and `workspace_stage_command_bundle_and_wait` wrapper limits.
+- Add a schema visibility test that confirms stage-and-wait tools are public and submit-first, signed-intent, direct operation/trash tools are hidden by default.
+- Verify docs-only updates with `git diff --check` before running heavier checks.
 
-This keeps Phase 7 grounded in the most valuable safety guarantees from Phase 6.
+This keeps Phase 7 grounded in the most valuable safety guarantees of the current workflow.

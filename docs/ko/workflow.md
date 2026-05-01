@@ -17,18 +17,20 @@
    workspace_project_snapshot
    ```
 
-2. local approval을 위한 bundle을 제출합니다.
+2. local approval을 위한 proposal bundle을 제출합니다.
 
    권장 public bundle tools:
 
    ```text
-   workspace_submit_command_bundle
-   workspace_submit_action_bundle
-   workspace_submit_patch_bundle
-   workspace_submit_commit_bundle
+   workspace_stage_action_bundle_and_wait
+   workspace_stage_command_bundle_and_wait
+   workspace_stage_patch_bundle_and_wait
+   workspace_stage_commit_bundle_and_wait
    ```
 
-   이 도구들은 pending bundle record를 만들고 빠르게 반환합니다. 자체적으로 project change를 적용하지 않습니다.
+   이 도구들은 local `/pending` review UI에 pending proposal bundle을 만들고 잠깐 상태를 기다립니다. ChatGPT가 project file을 직접 수정하거나 command/git 작업을 직접 실행하지 않습니다. 실제 변경은 사용자가 local browser에서 승인한 뒤 local runner가 수행합니다.
+
+   `workspace_stage_action_bundle_and_wait`는 한 번에 action 1개만 받습니다. `workspace_stage_command_bundle_and_wait`도 한 번에 command step 1개만 받습니다. 여러 수정, 여러 검증, 커밋은 반복 호출로 분리합니다.
 
    File action bundle은 `WORKSPACE_ROOT` 아래 non-git directory에서도 실행할 수 있습니다. 더 이상 `git status` 기반 clean-worktree preflight를 요구하지 않으며, file action rollback은 적용 전 file snapshot을 사용합니다.
 
@@ -62,33 +64,31 @@
 권장 순서:
 
 1. Read-only inspection tools
-2. Submit-first bundle tools
+2. `workspace_stage_*_and_wait` proposal tools
 3. Local pending review UI approval
-4. Handoff queue
-5. Read-only signed intent tools는 fallback 또는 편의 도구
-6. `workspace_stage_*_and_wait` tools는 legacy 또는 편의 fallback
-7. Primitive stage tools는 public MCP schema에 노출되면 안 됨
+4. Bundle status / recovery tools
+5. Handoff tools는 고급 continuation 또는 debug 용도
+6. Payload / patch helper tools는 큰 문서나 patch가 필요할 때만 사용
+7. Submit-first, signed intent, direct operation/trash tools는 기본 public MCP schema에 노출하지 않음
 
-`workspace_stage_*_and_wait` wrapper는 local approval을 기다리는 동안 하나의 ChatGPT tool call을 계속 열어 둡니다. approval/status wait timeout 상한은 45초입니다. 일반 작업에는 submit-first tools와 handoff/status 확인을 우선 사용하세요.
+`workspace_stage_*_and_wait` tools는 현재 기본 public mutation path입니다. 이 wrapper들은 `/pending` proposal을 만들고 잠깐 status를 기다립니다. 사용자가 승인하지 않아 pending으로 남으면 `workspace_command_bundle_status`, `workspace_wait_command_bundle_status`, `workspace_recover_last_activity`로 이어서 확인합니다.
 
-## Signed Intent Fallback
+## Signed Intent / Direct Operation Tools
 
-Read-only signed intent tools는 유지됩니다.
+Signed intent preparation tools와 direct operation/trash tools는 기본 public MCP schema에서 숨깁니다.
 
 ```text
 workspace_prepare_check_intent
 workspace_prepare_commit_current_changes_intent
 workspace_prepare_dev_session_intent
+workspace_get_operation
+workspace_list_operations
+workspace_list_trash
 ```
 
-이 도구들은 signed `local_review_url`을 반환합니다. 로컬 브라우저에서 URL을 열면 intent가 같은 pending bundle approval flow로 import됩니다.
+구현은 내부에 남겨둘 수 있지만 ChatGPT 기본 연결 앱에서는 혼선을 줄이기 위해 노출하지 않습니다. 기본 흐름은 `workspace_stage_*_and_wait` proposal tools와 local `/pending` review UI를 사용합니다.
 
-`/pending`의 advanced Intent Inbox는 다음을 받을 수 있습니다.
-
-- 전체 `local_review_url`
-- raw signed intent token
-
-Import는 idempotent합니다. 같은 token을 다시 가져오면 가능한 경우 같은 bundle로 redirect합니다.
+`/pending`의 advanced Intent Inbox와 `/intents/import` route는 내부/고급 흐름을 위해 유지될 수 있습니다.
 
 ## 중단된 Companion Prototype
 
@@ -162,7 +162,7 @@ local checks가 통과했다면 이 skip은 성공으로 처리됩니다. remote
 
 - `/pending`에 page-level horizontal scroll이 없다.
 - Intent Inbox가 고급 section 아래에 접힌 상태로 있다.
-- Submit-first bundle tools가 변경을 적용하지 않고 pending bundle을 만든다.
+- `workspace_stage_*_and_wait` proposal tools가 직접 변경을 적용하지 않고 pending proposal bundle을 만든다.
 - Pending bundle을 local pending review UI에서 승인하거나 거절할 수 있다.
 - YOLO가 즉시 적용한 bundle도 `/pending?bundle_id=<bundle_id>`에서 보인다.
 - Bundle-focused page에 `Copy for ChatGPT` JSON이 보인다.

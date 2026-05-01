@@ -125,4 +125,5 @@ Core implementation files:
 - Keep the review UI localhost-only.
 - Treat the ngrok URL as externally reachable and token-protected.
 - Approve only small, expected bundles.
+- In the default public workflow, stage-and-wait proposal tools should keep action and command proposals to exactly one action or one command step.
 - Reject bundles that mix unrelated edits, tests, commits, or surprising files.

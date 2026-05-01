@@ -17,18 +17,20 @@ The current default is the bundle-first MCP flow: ChatGPT submits a durable bund
    workspace_project_snapshot
    ```
 
-2. Submit a bundle for local approval.
+2. Stage a proposal bundle for local approval.
 
    Preferred public bundle tools:
 
    ```text
-   workspace_submit_command_bundle
-   workspace_submit_action_bundle
-   workspace_submit_patch_bundle
-   workspace_submit_commit_bundle
+   workspace_stage_action_bundle_and_wait
+   workspace_stage_command_bundle_and_wait
+   workspace_stage_patch_bundle_and_wait
+   workspace_stage_commit_bundle_and_wait
    ```
 
-   These tools create pending bundle records and return quickly. They do not apply project changes by themselves.
+   These tools create pending proposal bundles in the local `/pending` review UI and briefly wait for status. ChatGPT does not directly modify project files or directly run commands/git operations. Actual changes happen only after the user approves the proposal in the local browser and the local runner applies it.
+
+   `workspace_stage_action_bundle_and_wait` accepts exactly one action per call. `workspace_stage_command_bundle_and_wait` accepts exactly one command step per call. Split multiple edits, checks, or commits into repeated calls.
 
    File action bundles can run in non-git directories under `WORKSPACE_ROOT`; they no longer require a `git status` clean-worktree preflight. Rollback for file actions uses file snapshots captured before applying the bundle.
 
@@ -62,33 +64,31 @@ The current default is the bundle-first MCP flow: ChatGPT submits a durable bund
 Preferred order:
 
 1. Read-only inspection tools
-2. Submit-first bundle tools
+2. `workspace_stage_*_and_wait` proposal tools
 3. Local pending review UI approval
-4. Handoff queue
-5. Read-only signed intent tools as fallback or convenience
-6. `workspace_stage_*_and_wait` tools only as legacy or convenience fallback
-7. Primitive stage tools must remain hidden from the public MCP schema
+4. Bundle status / recovery tools
+5. Handoff tools for advanced continuation or debugging
+6. Payload / patch helper tools only when large documents or patches are needed
+7. Submit-first, signed intent, and direct operation/trash tools stay hidden from the default public MCP schema
 
-The `workspace_stage_*_and_wait` wrappers keep one ChatGPT tool call open while polling for local approval. Their approval/status wait timeout is capped at 45 seconds. Prefer submit-first tools plus handoff/status checks for routine work.
+`workspace_stage_*_and_wait` tools are the default public mutation path. They create `/pending` proposals and briefly wait for status. If a proposal remains pending, continue with `workspace_command_bundle_status`, `workspace_wait_command_bundle_status`, or `workspace_recover_last_activity`.
 
-## Signed Intent Fallback
+## Signed Intent / Direct Operation Tools
 
-Read-only signed intent tools remain available:
+Signed intent preparation tools and direct operation/trash tools are hidden from the default public MCP schema.
 
 ```text
 workspace_prepare_check_intent
 workspace_prepare_commit_current_changes_intent
 workspace_prepare_dev_session_intent
+workspace_get_operation
+workspace_list_operations
+workspace_list_trash
 ```
 
-They return a signed `local_review_url`. Opening the URL from the local browser imports the intent into the same pending bundle approval flow.
+Their implementations may remain available internally, but they are not exposed in the default ChatGPT connector to reduce tool-selection confusion. The default flow uses `workspace_stage_*_and_wait` proposal tools and the local `/pending` review UI.
 
-The advanced Intent Inbox on `/pending` accepts either:
-
-- a full `local_review_url`
-- a raw signed intent token
-
-The import is idempotent. Re-importing the same token redirects to the same bundle when the bundle is still available.
+The advanced Intent Inbox on `/pending` and the `/intents/import` route may remain available for internal or advanced workflows.
 
 ## Discontinued Companion Prototype
 
@@ -162,7 +162,7 @@ Manual checks before considering this workflow healthy:
 
 - `/pending` has no page-level horizontal scroll.
 - Intent Inbox is collapsed under the advanced section.
-- Submit-first bundle tools create pending bundles without applying changes.
+- `workspace_stage_*_and_wait` proposal tools create pending proposal bundles without directly applying changes.
 - Pending bundles can be approved or rejected in the local pending review UI.
 - A YOLO-applied bundle is still visible at `/pending?bundle_id=<bundle_id>`.
 - The bundle-focused page shows `Copy for ChatGPT` JSON.

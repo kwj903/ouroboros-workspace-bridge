@@ -22,10 +22,10 @@ The main local development bridge is Ouroboros Workspace Bridge. It lets ChatGPT
 
 ## Bundle Rules
 
-- `workspace_stage_action_bundle.actions.length` must be 1.
-- `workspace_stage_command_bundle.steps.length` must be 1.
+- `workspace_stage_action_bundle_and_wait.actions.length` must be 1.
+- `workspace_stage_command_bundle_and_wait.steps.length` must be 1.
 - Do not mix file edits, tests, git add, or git commit in one bundle.
-- Do not use `workspace_stage_commit_bundle.precheck_commands`.
+- Do not mix tests or precheck commands into a commit proposal.
 - After staging a bundle, report the bundle ID and wait for user approval.
 - After approval, check bundle status before continuing.
 

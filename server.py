@@ -1147,7 +1147,7 @@ def workspace_create_directory(
 @_direct_mutation_tool(
     annotations={
         "readOnlyHint": True,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -1281,7 +1281,7 @@ def workspace_append_file(
 @_direct_mutation_tool(
     annotations={
         "readOnlyHint": True,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -1380,7 +1380,7 @@ def workspace_replace_text(
 @_direct_mutation_tool(
     annotations={
         "readOnlyHint": True,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -1434,7 +1434,7 @@ def workspace_soft_delete(
 @_direct_mutation_tool(
     annotations={
         "readOnlyHint": True,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -1582,7 +1582,7 @@ def _workspace_transport_probe_impl(cwd: str, include_git_status: bool) -> dict[
     }
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -1602,7 +1602,7 @@ def workspace_prepare_check_intent(
     )
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -1629,7 +1629,7 @@ def workspace_prepare_commit_current_changes_intent(
     )
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -1829,7 +1829,7 @@ def workspace_tool_call_status(
     return _tool_call_status_result(_read_tool_call_record(call_id))
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -1860,7 +1860,7 @@ def workspace_get_operation(
     )
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -1924,7 +1924,7 @@ def workspace_list_backups(
 @_direct_mutation_tool(
     annotations={
         "readOnlyHint": True,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -1966,7 +1966,7 @@ def workspace_restore_backup(
         raise
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -1987,7 +1987,7 @@ def workspace_list_trash(
 @_direct_mutation_tool(
     annotations={
         "readOnlyHint": True,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -2544,7 +2544,7 @@ def workspace_preview_patch(
 @_direct_mutation_tool(
     annotations={
         "readOnlyHint": True,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -2702,7 +2702,7 @@ def workspace_git_diff(
 @_direct_mutation_tool(
     annotations={
         "readOnlyHint": True,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -3292,7 +3292,7 @@ def _workspace_wait_command_bundle_status_impl(
         time.sleep(min(poll_interval_seconds, max(0.0, deadline - time.monotonic())))
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -3321,7 +3321,7 @@ def _workspace_submit_command_bundle_impl(
     return workspace_stage_command_bundle(title=title, cwd=cwd, steps=steps)
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -3352,7 +3352,7 @@ def _workspace_submit_patch_bundle_impl(
     return workspace_stage_patch_bundle(title=title, cwd=cwd, patch=patch, patch_ref=patch_ref)
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -3381,7 +3381,7 @@ def _workspace_submit_action_bundle_impl(
     return workspace_stage_action_bundle(title=title, cwd=cwd, actions=actions)
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -3429,11 +3429,27 @@ def _workspace_submit_commit_bundle_impl(
 def workspace_stage_command_bundle_and_wait(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
-    steps: Annotated[list[CommandBundleStep], Field(min_length=1, max_length=20)],
+    steps: Annotated[
+        list[CommandBundleStep],
+        Field(
+            min_length=1,
+            max_length=1,
+            description=(
+                "Exactly one approval proposal command step. Use repeated calls for multiple checks or commands. "
+                "Do not batch install, test, and git commands in one call. This stages a proposal in the local "
+                "/pending review UI and does not directly execute commands."
+            ),
+        ),
+    ],
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
-    """Stage a command bundle, then briefly wait for local review UI approval."""
+    """Stage exactly one command proposal, then briefly wait for local review UI approval.
+
+    This tool does not directly execute commands. It writes one pending proposal for
+    local user review. Commands run only after the user approves the proposal in the
+    local /pending browser UI.
+    """
     return _record_tool_call(
         "workspace_stage_command_bundle_and_wait",
         {
@@ -3460,6 +3476,12 @@ def _workspace_stage_command_bundle_and_wait_impl(
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
+    if len(steps) != 1:
+        raise ValueError(
+            "Only one command step is allowed per approval proposal. "
+            "Use repeated calls for multiple checks or commands."
+        )
+
     staged = _workspace_submit_command_bundle_impl(title, cwd, steps)
     return _workspace_wait_command_bundle_status_impl(
         staged.bundle_id,
@@ -3479,12 +3501,27 @@ def _workspace_stage_command_bundle_and_wait_impl(
 def workspace_stage_patch_bundle_and_wait(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
-    patch: Annotated[str | None, Field(description="Unified diff patch text. Prefer patch_ref for large patches.")] = None,
+    patch: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Unified diff patch text. Prefer patch_ref for large patches. This stages a patch proposal in the "
+                "local /pending review UI and does not directly modify project files. Avoid large patches or "
+                "many-file changes when possible; split them into smaller patch proposals or action micro edits."
+            )
+        ),
+    ] = None,
     patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
-    """Stage a patch bundle, then briefly wait for local review UI approval."""
+    """Stage a patch proposal, then briefly wait for local review UI approval.
+
+    This tool does not directly modify project files. It writes a pending patch
+    proposal for local user review in the local /pending browser UI. Avoid large
+    patches or many-file changes when possible; split them into smaller patch
+    proposals or action micro edits.
+    """
     return _record_tool_call(
         "workspace_stage_patch_bundle_and_wait",
         {
@@ -3533,11 +3570,27 @@ def _workspace_stage_patch_bundle_and_wait_impl(
 def workspace_stage_action_bundle_and_wait(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
-    actions: Annotated[list[CommandBundleAction], Field(min_length=1, max_length=30)],
+    actions: Annotated[
+        list[CommandBundleAction],
+        Field(
+            min_length=1,
+            max_length=1,
+            description=(
+                "Exactly one approval proposal action. Use repeated calls for multi-step edits. Do not batch "
+                "multiple file writes, replacements, or commands. This stages a proposal in the local /pending "
+                "review UI and does not directly modify project files."
+            ),
+        ),
+    ],
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
-    """Stage an action bundle, then briefly wait for local review UI approval."""
+    """Stage exactly one action proposal, then briefly wait for local review UI approval.
+
+    This tool does not directly modify project files. It writes one pending proposal
+    for local user review. Project files are changed only after the user approves
+    the proposal in the local /pending browser UI.
+    """
     return _record_tool_call(
         "workspace_stage_action_bundle_and_wait",
         {
@@ -3564,6 +3617,12 @@ def _workspace_stage_action_bundle_and_wait_impl(
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
+    if len(actions) != 1:
+        raise ValueError(
+            "Only one action is allowed per approval proposal. "
+            "Use repeated calls for multi-step edits."
+        )
+
     staged = _workspace_submit_action_bundle_impl(title, cwd, actions)
     return _workspace_wait_command_bundle_status_impl(
         staged.bundle_id,
@@ -3584,13 +3643,26 @@ def workspace_stage_commit_bundle_and_wait(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     paths: Annotated[
         list[str],
-        Field(min_length=1, max_length=100, description="Relative paths to stage and commit. Use ['.'] with care."),
+        Field(
+            min_length=1,
+            max_length=100,
+            description=(
+                "Relative paths to stage and commit. This stages a commit proposal in the local /pending review UI "
+                "and does not directly run git add or git commit. Use ['.'] only after reviewing git status and diff."
+            ),
+        ),
     ],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
-    """Stage a commit bundle, then briefly wait for local review UI approval."""
+    """Stage a commit proposal, then briefly wait for local review UI approval.
+
+    This tool does not directly run git add or git commit. It writes a pending
+    commit proposal for local user review in the local /pending browser UI. The
+    actual git add/commit runs only after the user approves it. Use ['.'] only
+    after reviewing git status and diff.
+    """
     return _record_tool_call(
         "workspace_stage_commit_bundle_and_wait",
         {
@@ -3713,7 +3785,7 @@ def workspace_cancel_command_bundle(
 @_direct_mutation_tool(
     annotations={
         "readOnlyHint": True,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -3761,7 +3833,7 @@ def workspace_run_profile(
 @_direct_mutation_tool(
     annotations={
         "readOnlyHint": True,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
@@ -3805,7 +3877,7 @@ def workspace_git_add(
 @_direct_mutation_tool(
     annotations={
         "readOnlyHint": True,
-        "destructiveHint": True,
+        "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": False,
     },
