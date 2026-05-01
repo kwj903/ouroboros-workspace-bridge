@@ -12,6 +12,7 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
+- cea43ec Update docs for proposal wrapper workflow
 - 22af817 Avoid reopening browser during session restart
 - 2f9fd50 Add purpose-specific proposal wrapper tools
 - a0d69bd Refresh update info snapshot
@@ -32,7 +33,6 @@ Recent Commits is a generated snapshot. Run `uv run python scripts/update_versio
 - 25b799a Collapse intent inbox in review UI
 - 0afd266 Add intent inbox to review UI
 - 510f9f3 Show bundle handoff summaries in review UI
-- 37814d3 Polish intent workflow and check handling
 
 ## How to Update Existing Installation
 
