@@ -361,12 +361,13 @@ def app_shell(
       border-bottom: 0;
     }}
     .process-table {{
-      min-width: 1160px;
-      table-layout: fixed;
+      min-width: 1280px;
+      table-layout: auto;
     }}
     .process-table th:nth-child(1),
     .process-table td:nth-child(1) {{
       width: 88px;
+      white-space: nowrap;
     }}
     .process-table th:nth-child(2),
     .process-table td:nth-child(2) {{
@@ -384,7 +385,14 @@ def app_shell(
     }}
     .process-table th:nth-child(6),
     .process-table td:nth-child(6) {{
-      width: 116px;
+      min-width: 150px;
+      white-space: nowrap;
+    }}
+    .process-table th:nth-child(7),
+    .process-table td:nth-child(7),
+    .process-table th:nth-child(8),
+    .process-table td:nth-child(8) {{
+      min-width: 120px;
     }}
     .process-table td:nth-child(2) code,
     .process-table td:nth-child(6) code {{
@@ -398,7 +406,7 @@ def app_shell(
     }}
     .process-table th:nth-child(9),
     .process-table td:nth-child(9) {{
-      width: 240px;
+      width: 200px;
       white-space: nowrap;
     }}
     .service-controls {{
