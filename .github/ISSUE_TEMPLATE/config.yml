@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security policy
+    url: https://github.com/kwj903/ouroboros-workspace-bridge/blob/main/SECURITY.md
+    about: Please do not open public issues for secrets, token leaks, or security-sensitive reports.
+  - name: Korean quickstart
+    url: https://github.com/kwj903/ouroboros-workspace-bridge/blob/main/docs/ko/quickstart.md
+    about: 한국어 설치/실행 안내를 먼저 확인하세요.

@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a reproducible bug in the local bridge, review UI, or CLI.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include real tokens, ngrok authtokens, `.env` values, or private file contents.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI / woojae command
+        - MCP server
+        - Review UI
+        - Command bundle approval
+        - Runtime storage / cleanup
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Run `uv run woojae version` and paste the version line only.
+      placeholder: "my-terminal-tool 0.3.1"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the smallest steps that reproduce the issue.
+      placeholder: |
+        1. Run `...`
+        2. Open `...`
+        3. See error `...`
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Paste logs or output after redacting secrets.
+      render: text
+    validations:
+      required: true

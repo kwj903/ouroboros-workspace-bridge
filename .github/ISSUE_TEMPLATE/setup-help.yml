@@ -1,0 +1,51 @@
+name: Setup help
+description: Ask for help installing, configuring, or connecting the local bridge.
+title: "[Setup]: "
+labels: ["setup", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying Ouroboros Workspace Bridge. Do not paste real tokens, ngrok authtokens, `.env` values, or private file contents.
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Run `uv run woojae version` and paste the version line only.
+      placeholder: "my-terminal-tool 0.3.1"
+    validations:
+      required: false
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran
+      description: Paste the exact command, but remove tokens and private paths if needed.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output or error
+      description: Redact secrets before posting.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: What you expected
+      description: Describe what you expected to happen and where you got stuck.
+    validations:
+      required: true

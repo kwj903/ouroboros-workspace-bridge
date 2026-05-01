@@ -8,13 +8,42 @@ Part of Ouroboros by KwakWooJae.
 
 Author: KwakWooJae
 
-## 소개
+Ouroboros Workspace Bridge is a local MCP bridge that lets ChatGPT inspect, edit, and verify files inside a user-approved workspace. It is designed for local-first development workflows where every risky file change or command is staged for review before it runs.
 
-Ouroboros Workspace Bridge는 ChatGPT가 사용자가 설정한 `WORKSPACE_ROOT` 안의 로컬 프로젝트를 안전하게 탐색, 수정, 검증하도록 돕는 개인용 local MCP server입니다. 위험한 파일 수정과 명령 실행은 pending bundle로 만들고, 로컬 review UI에서 사용자가 승인한 뒤 실행하는 구조를 기본으로 합니다.
+한국어 사용자는 [빠른 시작](docs/ko/quickstart.md)과 [로컬 세션 운영](docs/ko/local-session.md)을 먼저 보면 됩니다.
+
+## What it does
+
+- Exposes a local MCP server for files and commands under a configured `WORKSPACE_ROOT`.
+- Stages risky edits and commands as pending bundles instead of applying them directly.
+- Provides a local review UI where the user approves or rejects each pending bundle.
+- Supports macOS, Linux, and Windows local session workflows through `uv run woojae ...`.
+- Stores runtime settings, logs, backups, and approval history outside the repository.
+
+## What it does not do
+
+- It is not a cloud service or hosted SaaS.
+- It does not remove the need to review generated changes.
+- It should not be connected to untrusted workspaces or shared tokens.
+- It does not require committing secrets into the repository.
+
+## Safety model
+
+```text
+ChatGPT request
+      ↓
+Local MCP server
+      ↓
+Pending bundle
+      ↓
+Local review UI approval
+      ↓
+Apply file change or command
+```
+
+Approve only small, expected bundles. Reject bundles that mix unrelated edits, tests, commits, or surprising files.
 
 ## Overview
-
-Ouroboros Workspace Bridge is a local MCP server for safely browsing, editing, and verifying projects under a configured `WORKSPACE_ROOT` from ChatGPT. Risky file changes and command execution are staged as pending bundles and run only after approval in the local review UI.
 
 The recommended usage is from a repository checkout with `uv run woojae ...`. The old `scripts/dev_session.sh` and `scripts/dev_session.ps1` entrypoints are compatibility wrappers around the same CLI.
 
@@ -111,6 +140,11 @@ Repository hygiene:
 - [LICENSE](LICENSE)
 - [SECURITY.md](SECURITY.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
+
+Issues and setup help:
+
+- Use the GitHub issue templates for setup help, bug reports, and feature requests.
+- Do not include real tokens, ngrok authtokens, `.env` values, or private file contents in public issues.
 
 ## License
 
