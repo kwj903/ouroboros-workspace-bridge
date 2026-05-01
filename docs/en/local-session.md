@@ -82,6 +82,24 @@ Token values must not be committed, printed in docs, or pasted into logs.
 
 `NGROK_HOST` is optional. If it is not configured, `uv run woojae start` uses ngrok temporary URL mode. `uv run woojae copy-url` requires both `NGROK_HOST` and `MCP_ACCESS_TOKEN`.
 
+## Runtime data management
+
+Settings, logs, approval records, backups, and trash are stored outside the repository in the runtime directory.
+
+```bash
+uv run woojae paths
+uv run woojae storage
+uv run woojae cleanup --dry-run
+```
+
+- `paths` prints the project checkout, runtime data, session config, and workspace root paths.
+- `storage` prints runtime data usage by category with file counts.
+- `cleanup` defaults to dry-run behavior. It deletes files only when `uv run woojae cleanup --apply` is explicitly used.
+- `session.json`, `session.env`, `intent_hmac_secret`, pending bundles, and pid files are protected.
+- `backups`, `command_bundle_file_backups`, and `trash` are included only when `--include-backups` is passed.
+
+Always inspect `--dry-run` output before applying cleanup.
+
 ## Review UI
 
 Open the pending bundle dashboard:

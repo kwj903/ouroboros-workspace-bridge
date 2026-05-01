@@ -68,6 +68,24 @@ private runtime env 파일은 repository 밖에 저장됩니다.
 
 `NGROK_HOST`는 선택 사항입니다. 없으면 `uv run woojae start`가 temporary URL mode로 ngrok을 실행합니다. `uv run woojae copy-url`은 `NGROK_HOST`와 `MCP_ACCESS_TOKEN`이 모두 있을 때만 동작합니다.
 
+## Runtime 데이터 관리
+
+설정, 로그, 승인 기록, 백업, 휴지통은 repository 밖의 runtime directory에 저장됩니다.
+
+```bash
+uv run woojae paths
+uv run woojae storage
+uv run woojae cleanup --dry-run
+```
+
+- `paths`는 project checkout, runtime data, session config, workspace root 위치를 보여줍니다.
+- `storage`는 runtime data의 카테고리별 용량과 파일 수를 보여줍니다.
+- `cleanup`은 기본적으로 dry-run입니다. 실제 삭제는 `uv run woojae cleanup --apply`를 명시한 경우에만 수행합니다.
+- `session.json`, `session.env`, `intent_hmac_secret`, pending bundle, pid file은 보호 대상입니다.
+- `backups`, `command_bundle_file_backups`, `trash`는 `--include-backups`를 추가해야 cleanup 후보에 포함됩니다.
+
+실제 삭제 전에는 항상 `--dry-run` 결과를 먼저 확인하세요.
+
 ## Review UI
 
 주요 페이지:

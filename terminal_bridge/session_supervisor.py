@@ -15,6 +15,8 @@ import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 
+from terminal_bridge import runtime_storage
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RUNTIME_ROOT = Path.home() / ".mcp_terminal_bridge" / "my-terminal-tool"
@@ -592,6 +594,87 @@ def copy_mcp_url() -> int:
     if completed.returncode != 0:
         return completed.returncode
     print(f"Copied MCP URL: https://{settings.ngrok_host}/mcp?access_token=<redacted>")
+    return 0
+
+
+def print_paths() -> int:
+    settings = load_settings()
+    print("Workspace Terminal Bridge paths")
+    print()
+    for label, path in runtime_storage.runtime_paths(settings.runtime_root, settings.workspace_root):
+        print(f"{label}: {path}")
+    return 0
+
+
+def print_storage() -> int:
+    settings = load_settings()
+    total = runtime_storage.total_storage(settings.runtime_root)
+    print("Workspace Terminal Bridge runtime storage")
+    print()
+    print(f"Runtime root: {settings.runtime_root}")
+    print(f"Total: {runtime_storage.format_bytes(total.bytes)} ({total.files} files, {total.dirs} dirs)")
+    print()
+    print("By category:")
+    for entry in runtime_storage.storage_summary(settings.runtime_root):
+        status = "present" if entry.exists else "missing"
+        print(
+            f"- {entry.name}: {runtime_storage.format_bytes(entry.bytes)} "
+            f"({entry.files} files, {entry.dirs} dirs, {status})"
+        )
+    return 0
+
+
+def cleanup_storage(*, apply: bool, older_than_days: int | None = None, include_backups: bool = False) -> int:
+    if older_than_days is not None and older_than_days < 1:
+        print("[error] --older-than-days must be a positive integer.", file=sys.stderr)
+        return 2
+
+    settings = load_settings()
+    dry_run = not apply
+    result = runtime_storage.cleanup_runtime(
+        settings.runtime_root,
+        dry_run=dry_run,
+        older_than_days=older_than_days,
+        include_backups=include_backups,
+    )
+
+    print("Workspace Terminal Bridge runtime cleanup")
+    print()
+    print(f"Runtime root: {settings.runtime_root}")
+    print(f"Mode: {'dry-run' if result.dry_run else 'apply'}")
+    print(f"Backup/trash cleanup: {'included' if include_backups else 'excluded'}")
+    if older_than_days is not None:
+        print(f"Age override: older than {older_than_days} days")
+    print()
+
+    if not result.candidates:
+        print("No cleanup candidates found.")
+    else:
+        print("Candidates:")
+        for candidate in result.candidates:
+            action = candidate.action
+            print(
+                f"- [{action}] {candidate.path} "
+                f"({candidate.kind}, {runtime_storage.format_bytes(candidate.bytes)}, {candidate.reason})"
+            )
+
+    print()
+    if result.dry_run:
+        print("No files were deleted. Re-run with `uv run woojae cleanup --apply` to delete eligible candidates.")
+    else:
+        print(
+            "Deleted: "
+            f"{result.deleted_files} files, {result.deleted_dirs} dirs, "
+            f"estimated {runtime_storage.format_bytes(result.reclaimed_bytes)} reclaimed"
+        )
+
+    if result.errors:
+        print()
+        print("Errors:")
+        for error in result.errors:
+            print(f"- {error.path}: {error.error}")
+        return 1
+
     return 0
 
 

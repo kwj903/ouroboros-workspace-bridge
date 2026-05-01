@@ -68,6 +68,18 @@ Run `uv run woojae version` to inspect your local version and git state. Version
 
 See [CHANGELOG.md](CHANGELOG.md) for user-facing changes and [docs/project/update-info.md](docs/project/update-info.md) for generated update metadata. Run `uv run python scripts/update_version_info.py` before release or documentation updates. CI checks the stable generated update-info sections; Recent Commits is a generated snapshot and can be refreshed with the same command.
 
+## Runtime Data
+
+Runtime data is stored outside the repository, usually under `~/.mcp_terminal_bridge/my-terminal-tool`.
+
+```bash
+uv run woojae paths
+uv run woojae storage
+uv run woojae cleanup --dry-run
+```
+
+`cleanup` is conservative and defaults to dry-run behavior unless `--apply` is passed. Session secrets, pending bundles, and process pid files are protected.
+
 ## Platform Support / 플랫폼 지원
 
 - macOS: primary supported local workflow.

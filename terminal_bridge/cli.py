@@ -99,6 +99,14 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("open")
     subparsers.add_parser("mcp-url")
     subparsers.add_parser("copy-url")
+    subparsers.add_parser("paths", help="Print project, runtime, and workspace paths.")
+    subparsers.add_parser("storage", help="Print runtime storage usage by category.")
+    cleanup = subparsers.add_parser("cleanup", help="Inspect or delete conservative runtime cleanup candidates.")
+    cleanup_mode = cleanup.add_mutually_exclusive_group()
+    cleanup_mode.add_argument("--dry-run", action="store_true", help="Show cleanup candidates without deleting anything.")
+    cleanup_mode.add_argument("--apply", action="store_true", help="Delete eligible cleanup candidates.")
+    cleanup.add_argument("--older-than-days", type=int, default=None, help="Override age threshold for age-based cleanup candidates.")
+    cleanup.add_argument("--include-backups", action="store_true", help="Include backups, command bundle file backups, and trash in cleanup candidates.")
     subparsers.add_parser("version", help="Show version and git metadata.")
     return parser
 
@@ -123,6 +131,19 @@ def main(argv: list[str] | None = None) -> int:
         return print_mcp_url_preview()
     if args.command == "copy-url":
         return copy_mcp_url()
+    if args.command == "paths":
+        return supervisor.print_paths()
+    if args.command == "storage":
+        return supervisor.print_storage()
+    if args.command == "cleanup":
+        if args.older_than_days is not None and args.older_than_days < 1:
+            print("[error] --older-than-days must be a positive integer.", file=sys.stderr)
+            return 2
+        return supervisor.cleanup_storage(
+            apply=bool(args.apply),
+            older_than_days=args.older_than_days,
+            include_backups=bool(args.include_backups),
+        )
     if args.command == "version":
         return print_version_info()
 

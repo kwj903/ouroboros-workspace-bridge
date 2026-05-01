@@ -2,6 +2,24 @@
 
 This project uses a lightweight changelog format inspired by Keep a Changelog.
 
+## 0.3.1
+
+### Added
+
+- Runtime storage inspection commands: `woojae paths`, `woojae storage`, and `woojae cleanup`.
+- Conservative cleanup dry-run/apply workflow with protected session secrets, pending bundles, and pid files.
+- Runtime storage tests covering protected files, pending bundles, symlink exclusion, backup/trash opt-in, and dry-run behavior.
+
+### Changed
+
+- Runtime data management documentation now explains storage inspection, dry-run cleanup, and backup/trash cleanup opt-in behavior.
+- `cleanup --older-than-days` now rejects non-positive values.
+
+### Verified
+
+- `uv run python -m compileall -q server.py terminal_bridge scripts`
+- `env PYTHONPATH=. uv run --with pytest pytest`
+
 ## 0.3.0
 
 ### Added

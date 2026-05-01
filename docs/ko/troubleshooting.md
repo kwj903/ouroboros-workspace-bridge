@@ -155,6 +155,29 @@ workspace_command_bundle_status <bundle_id>
 3. 원인을 하나씩 작은 bundle로 고칩니다.
 4. 실패한 검증 명령만 먼저 다시 실행합니다.
 
+## Runtime 데이터가 계속 쌓임
+
+증상:
+
+- `~/.mcp_terminal_bridge/my-terminal-tool` 용량이 커짐
+- 오래된 bundle, tool call, backup, trash 기록이 많아짐
+- runtime 경로가 어디인지 헷갈림
+
+확인:
+
+```bash
+uv run woojae paths
+uv run woojae storage
+uv run woojae cleanup --dry-run
+```
+
+복구:
+
+- 먼저 `cleanup --dry-run`으로 삭제 후보만 확인합니다.
+- 후보가 안전한지 확인한 뒤에만 `uv run woojae cleanup --apply`를 실행합니다.
+- 백업/휴지통까지 후보에 포함하려면 `--include-backups`를 명시합니다.
+- `session.json`, `session.env`, `intent_hmac_secret`, pending bundle, pid file은 보호됩니다.
+
 ## PID file stale
 
 증상:

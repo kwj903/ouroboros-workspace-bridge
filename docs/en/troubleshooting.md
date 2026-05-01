@@ -168,6 +168,29 @@ Recover:
 3. Fix one cause at a time with a single-action bundle.
 4. Re-run only the failed verification command first.
 
+## Runtime data keeps growing
+
+Symptoms:
+
+- `~/.mcp_terminal_bridge/my-terminal-tool` keeps growing.
+- Old bundle, tool call, backup, or trash records accumulate.
+- It is unclear where runtime data is stored.
+
+Check:
+
+```bash
+uv run woojae paths
+uv run woojae storage
+uv run woojae cleanup --dry-run
+```
+
+Recover:
+
+- Inspect `cleanup --dry-run` output first.
+- Run `uv run woojae cleanup --apply` only after confirming the candidates are safe.
+- Add `--include-backups` only when you also want backups and trash considered as cleanup candidates.
+- `session.json`, `session.env`, `intent_hmac_secret`, pending bundles, and pid files are protected.
+
 ## PID file is stale
 
 Symptoms:
