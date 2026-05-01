@@ -471,7 +471,11 @@ def start_session() -> int:
     for service in SERVICES:
         code = max(code, start_service(service))
     print()
-    open_review_dashboard()
+    if os.environ.get("WOOJAE_SKIP_OPEN_REVIEW") == "1":
+        print(f"Review dashboard: {settings.review_dashboard_url}")
+        print("[info] browser open skipped by WOOJAE_SKIP_OPEN_REVIEW=1")
+    else:
+        open_review_dashboard()
     print()
     status_session()
     return code
@@ -504,7 +508,15 @@ def stop_single_service(service: str) -> int:
 def restart_session() -> int:
     print("Restarting Workspace Terminal Bridge full local session")
     stop_session()
-    return start_session()
+    previous_skip_open = os.environ.get("WOOJAE_SKIP_OPEN_REVIEW")
+    os.environ["WOOJAE_SKIP_OPEN_REVIEW"] = "1"
+    try:
+        return start_session()
+    finally:
+        if previous_skip_open is None:
+            os.environ.pop("WOOJAE_SKIP_OPEN_REVIEW", None)
+        else:
+            os.environ["WOOJAE_SKIP_OPEN_REVIEW"] = previous_skip_open
 
 
 def open_review_dashboard() -> int:
