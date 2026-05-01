@@ -12,6 +12,14 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
+- 06a8da6 Document localized CLI help workflow
+- ff9c364 Persist CLI help language preference
+- 224defc Add localized CLI help command
+- 147c350 Improve public README and issue templates
+- bca50d1 Add runtime storage management commands
+- dda6993 Release 0.3.0 cross-platform session support
+- 3e48144 Fix process table layout overflow
+- 48cc1a8 Release 0.2.0
 - 890ce7c Clean up companion flow and relax bundle limits
 - 18c9442 Refactor MCP and review server helpers
 - 21708cc Add local pending action intents
@@ -24,14 +32,6 @@ Recent Commits is a generated snapshot. Run `uv run python scripts/update_versio
 - 37814d3 Polish intent workflow and check handling
 - 8ec0505 Import intents into pending review UI
 - 905085e Add read-only intent review flow
-- 469bfc7 Add transport probe tool
-- d68f8ef Add submit-first command bundle tools
-- ccc5877 Add request key dedupe for command bundles
-- f09bd37 Add tool call journal
-- e04225b Add recovery snapshot tool
-- 944856c Hide primitive stage tools from MCP schema
-- 1331602 Add version and update info tooling
-- 1954b91 Share watcher logic across review modes
 
 ## How to Update Existing Installation
 
