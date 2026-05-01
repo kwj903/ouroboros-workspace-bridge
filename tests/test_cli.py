@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import unittest
+from unittest import mock
 
 from terminal_bridge import cli
 
@@ -56,6 +57,24 @@ class CliCommandTests(unittest.TestCase):
 
         self.assertEqual(args.command, "version")
 
+    def test_parser_accepts_help(self) -> None:
+        parser = cli.build_parser()
+
+        help_args = parser.parse_args(["help"])
+        self.assertEqual(help_args.command, "help")
+        self.assertIsNone(help_args.topic)
+        self.assertEqual(help_args.lang, "auto")
+
+        topic_args = parser.parse_args(["help", "cleanup", "--lang", "ko"])
+        self.assertEqual(topic_args.command, "help")
+        self.assertEqual(topic_args.topic, "cleanup")
+        self.assertEqual(topic_args.lang, "ko")
+
+        shorthand_args = parser.parse_args(["help", "cleanup", "--ko"])
+        self.assertEqual(shorthand_args.command, "help")
+        self.assertEqual(shorthand_args.topic, "cleanup")
+        self.assertEqual(shorthand_args.lang, "ko")
+
     def test_parser_accepts_runtime_storage_commands(self) -> None:
         parser = cli.build_parser()
 
@@ -104,6 +123,75 @@ class CliCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 2)
         self.assertFalse(called)
+
+    def test_help_lists_commands_without_dev_session(self) -> None:
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run_dev_session(*args: str) -> int:
+            calls.append(args)
+            return 0
+
+        cli.run_dev_session = fake_run_dev_session
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            result = cli.main(["help", "--lang", "en"])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [])
+        output = stdout.getvalue()
+        self.assertIn("Ouroboros Workspace Bridge commands", output)
+        self.assertIn("Common workflow", output)
+        self.assertIn("cleanup", output)
+        self.assertIn("Run `uv run woojae help <command>`", output)
+
+    def test_help_lists_korean_commands_without_dev_session(self) -> None:
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run_dev_session(*args: str) -> int:
+            calls.append(args)
+            return 0
+
+        cli.run_dev_session = fake_run_dev_session
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            result = cli.main(["help", "--lang", "ko"])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [])
+        output = stdout.getvalue()
+        self.assertIn("Ouroboros Workspace Bridge 명령어", output)
+        self.assertIn("기본 작업 흐름", output)
+        self.assertIn("cleanup", output)
+        self.assertIn("상세 설명", output)
+
+    def test_help_topic_prints_korean_details(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            result = cli.main(["help", "cleanup", "--lang", "ko"])
+
+        self.assertEqual(result, 0)
+        output = stdout.getvalue()
+        self.assertIn("Usage: uv run woojae cleanup", output)
+        self.assertIn("런타임 정리 후보", output)
+        self.assertIn("예시:", output)
+        self.assertIn("주의:", output)
+        self.assertIn("--dry-run", output)
+
+    def test_help_unknown_topic_returns_error(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            result = cli.main(["help", "missing-command", "--lang", "ko"])
+
+        self.assertEqual(result, 2)
+        output = stderr.getvalue()
+        self.assertIn("알 수 없는 help 주제", output)
+        self.assertIn("사용 가능한 주제", output)
+
+    def test_help_language_auto_detects_korean_locale(self) -> None:
+        with mock.patch.dict("os.environ", {"LANG": "ko_KR.UTF-8"}, clear=True):
+            self.assertEqual(cli.resolve_help_language(), "ko")
 
     def test_version_prints_without_dev_session(self) -> None:
         calls: list[tuple[str, ...]] = []
