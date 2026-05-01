@@ -24,9 +24,10 @@ Add targeted tests for the behaviors that now define the default ChatGPT workflo
 
 Candidate tests:
 
-- `workspace_stage_action_bundle_and_wait` rejects proposals with more than one action.
-- `workspace_stage_command_bundle_and_wait` rejects proposals with more than one command step.
-- The default public MCP schema exposes stage-and-wait proposal tools.
+- Purpose-specific proposal wrappers create exactly one local pending proposal for their intended purpose.
+- `workspace_propose_command_and_wait` wraps exactly one command step.
+- `workspace_propose_file_replace_and_wait` and `workspace_propose_file_write_and_wait` wrap exactly one file action.
+- The default public MCP schema exposes purpose-specific proposal wrapper tools.
 - Submit-first tools, signed-intent preparation tools, and direct operation/trash tools stay hidden from the default public MCP schema.
 - File action bundles snapshot target files before apply and roll back action changes on failure.
 - JSON companion imports to `/intents/import` continue to be rejected.
@@ -186,8 +187,8 @@ Start with Phase 7A and add regression tests for the current public proposal wor
 
 Initial target:
 
-- Add or extend tests for `workspace_stage_action_bundle_and_wait` and `workspace_stage_command_bundle_and_wait` wrapper limits.
-- Add a schema visibility test that confirms stage-and-wait tools are public and submit-first, signed-intent, direct operation/trash tools are hidden by default.
+- Add or extend tests for purpose-specific proposal wrapper behavior and one-purpose proposal creation.
+- Add a schema visibility test that confirms proposal wrapper tools are public and generic stage/submit tools, signed-intent, direct operation/trash tools are hidden by default.
 - Verify docs-only updates with `git diff --check` before running heavier checks.
 
 This keeps Phase 7 grounded in the most valuable safety guarantees of the current workflow.

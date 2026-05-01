@@ -24,11 +24,13 @@
 
 Ouroboros Workspace Bridge를 사용할 때는 아래 규칙을 최우선으로 따른다.
 
-- `workspace_stage_action_bundle_and_wait.actions.length`는 반드시 1이어야 한다.
-- `workspace_stage_command_bundle_and_wait.steps.length`는 반드시 1이어야 한다.
-- 파일 수정, 테스트, git add, git commit을 절대 하나의 bundle에 섞지 않는다.
+- 기본 public mutation 경로는 목적별 proposal wrapper를 사용한다.
+- 파일 수정은 `workspace_propose_file_replace_and_wait` 또는 `workspace_propose_file_write_and_wait`를 사용한다.
+- 검증 명령은 `workspace_propose_command_and_wait`를 사용한다.
+- patch, commit, push는 각각 `workspace_propose_patch_and_wait`, `workspace_propose_git_commit_and_wait`, `workspace_propose_git_push_and_wait`를 사용한다.
+- 하나의 proposal은 하나의 파일 수정, 명령, patch, commit, push만 수행한다.
+- 파일 수정, 테스트, git add, git commit, push를 절대 하나의 proposal에 섞지 않는다.
 - 커밋 proposal에는 테스트나 precheck 명령을 섞지 않는다.
-- 하나의 bundle은 하나의 작업만 수행한다.
 - pending bundle을 만든 뒤에는 사용자 승인/거부와 bundle status 확인 전까지 다음 mutation bundle을 만들지 않는다.
 - 효율성보다 안전한 단계 분리가 우선이다.
 - 불필요한 tool call을 늘리지 않는다. 짧은 수정에는 payload ref를 사용하지 않는다.
@@ -38,10 +40,10 @@ Ouroboros Workspace Bridge를 사용할 때는 아래 규칙을 최우선으로 
 Ouroboros Workspace Bridge mutation tool을 호출하기 직전에 반드시 점검한다.
 
 - 이번 bundle의 목적이 한 문장으로 설명 가능한가?
-- actions 또는 steps 배열 길이가 1인가?
-- 파일 수정, 테스트, 커밋이 섞여 있지 않은가?
+- 목적별 proposal wrapper를 사용하고 있는가?
+- 파일 수정, 테스트, 커밋, push가 섞여 있지 않은가?
 - precheck_commands를 쓰고 있지 않은가?
-- pending bundle 승인/거부 확인 전 새 mutation bundle을 만들고 있지 않은가?
+- pending proposal 승인/거부 확인 전 새 mutation proposal을 만들고 있지 않은가?
 - 짧은 수정인데 불필요하게 `workspace_stage_text_payload`를 쓰고 있지 않은가?
 - 긴 patch, 긴 old_text/new_text, 긴 bash 명령을 직접 넣고 있지 않은가?
 
@@ -63,7 +65,7 @@ Ouroboros Workspace Bridge mutation tool을 호출하기 직전에 반드시 점
 - 테스트 코드 일부 추가
 - 2KB 이하의 `old_text` / `new_text`
 
-이런 경우에는 `workspace_stage_action_bundle_and_wait`의 action 1개에 `content`, `old_text`, `new_text`를 직접 넣는다.
+이런 경우에는 `workspace_propose_file_replace_and_wait` 또는 `workspace_propose_file_write_and_wait` 같은 목적별 proposal wrapper에 `content`, `old_text`, `new_text`를 직접 넣는다.
 
 payload ref를 사용하는 경우:
 

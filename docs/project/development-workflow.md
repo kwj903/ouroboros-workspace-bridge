@@ -20,16 +20,18 @@ Preferred flow:
 
 Do not mix file edits, tests, and commits in the same bundle.
 
-The default public mutation path is the stage-and-wait proposal flow:
+The default public mutation path uses purpose-specific proposal wrapper tools:
 
 ```text
-workspace_stage_action_bundle_and_wait
-workspace_stage_command_bundle_and_wait
-workspace_stage_patch_bundle_and_wait
-workspace_stage_commit_bundle_and_wait
+workspace_propose_file_replace_and_wait
+workspace_propose_file_write_and_wait
+workspace_propose_command_and_wait
+workspace_propose_patch_and_wait
+workspace_propose_git_commit_and_wait
+workspace_propose_git_push_and_wait
 ```
 
-Submit-first tools, signed-intent preparation tools, and direct operation/trash tools may remain in the implementation for internal or advanced workflows, but they are hidden from the default public MCP schema.
+Generic stage/submit tools, signed-intent preparation tools, and direct operation/trash tools may remain in the implementation for internal or advanced workflows, but they are hidden from the default public MCP schema.
 
 ## Read-only inspection
 
@@ -54,30 +56,30 @@ workspace_git_status
 
 Then inspect files before staging any mutation bundle.
 
-## Action bundles
+## File edit proposals
 
-Use `workspace_stage_action_bundle_and_wait` for small file edits.
+Use `workspace_propose_file_replace_and_wait` or `workspace_propose_file_write_and_wait` for small file edits.
 
 Typical use cases:
 
 - write one new file
 - replace one small text block
-- append one small section
+- append one small section through a targeted replacement
 
 Rules:
 
-- One action per proposal bundle.
-- Do not include tests in the same bundle.
-- Do not include git add or commit in the same bundle.
+- One file edit purpose per proposal.
+- Do not include tests in the same proposal.
+- Do not include git add or commit in the same proposal.
 - The proposal does not directly edit project files; files change only after local approval.
 - File action apply captures target file snapshots before execution and rolls back action changes on failure.
 - Check bundle status after approval.
 
-Large content should be stored first with `workspace_stage_text_payload`, then referenced by `content_ref`, `old_text_ref`, or `new_text_ref`.
+Large content can be stored first with `workspace_stage_text_payload`, then referenced by `content_ref`, `old_text_ref`, or `new_text_ref` through the internal bundle path when needed.
 
-## Command bundles
+## Command proposals
 
-Use `workspace_stage_command_bundle_and_wait` for one local command at a time.
+Use `workspace_propose_command_and_wait` for one local command at a time.
 
 Examples:
 
@@ -89,23 +91,23 @@ git diff --check
 
 Rules:
 
-- One command step per proposal bundle.
+- One command per proposal.
 - Do not use long `bash -lc` chains.
 - Do not combine unit tests, smoke checks, and commits.
 - The proposal does not directly execute commands; commands run only after local approval.
 - Check command bundle status after approval.
 
-If a verification sequence becomes long, create a small `scripts/check_*.sh` or `scripts/check_*.py` file first, then run that script as a single command bundle.
+If a verification sequence becomes long, create a small `scripts/check_*.sh` or `scripts/check_*.py` file first, then run that script as a single command proposal.
 
-## Patch bundles
+## Patch proposals
 
-Patch bundles are useful for code changes that are easier to review as a unified diff.
+Patch proposals are useful for code changes that are easier to review as a unified diff.
 
 Recommended flow:
 
 1. Generate a unified diff.
-2. Store large patch text with `workspace_stage_text_payload`.
-3. Stage the patch with `workspace_stage_patch_bundle_and_wait`.
+2. Prefer small patches when possible.
+3. Create the patch proposal with `workspace_propose_patch_and_wait`.
 4. Review and approve in the local review UI.
 5. Check bundle status.
 6. Inspect the resulting diff.
@@ -122,7 +124,7 @@ Recommended flow:
 1. Check `workspace_git_status`.
 2. Confirm only expected files changed.
 3. Run the needed verification commands.
-4. Stage a commit-only bundle with `workspace_stage_commit_bundle_and_wait`.
+4. Create a commit-only proposal with `workspace_propose_git_commit_and_wait`.
 5. Approve locally.
 6. Check bundle status.
 7. Confirm final `workspace_git_status` is clean.

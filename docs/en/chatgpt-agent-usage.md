@@ -20,13 +20,13 @@ The main local development bridge is Ouroboros Workspace Bridge. It lets ChatGPT
 - Do not use direct unsafe local file or shell operations.
 - Do not create a new mutation bundle while another related bundle is pending.
 
-## Bundle Rules
+## Proposal Rules
 
-- `workspace_stage_action_bundle_and_wait.actions.length` must be 1.
-- `workspace_stage_command_bundle_and_wait.steps.length` must be 1.
-- Do not mix file edits, tests, git add, or git commit in one bundle.
+- Prefer purpose-specific public proposal tools: `workspace_propose_file_replace_and_wait`, `workspace_propose_file_write_and_wait`, `workspace_propose_command_and_wait`, `workspace_propose_patch_and_wait`, `workspace_propose_git_commit_and_wait`, and `workspace_propose_git_push_and_wait`.
+- Use one proposal per file edit, command, patch, commit, or push.
+- Do not mix file edits, tests, git add, git commit, or push in one proposal.
 - Do not mix tests or precheck commands into a commit proposal.
-- After staging a bundle, report the bundle ID and wait for user approval.
+- After creating a proposal, report the bundle ID and wait for user approval in the local review UI.
 - After approval, check bundle status before continuing.
 
 ## Payload Refs
@@ -42,8 +42,8 @@ Do not use payload refs for short edits such as README links, import lines, smal
 
 Suggested threshold:
 
-- 2KB or less: direct action bundle
-- 2KB to 8KB: direct action bundle when practical
+- 2KB or less: direct purpose-specific proposal
+- 2KB to 8KB: direct purpose-specific proposal when practical
 - 8KB or more: consider payload refs
 - 20KB or more, or large patches: prefer payload refs
 
@@ -62,7 +62,7 @@ File edit workflow:
 
 1. Check git status.
 2. Read the relevant files.
-3. Stage exactly one action bundle.
+3. Create exactly one file proposal with `workspace_propose_file_replace_and_wait` or `workspace_propose_file_write_and_wait`.
 4. Tell the user the bundle ID and review UI location.
 5. Wait for approval.
 6. Check bundle status.
@@ -70,7 +70,7 @@ File edit workflow:
 
 Verification workflow:
 
-1. Stage exactly one command bundle.
+1. Create exactly one command proposal with `workspace_propose_command_and_wait`.
 2. Wait for approval.
 3. Check bundle status.
 4. Continue with the next verification only after the prior result is clear.
@@ -79,7 +79,7 @@ Commit workflow:
 
 1. Confirm expected changes with git status.
 2. Confirm verification is complete.
-3. Stage a commit-only bundle.
+3. Create a commit-only proposal with `workspace_propose_git_commit_and_wait`.
 4. Wait for approval.
 5. Check bundle status.
 6. Confirm final git status.
