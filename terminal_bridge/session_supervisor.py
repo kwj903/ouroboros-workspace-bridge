@@ -34,6 +34,7 @@ class SessionSettings:
     mcp_port: int = 8787
     review_host: str = "127.0.0.1"
     review_port: int = 8790
+    help_language: str = "auto"
 
     @property
     def process_dir(self) -> Path:
@@ -56,6 +57,7 @@ class SessionSettings:
         env["BUNDLE_REVIEW_HOST"] = self.review_host
         env["BUNDLE_REVIEW_PORT"] = str(self.review_port)
         env["NGROK_HOST"] = self.ngrok_host
+        env["WOOJAE_HELP_LANG"] = self.help_language
         if self.mcp_access_token:
             env["MCP_ACCESS_TOKEN"] = self.mcp_access_token
         else:
@@ -87,6 +89,11 @@ def normalize_ngrok_host(value: str) -> str:
     host = host.split("?", 1)[0]
     host = host.split("#", 1)[0]
     return host
+
+
+def normalize_help_language(value: str) -> str:
+    normalized = value.strip().lower()
+    return normalized if normalized in {"auto", "en", "ko"} else "auto"
 
 
 def parse_legacy_session_env(path: Path) -> dict[str, str]:
@@ -159,6 +166,7 @@ def load_settings() -> SessionSettings:
         mcp_port=int_session_value("MCP_PORT", "mcp_port", 8787),
         review_host=session_value("BUNDLE_REVIEW_HOST", "review_host") or "127.0.0.1",
         review_port=int_session_value("BUNDLE_REVIEW_PORT", "review_port", 8790),
+        help_language=normalize_help_language(session_value("WOOJAE_HELP_LANG", "help_language") or "auto"),
     )
 
 
@@ -186,6 +194,7 @@ def write_session_files(settings: SessionSettings) -> None:
                 "mcp_port": settings.mcp_port,
                 "review_host": settings.review_host,
                 "review_port": settings.review_port,
+                "help_language": settings.help_language,
             },
             ensure_ascii=False,
             indent=2,
@@ -204,6 +213,7 @@ def write_session_files(settings: SessionSettings) -> None:
         f"export MCP_PORT={shlex.quote(str(settings.mcp_port))}",
         f"export BUNDLE_REVIEW_HOST={shlex.quote(settings.review_host)}",
         f"export BUNDLE_REVIEW_PORT={shlex.quote(str(settings.review_port))}",
+        f"export WOOJAE_HELP_LANG={shlex.quote(settings.help_language)}",
         "",
     ]
     session_env_path(settings.runtime_root).write_text("\n".join(legacy_lines), encoding="utf-8")
@@ -257,6 +267,7 @@ def configure() -> int:
         mcp_port=int(prompt_text("MCP_PORT", str(current.mcp_port))),
         review_host=prompt_text("BUNDLE_REVIEW_HOST", current.review_host),
         review_port=int(prompt_text("BUNDLE_REVIEW_PORT", str(current.review_port))),
+        help_language=normalize_help_language(prompt_text("Help language [auto/en/ko]", current.help_language)),
     )
     write_session_files(settings)
     print()
@@ -264,6 +275,7 @@ def configure() -> int:
     print(f"MCP_ACCESS_TOKEN: {token_status}")
     print(f"NGROK_HOST: {settings.ngrok_host or 'not set; ngrok temporary URL mode will be used'}")
     print(f"WORKSPACE_ROOT: {settings.workspace_root}")
+    print(f"Help language: {settings.help_language}")
     return 0
 
 

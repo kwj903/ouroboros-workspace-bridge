@@ -374,9 +374,29 @@ def language_from_locale(value: str | None) -> str | None:
     return None
 
 
-def resolve_help_language(language: str = "auto") -> str:
+def saved_help_language() -> str:
+    try:
+        return supervisor.load_settings().help_language
+    except Exception:
+        return "auto"
+
+
+def explicit_help_language(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in {"en", "ko"} else None
+
+
+def resolve_help_language(language: str = "auto", saved_language: str | None = None) -> str:
     if language in {"en", "ko"}:
         return language
+    env_language = explicit_help_language(os.environ.get("WOOJAE_HELP_LANG"))
+    if env_language:
+        return env_language
+    stored_language = explicit_help_language(saved_language if saved_language is not None else saved_help_language())
+    if stored_language:
+        return stored_language
     for env_name in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
         detected = language_from_locale(os.environ.get(env_name))
         if detected:

@@ -58,7 +58,7 @@ uv run woojae setup
 uv run woojae setup
 ```
 
-setup 중에는 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`를 고릅니다. 이미 shell에 `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`이 설정되어 있으면 그 값이 runtime `session.env`보다 우선합니다.
+setup 중에는 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 도움말 언어(`Help language`)를 고릅니다. `Help language`를 `ko`로 저장하면 `uv run woojae help`가 기본적으로 한국어 설명을 표시합니다. 이미 shell에 `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, `WOOJAE_HELP_LANG`이 설정되어 있으면 그 값이 runtime `session.env`보다 우선합니다.
 
 ## 시작
 

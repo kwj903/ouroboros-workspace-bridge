@@ -193,6 +193,18 @@ class CliCommandTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"LANG": "ko_KR.UTF-8"}, clear=True):
             self.assertEqual(cli.resolve_help_language(), "ko")
 
+    def test_help_language_prefers_environment_setting_over_locale(self) -> None:
+        with mock.patch.dict("os.environ", {"WOOJAE_HELP_LANG": "ko", "LANG": "en_US.UTF-8"}, clear=True):
+            self.assertEqual(cli.resolve_help_language(), "ko")
+
+    def test_help_language_prefers_cli_argument_over_environment(self) -> None:
+        with mock.patch.dict("os.environ", {"WOOJAE_HELP_LANG": "ko"}, clear=True):
+            self.assertEqual(cli.resolve_help_language("en"), "en")
+
+    def test_help_language_uses_saved_setting_before_locale(self) -> None:
+        with mock.patch.dict("os.environ", {"LANG": "en_US.UTF-8"}, clear=True):
+            self.assertEqual(cli.resolve_help_language(saved_language="ko"), "ko")
+
     def test_version_prints_without_dev_session(self) -> None:
         calls: list[tuple[str, ...]] = []
 
