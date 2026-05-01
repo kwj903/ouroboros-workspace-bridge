@@ -7,6 +7,7 @@ import socket
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 import server
@@ -939,6 +940,78 @@ class WatcherHelperTests(unittest.TestCase):
         self.assertIn("http://127.0.0.1:8790/pending", serialized)
         self.assertNotIn("access_token", serialized)
         self.assertNotIn("secret-token-value", serialized)
+
+    def test_notify_send_command_includes_sanitized_url(self) -> None:
+        command = notifications.build_notify_send_command(
+            "http://127.0.0.1:8790?access_token=secret-token-value",
+            "cmd-test",
+            "bundle",
+        )
+
+        self.assertEqual(command[0], "notify-send")
+        self.assertIn("Workspace Terminal Bridge", command)
+        serialized = " ".join(command)
+        self.assertIn("http://127.0.0.1:8790/bundles/cmd-test", serialized)
+        self.assertNotIn("access_token", serialized)
+        self.assertNotIn("secret-token-value", serialized)
+
+    def test_powershell_notification_command_uses_burnttoast_when_available(self) -> None:
+        command = notifications.build_powershell_notification_command(
+            "http://127.0.0.1:8790?access_token=secret-token-value",
+            "cmd-test",
+            "pending",
+            executable="pwsh",
+        )
+
+        self.assertEqual(command[0], "pwsh")
+        self.assertIn("-NoProfile", command)
+        self.assertIn("-Command", command)
+        script = command[command.index("-Command") + 1]
+        self.assertIn("BurntToast", script)
+        self.assertIn("New-BurntToastNotification", script)
+        self.assertIn("http://127.0.0.1:8790/pending", script)
+        self.assertNotIn("access_token", script)
+        self.assertNotIn("secret-token-value", script)
+
+    def test_build_notification_command_selects_linux_notify_send(self) -> None:
+        with patch.object(notifications.shutil, "which", side_effect=lambda name: "/usr/bin/notify-send" if name == "notify-send" else None):
+            command = notifications.build_notification_command(
+                "http://127.0.0.1:8790",
+                "cmd-test",
+                "pending",
+                platform="linux",
+            )
+
+        self.assertIsNotNone(command)
+        self.assertEqual(command[0], "notify-send")
+
+    def test_build_notification_command_selects_windows_powershell(self) -> None:
+        def fake_which(name: str) -> str | None:
+            return "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" if name == "powershell" else None
+
+        with patch.object(notifications.shutil, "which", side_effect=fake_which):
+            command = notifications.build_notification_command(
+                "http://127.0.0.1:8790",
+                "cmd-test",
+                "pending",
+                platform="win32",
+            )
+
+        self.assertIsNotNone(command)
+        self.assertTrue(command[0].endswith("powershell.exe"))
+
+    def test_build_open_url_command_is_platform_specific(self) -> None:
+        self.assertEqual(
+            notifications.build_open_url_command("http://127.0.0.1:8790/pending", platform="darwin"),
+            ["open", "http://127.0.0.1:8790/pending"],
+        )
+        with patch.object(notifications.shutil, "which", side_effect=lambda name: "/usr/bin/xdg-open" if name == "xdg-open" else None):
+            self.assertEqual(
+                notifications.build_open_url_command("http://127.0.0.1:8790/pending", platform="linux"),
+                ["xdg-open", "http://127.0.0.1:8790/pending"],
+            )
+        with patch.object(notifications.shutil, "which", return_value=None):
+            self.assertIsNone(notifications.build_open_url_command("http://127.0.0.1:8790/pending", platform="linux"))
 
 
 if __name__ == "__main__":

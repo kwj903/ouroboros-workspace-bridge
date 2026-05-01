@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import shlex
+import os
 import shutil
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -14,6 +16,7 @@ TRUE_VALUES = {"1", "true", "yes", "on"}
 FALSE_VALUES = {"", "0", "false", "no", "off"}
 
 _terminal_notifier_warning_printed = False
+_notification_warning_printed = False
 
 
 def parse_bool_env(value: str | None, default: bool) -> bool:
@@ -124,13 +127,104 @@ def osascript_notification_command(bundle_id: str) -> list[str]:
     return ["osascript", "-e", script]
 
 
+def build_notify_send_command(base_url: str, bundle_id: str, target: str) -> list[str]:
+    target_url = notification_url(base_url, bundle_id, target)
+    return [
+        "notify-send",
+        "Workspace Terminal Bridge",
+        f"승인 대기 번들: {bundle_id}\n{target_url}",
+    ]
+
+
+def _powershell_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def build_powershell_notification_command(
+    base_url: str,
+    bundle_id: str,
+    target: str,
+    executable: str = "powershell",
+) -> list[str]:
+    target_url = notification_url(base_url, bundle_id, target)
+    title = _powershell_quote("Workspace Terminal Bridge")
+    message = _powershell_quote(f"승인 대기 번들: {bundle_id} {target_url}")
+    script = (
+        "$ErrorActionPreference = 'Stop'; "
+        "if (Get-Module -ListAvailable -Name BurntToast) { "
+        f"Import-Module BurntToast; New-BurntToastNotification -Text {title}, {message}; exit 0 "
+        "} "
+        "exit 1"
+    )
+    return [
+        executable,
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+    ]
+
+
+def powershell_executable() -> str | None:
+    return shutil.which("powershell") or shutil.which("pwsh")
+
+
+def build_notification_command(
+    base_url: str,
+    bundle_id: str,
+    target: str,
+    *,
+    click_action: str = "focus",
+    enable_osascript_fallback: bool = False,
+    platform: str | None = None,
+) -> list[str] | None:
+    current_platform = sys.platform if platform is None else platform
+
+    if current_platform == "darwin":
+        if shutil.which("terminal-notifier"):
+            return build_terminal_notifier_command(base_url, bundle_id, target, click_action)
+        if enable_osascript_fallback and shutil.which("osascript"):
+            return osascript_notification_command(bundle_id)
+        return None
+
+    if current_platform.startswith("linux"):
+        if shutil.which("notify-send"):
+            return build_notify_send_command(base_url, bundle_id, target)
+        return None
+
+    if current_platform.startswith("win"):
+        executable = powershell_executable()
+        if executable:
+            return build_powershell_notification_command(base_url, bundle_id, target, executable)
+        return None
+
+    return None
+
+
+def build_open_url_command(url: str, *, platform: str | None = None) -> list[str] | None:
+    current_platform = sys.platform if platform is None else platform
+    if current_platform == "darwin":
+        return ["open", url]
+    if current_platform.startswith("linux") and shutil.which("xdg-open"):
+        return ["xdg-open", url]
+    return None
+
+
 def open_url(url: str) -> None:
-    if sys.platform == "darwin":
-        subprocess.run(["open", url], check=False)
-    else:
-        import webbrowser
+    try:
+        if sys.platform.startswith("win") and hasattr(os, "startfile"):
+            os.startfile(url)  # type: ignore[attr-defined]
+            return
+
+        command = build_open_url_command(url)
+        if command is not None:
+            subprocess.run(command, check=False)
+            return
 
         webbrowser.open(url)
+    except Exception:
+        return None
 
 
 def send_notification(
@@ -141,27 +235,33 @@ def send_notification(
     click_action: str = "focus",
     enable_osascript_fallback: bool = False,
 ) -> bool:
-    global _terminal_notifier_warning_printed
+    global _terminal_notifier_warning_printed, _notification_warning_printed
 
-    if sys.platform != "darwin":
-        return False
-
-    if shutil.which("terminal-notifier"):
-        command = build_terminal_notifier_command(base_url, bundle_id, target, click_action)
-    elif enable_osascript_fallback:
-        command = osascript_notification_command(bundle_id)
-    else:
-        if not _terminal_notifier_warning_printed:
+    command = build_notification_command(
+        base_url,
+        bundle_id,
+        target,
+        click_action=click_action,
+        enable_osascript_fallback=enable_osascript_fallback,
+    )
+    if command is None:
+        if sys.platform == "darwin" and not _terminal_notifier_warning_printed:
             print(
                 "Clickable macOS notifications require terminal-notifier. "
-                "Install with: brew install terminal-notifier",
+                "Install with: brew install terminal-notifier, or enable osascript fallback.",
                 file=sys.stderr,
             )
             _terminal_notifier_warning_printed = True
+        elif sys.platform != "darwin" and not _notification_warning_printed:
+            print(
+                "Desktop notifications are unavailable on this platform or optional notification tools are missing.",
+                file=sys.stderr,
+            )
+            _notification_warning_printed = True
         return False
 
     try:
-        subprocess.run(
+        completed = subprocess.run(
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -171,4 +271,4 @@ def send_notification(
     except Exception:
         return False
 
-    return True
+    return completed.returncode == 0

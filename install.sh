@@ -18,6 +18,9 @@ Workspace Terminal Bridge dependencies are installed.
 Next:
   uv run woojae setup
 
-This project is currently intended to run from a repository checkout with:
+This Bash helper is for macOS/Linux. On Windows PowerShell, use:
+  .\install.ps1
+
+This project is intended to run from a repository checkout with:
   uv run woojae ...
 EOF

@@ -2,11 +2,13 @@
 
 This is the short first-run path for Ouroboros Workspace Bridge.
 
+The official command form is `uv run woojae ...`. `scripts/dev_session.sh` and `scripts/dev_session.ps1` are compatibility wrappers for older workflows.
+
 ## Prerequisites
 
-- macOS: supported and tested.
-- Linux: experimental and not officially supported yet.
-- Windows: not supported directly. WSL may work, but it is untested.
+- macOS: primary supported local workflow.
+- Linux: supported for the Python supervisor workflow. Clipboard and notification behavior may vary by distribution.
+- Windows: supported through PowerShell for the Python supervisor workflow. ngrok, firewall, browser, and clipboard behavior may need local adjustment.
 - Python 3.12+
 - `uv`
 - ngrok account and ngrok CLI
@@ -20,7 +22,7 @@ This is the short first-run path for Ouroboros Workspace Bridge.
 
 Do not put ngrok auth tokens, MCP access tokens, or other secrets in repository files.
 
-## First Setup
+## First Setup: macOS/Linux
 
 From a repository checkout:
 
@@ -28,6 +30,33 @@ From a repository checkout:
 git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
 cd ouroboros-workspace-bridge
 uv sync
+uv run woojae setup
+```
+
+You can optionally use the Bash helper:
+
+```bash
+./install.sh
+uv run woojae setup
+```
+
+`install.sh` is Bash-only. On Windows PowerShell, use `install.ps1`.
+
+## First Setup: Windows PowerShell
+
+From a repository checkout:
+
+```powershell
+git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
+cd ouroboros-workspace-bridge
+uv sync
+uv run woojae setup
+```
+
+You can optionally use the PowerShell helper:
+
+```powershell
+.\install.ps1
 uv run woojae setup
 ```
 
@@ -71,7 +100,7 @@ uv run woojae open
 uv run woojae copy-url
 ```
 
-`copy-url` copies the real MCP URL to the macOS clipboard. It does not print the token. The URL format is:
+`copy-url` copies the real MCP URL to the clipboard. It uses `pbcopy` on macOS, `xclip` on Linux, and `clip` on Windows when available. `uv run woojae mcp-url` prints only a redacted URL preview. It does not print the token. The URL format is:
 
 ```text
 https://<NGROK_HOST>/mcp?access_token=<TOKEN>

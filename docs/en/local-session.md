@@ -12,6 +12,8 @@ cd ouroboros-workspace-bridge
 
 ## Recommended session flow
 
+The official command form is `uv run woojae ...`. `scripts/dev_session.sh` and `scripts/dev_session.ps1` are compatibility wrappers for older docs and local automation.
+
 Run the initial setup when configuring a checkout for the first time:
 
 ```bash
@@ -128,7 +130,23 @@ uv run woojae logs mcp
 uv run woojae logs ngrok
 ```
 
-Script-level controls such as `scripts/dev_session.sh start-service mcp`, `stop-service`, and `restart-session` remain available for fallback/debug use. The review process is not individually controlled from the UI because it is the UI process itself. For review-related recovery, use full session restart or stop/start.
+The wrapper scripts pass through to the same CLI and remain available for compatibility. Prefer `uv run woojae ...` in new docs and automation.
+
+macOS/Linux:
+
+```bash
+scripts/dev_session.sh status
+scripts/dev_session.sh restart-session
+```
+
+Windows PowerShell:
+
+```powershell
+.\scripts\dev_session.ps1 status
+.\scripts\dev_session.ps1 restart-session
+```
+
+Script-level controls such as `uv run woojae start-service mcp`, `stop-service`, and `restart-session` remain available for fallback/debug use. The review process is not individually controlled from the UI because it is the UI process itself. For review-related recovery, use full session restart or stop/start.
 
 ## ChatGPT MCP connection
 
@@ -150,7 +168,7 @@ uv run woojae open
 uv run woojae copy-url
 ```
 
-`copy-url` copies the real URL to the macOS clipboard. It does not print the token.
+`copy-url` copies the real URL to the clipboard. It uses `pbcopy` on macOS, `xclip` on Linux, and `clip` on Windows when available. `uv run woojae mcp-url` prints only a redacted URL preview. It does not print the token.
 
 The ChatGPT app MCP URL format is:
 
@@ -226,7 +244,7 @@ Use these only for fallback or debugging.
 Run review server in foreground:
 
 ```bash
-scripts/dev_session.sh review
+uv run woojae review
 ```
 
 Run MCP server only:
@@ -243,7 +261,7 @@ scripts/run_ngrok.sh
 
 ## Notifications and watcher behavior
 
-The review server includes an embedded watcher for pending bundles. By default it opens the pending dashboard once and sends macOS notifications when available.
+The review server includes an embedded watcher for pending bundles. By default it opens the pending dashboard once and sends desktop notifications when platform helpers are available.
 
 Install clickable macOS notifications:
 

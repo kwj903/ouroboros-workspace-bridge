@@ -2,6 +2,27 @@
 
 This project uses a lightweight changelog format inspired by Keep a Changelog.
 
+## 0.3.0
+
+### Added
+
+- Cross-platform Python session supervisor for macOS, Linux, and Windows local workflows.
+- Windows PowerShell install and dev-session wrappers.
+- OS-specific desktop notification support for macOS, Linux, and Windows with safe fallbacks.
+- OS-specific installation and quickstart documentation.
+
+### Changed
+
+- Official local workflow now centers on `uv run woojae ...`, with shell scripts kept as compatibility wrappers.
+- Increased workspace read limits for larger code and documentation reviews.
+- Review watcher and review UI notification wording is now OS-neutral.
+- `woojae doctor` reports platform-specific optional notification, browser-open, and clipboard helpers.
+
+### Verified
+
+- `uv run python -m compileall -q server.py terminal_bridge scripts`
+- `env PYTHONPATH=. uv run --with pytest pytest`
+
 ## 0.2.0
 
 ### Added

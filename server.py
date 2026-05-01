@@ -1112,7 +1112,7 @@ def workspace_tree(
 def workspace_read_file(
     path: Annotated[str, Field(description="Relative file path under the configured WORKSPACE_ROOT.")],
     offset: Annotated[int, Field(ge=0)] = 0,
-    limit: Annotated[int, Field(ge=1, le=20_000)] = 12_000,
+    limit: Annotated[int, Field(ge=1, le=160_000)] = 40_000,
 ) -> ReadFileResult:
     """Read a UTF-8 text file under the configured WORKSPACE_ROOT."""
     return _read_workspace_file(path, offset, limit)
@@ -2169,8 +2169,8 @@ def workspace_search_text(
 )
 def workspace_read_many_files(
     paths: Annotated[list[str], Field(description="Relative file paths under the configured WORKSPACE_ROOT.")],
-    limit_per_file: Annotated[int, Field(ge=1, le=20_000, description="Maximum characters per file.")] = 8_000,
-    total_limit: Annotated[int, Field(ge=1, le=80_000, description="Maximum total characters to return.")] = 40_000,
+    limit_per_file: Annotated[int, Field(ge=1, le=80_000, description="Maximum characters per file.")] = 20_000,
+    total_limit: Annotated[int, Field(ge=1, le=320_000, description="Maximum total characters to return.")] = 100_000,
 ) -> ReadManyFilesResult:
     """Read multiple UTF-8 text files under the configured WORKSPACE_ROOT with per-file and total limits."""
     if not paths:

@@ -676,6 +676,11 @@ def server_state() -> dict[str, object]:
             "uv": command_exists("uv"),
             "ngrok": command_exists("ngrok"),
             "terminal_notifier": command_exists("terminal-notifier"),
+            "osascript": command_exists("osascript"),
+            "notify_send": command_exists("notify-send"),
+            "xdg_open": command_exists("xdg-open"),
+            "powershell": command_exists("powershell") or command_exists("pwsh"),
+            "clip": command_exists("clip"),
         },
         "environment": {
             "mcp_access_token": env_status("MCP_ACCESS_TOKEN"),
@@ -774,7 +779,7 @@ def start_embedded_watcher() -> tuple[threading.Event | None, threading.Thread |
 
     print("[review-ui] Embedded watcher enabled.")
     print(f"[review-ui] 브라우저 열기 모드: {open_mode}")
-    print(f"[review-ui] macOS 알림: {'켜짐' if config['notify_enabled'] else '꺼짐'}")
+    print(f"[review-ui] 로컬 알림: {'켜짐' if config['notify_enabled'] else '꺼짐'}")
     print(f"[review-ui] 알림 클릭 대상: {config['notification_target']}")
     print(f"[review-ui] 알림 클릭 동작: {config['notification_click_action']}")
     return stop_event, thread
@@ -1663,9 +1668,9 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
               <p class="meta">공개 MCP endpoint 구성을 위한 host/base URL 상태</p>
             </section>
             <section class="metric">
-              <div class="meta">terminal-notifier</div>
-              <h3>{bool_chip(tools.get("terminal_notifier", False), "installed", "missing")}</h3>
-              <p class="meta">clickable notification 사용 가능 여부</p>
+              <div class="meta">Desktop notifications</div>
+              <h3>{bool_chip(any(tools.get(name, False) for name in ("terminal_notifier", "osascript", "notify_send", "powershell")), "available", "missing")}</h3>
+              <p class="meta">플랫폼별 optional notification helper 상태</p>
             </section>
           </div>
           <section class="card">
@@ -1808,13 +1813,14 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
 
     if tab == "tools":
         notifier_installed = bool(tools.get("terminal_notifier", False))
+        notification_available = any(tools.get(name, False) for name in ("terminal_notifier", "osascript", "notify_send", "powershell"))
         notifier_note = (
-            '<div class="notice"><strong>clickable notification 사용 가능</strong><br>'
-            "watcher가 macOS 알림 클릭으로 review UI를 열 수 있습니다."
+            '<div class="notice"><strong>Desktop notifications 사용 가능</strong><br>'
+            "watcher가 플랫폼별 helper로 local notification을 보낼 수 있습니다. 클릭 동작은 OS/desktop 환경에 따라 다를 수 있습니다."
             "</div>"
-            if notifier_installed
-            else '<div class="notice"><strong>terminal-notifier가 없습니다.</strong><br>'
-            "clickable notification을 쓰려면 <code>brew install terminal-notifier</code>를 실행하세요."
+            if notification_available
+            else '<div class="notice"><strong>Desktop notification helper가 없습니다.</strong><br>'
+            "알림만 비활성화됩니다. review UI와 bundle 승인 흐름은 계속 사용할 수 있습니다."
             "</div>"
         )
         return f"""
@@ -1828,6 +1834,11 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
               {kv_row_html("uv", bool_chip(tools.get("uv", False), "installed", "missing"), value_is_html=True)}
               {kv_row_html("ngrok", bool_chip(tools.get("ngrok", False), "installed", "missing"), value_is_html=True)}
               {kv_row_html("terminal-notifier", bool_chip(notifier_installed, "installed", "missing"), value_is_html=True)}
+              {kv_row_html("osascript", bool_chip(tools.get("osascript", False), "installed", "missing"), value_is_html=True)}
+              {kv_row_html("notify-send", bool_chip(tools.get("notify_send", False), "installed", "missing"), value_is_html=True)}
+              {kv_row_html("xdg-open", bool_chip(tools.get("xdg_open", False), "installed", "missing"), value_is_html=True)}
+              {kv_row_html("PowerShell", bool_chip(tools.get("powershell", False), "installed", "missing"), value_is_html=True)}
+              {kv_row_html("clip", bool_chip(tools.get("clip", False), "installed", "missing"), value_is_html=True)}
             </div>
           </section>
           {notifier_note}

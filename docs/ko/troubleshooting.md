@@ -40,7 +40,7 @@ uv run woojae logs review
 복구:
 
 ```bash
-scripts/dev_session.sh restart-session
+uv run woojae restart-session
 ```
 
 그래도 안 되면:
@@ -121,6 +121,18 @@ workspace_command_bundle_status <bundle_id>
 - 너무 크거나 관련 없는 작업이 섞였으면 reject/cancel합니다.
 - 승인/거절 후 status를 다시 확인합니다.
 
+## 로컬 알림이 뜨지 않음
+
+알림 도구는 선택 사항입니다. 알림이 없어도 review UI와 bundle 승인 흐름은 계속 사용할 수 있습니다.
+
+```bash
+uv run woojae doctor
+```
+
+- macOS: `terminal-notifier`가 있으면 클릭 가능한 알림을 사용하고, 설정에 따라 `osascript` fallback을 사용할 수 있습니다.
+- Linux: `notify-send`가 있으면 desktop notification을 보냅니다. URL 열기는 `xdg-open` 또는 Python browser fallback을 사용합니다.
+- Windows: PowerShell/BurntToast가 가능하면 알림을 시도합니다. 실패해도 watcher는 계속 동작합니다.
+
 ## Bundle 실패
 
 확인:
@@ -166,7 +178,7 @@ uv run woojae restart ngrok
 review 관련 stale 상태는 전체 세션 재시작이 더 단순합니다.
 
 ```bash
-scripts/dev_session.sh restart-session
+uv run woojae restart-session
 ```
 
 ## ChatGPT 응답이 끊겼지만 bundle이 생겼을 수 있음

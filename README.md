@@ -16,9 +16,11 @@ Ouroboros Workspace Bridge는 ChatGPT가 사용자가 설정한 `WORKSPACE_ROOT`
 
 Ouroboros Workspace Bridge is a local MCP server for safely browsing, editing, and verifying projects under a configured `WORKSPACE_ROOT` from ChatGPT. Risky file changes and command execution are staged as pending bundles and run only after approval in the local review UI.
 
-The v0.1 recommended usage is from a repository checkout with `uv run woojae ...`.
+The recommended usage is from a repository checkout with `uv run woojae ...`. The old `scripts/dev_session.sh` and `scripts/dev_session.ps1` entrypoints are compatibility wrappers around the same CLI.
 
 ## Quick Start
+
+macOS/Linux:
 
 ```bash
 git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
@@ -29,9 +31,26 @@ uv run woojae start
 uv run woojae copy-url
 ```
 
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
+cd ouroboros-workspace-bridge
+uv sync
+uv run woojae setup
+uv run woojae start
+uv run woojae mcp-url
+```
+
 During setup, choose the `WORKSPACE_ROOT` ChatGPT may access. Existing shell environment values such as `WORKSPACE_ROOT`, `NGROK_HOST`, and `MCP_ACCESS_TOKEN` are respected.
 
-If `NGROK_HOST` is not configured, `uv run woojae start` uses ngrok temporary URL mode. `uv run woojae copy-url` requires both `NGROK_HOST` and `MCP_ACCESS_TOKEN`; it copies the real URL on macOS and prints only a redacted preview.
+If `NGROK_HOST` is not configured, `uv run woojae start` uses ngrok temporary URL mode. `uv run woojae copy-url` requires both `NGROK_HOST` and `MCP_ACCESS_TOKEN`; it uses `pbcopy` on macOS, `xclip` on Linux, and `clip` on Windows when available. Use `uv run woojae mcp-url` to print a redacted URL preview.
+
+Optional install helpers:
+
+- `./install.sh` is Bash-only for macOS/Linux.
+- `./install.ps1` is the Windows PowerShell equivalent.
+- Both helpers install project dependencies and then point you back to the official `uv run woojae ...` commands.
 
 Stop the local session:
 
@@ -51,11 +70,11 @@ See [CHANGELOG.md](CHANGELOG.md) for user-facing changes and [docs/project/updat
 
 ## Platform Support / 플랫폼 지원
 
-- macOS: supported and tested.
-- Linux: experimental and not officially supported yet.
-- Windows: not supported directly. WSL may work, but it is untested.
+- macOS: primary supported local workflow.
+- Linux: supported for the Python supervisor workflow; desktop clipboard/notification conveniences may vary by distribution.
+- Windows: supported through PowerShell for the Python supervisor workflow; ngrok, firewall, browser, and clipboard behavior may need local adjustment.
 
-현재 Ouroboros Workspace Bridge는 macOS-first 로컬 개발 도구로 개발되고 있습니다. `woojae copy-url`, 로컬 알림 같은 일부 편의 기능은 macOS 전용 도구에 의존합니다.
+현재 공식 실행 명령은 모든 플랫폼에서 `uv run woojae ...`입니다. `scripts/dev_session.sh`와 `scripts/dev_session.ps1`은 기존 사용자를 위한 호환 wrapper입니다. `woojae copy-url`, 로컬 알림 같은 일부 편의 기능은 플랫폼별 도구에 의존할 수 있습니다.
 
 ## Documentation
 

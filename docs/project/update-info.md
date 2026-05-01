@@ -1,6 +1,6 @@
 # Update Info
 
-Version: 0.2.0
+Version: 0.3.0
 
 For live local version and git state, run:
 

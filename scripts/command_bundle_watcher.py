@@ -111,7 +111,7 @@ def main() -> None:
     print(f"승인 대기 명령 번들 감시 중: {PENDING_DIR}")
     print(f"승인 UI 주소: {REVIEW_BASE_URL}")
     print(f"브라우저 열기 모드: {open_mode}")
-    print(f"macOS 알림: {'켜짐' if notify_enabled else '꺼짐'}")
+    print(f"로컬 알림: {'켜짐' if notify_enabled else '꺼짐'}")
     print(f"알림 클릭 대상: {notification_target}")
     print(f"알림 클릭 동작: {notification_click_action}")
     print("종료하려면 Ctrl-C를 누르세요.")

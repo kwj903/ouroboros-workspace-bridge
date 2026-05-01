@@ -33,7 +33,7 @@ Approve only expected small bundles. Reject bundles that:
 If a token may have been exposed:
 
 1. Stop the local session.
-2. Regenerate the token through `woojae setup`, `scripts/dev_session.sh configure`, or your shell secret manager.
+2. Regenerate the token through `uv run woojae setup` or your shell secret manager.
 3. Restart the local session.
 4. Refresh the ChatGPT MCP connection.
 

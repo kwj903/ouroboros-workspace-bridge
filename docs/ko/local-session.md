@@ -10,6 +10,8 @@ cd ouroboros-workspace-bridge
 
 ## 권장 흐름
 
+공식 명령은 `uv run woojae ...`입니다. `scripts/dev_session.sh`와 `scripts/dev_session.ps1`은 기존 문서/자동화와 호환하기 위한 wrapper입니다.
+
 처음 한 번 설정합니다.
 
 ```bash
@@ -109,10 +111,26 @@ uv run woojae logs mcp
 uv run woojae logs ngrok
 ```
 
-fallback/debug 용도로 script를 직접 실행할 수 있습니다.
+호환 wrapper도 같은 명령을 전달합니다. 새 문서와 자동화에서는 `uv run woojae ...`를 우선 사용하세요.
+
+macOS/Linux:
 
 ```bash
-scripts/dev_session.sh review
+scripts/dev_session.sh status
+scripts/dev_session.sh restart-session
+```
+
+Windows PowerShell:
+
+```powershell
+.\scripts\dev_session.ps1 status
+.\scripts\dev_session.ps1 restart-session
+```
+
+아래 script는 fallback/debug 용도로 직접 실행할 수 있습니다.
+
+```bash
+uv run woojae review
 scripts/run_server.sh
 scripts/run_ngrok.sh
 ```
@@ -131,13 +149,13 @@ uv run woojae start
 uv run woojae open
 ```
 
-3. MCP URL을 macOS clipboard에 복사합니다.
+3. MCP URL을 clipboard에 복사하거나 URL 상태를 확인합니다.
 
 ```bash
 uv run woojae copy-url
 ```
 
-`copy-url`은 실제 URL을 clipboard에 복사하지만 token을 터미널에 출력하지 않습니다.
+`copy-url`은 실제 URL을 clipboard에 복사하지만 token을 터미널에 출력하지 않습니다. macOS는 `pbcopy`, Linux는 `xclip`, Windows는 `clip`이 있으면 사용합니다. `uv run woojae mcp-url`은 redacted URL preview만 출력합니다.
 
 MCP URL 형식:
 

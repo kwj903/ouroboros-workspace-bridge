@@ -60,7 +60,7 @@ class CliCommandTests(unittest.TestCase):
         def fake_version_summary() -> dict[str, str]:
             return {
                 "name": "Ouroboros Workspace Bridge",
-                "version": "0.2.0",
+                "version": "0.3.0",
                 "commit": "unknown",
                 "branch": "unknown",
                 "dirty": "unknown",
@@ -75,5 +75,5 @@ class CliCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertEqual(calls, [])
-        self.assertIn("Ouroboros Workspace Bridge 0.2.0", stdout.getvalue())
+        self.assertIn("Ouroboros Workspace Bridge 0.3.0", stdout.getvalue())
         self.assertIn("commit: unknown", stdout.getvalue())

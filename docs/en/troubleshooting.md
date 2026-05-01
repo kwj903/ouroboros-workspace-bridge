@@ -43,7 +43,7 @@ uv run woojae logs review
 Recover:
 
 ```bash
-scripts/dev_session.sh restart-session
+uv run woojae restart-session
 ```
 
 If that does not recover the UI:
@@ -129,6 +129,18 @@ Recover:
 - Reject/cancel the bundle if it is too large, mixes unrelated actions, or was created by mistake.
 - After approval or rejection, check bundle status again before creating another mutation bundle.
 
+## Desktop notification does not appear
+
+Notification helpers are optional. If desktop notifications are unavailable, the review UI and bundle approval flow still work.
+
+```bash
+uv run woojae doctor
+```
+
+- macOS: `terminal-notifier` enables clickable notifications; `osascript` can be used as a fallback when configured.
+- Linux: `notify-send` sends desktop notifications when available. URL opening uses `xdg-open` or Python browser fallback.
+- Windows: PowerShell/BurntToast is attempted when available. Failure does not stop the watcher.
+
 ## Bundle failed
 
 Symptoms:
@@ -180,7 +192,7 @@ uv run woojae restart ngrok
 For review-related stale state, prefer full session recovery:
 
 ```bash
-scripts/dev_session.sh restart-session
+uv run woojae restart-session
 ```
 
 ## Full session restart did not recover
