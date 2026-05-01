@@ -33,16 +33,14 @@ DIRECT_RISKY_TOOLS = {
 
 BUNDLE_TOOLS = {
     "workspace_stage_text_payload",
-    "workspace_submit_command_bundle",
-    "workspace_submit_action_bundle",
-    "workspace_submit_patch_bundle",
-    "workspace_submit_commit_bundle",
+    "workspace_propose_command_and_wait",
+    "workspace_propose_file_write_and_wait",
+    "workspace_propose_file_replace_and_wait",
+    "workspace_propose_patch_and_wait",
+    "workspace_propose_git_commit_and_wait",
+    "workspace_propose_git_push_and_wait",
     "workspace_command_bundle_status",
     "workspace_wait_command_bundle_status",
-    "workspace_stage_command_bundle_and_wait",
-    "workspace_stage_action_bundle_and_wait",
-    "workspace_stage_patch_bundle_and_wait",
-    "workspace_stage_commit_bundle_and_wait",
     "workspace_list_command_bundles",
     "workspace_cancel_command_bundle",
 }

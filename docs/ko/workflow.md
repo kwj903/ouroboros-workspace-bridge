@@ -19,18 +19,20 @@
 
 2. local approval을 위한 proposal bundle을 제출합니다.
 
-   권장 public bundle tools:
+   권장 public proposal tools:
 
    ```text
-   workspace_stage_action_bundle_and_wait
-   workspace_stage_command_bundle_and_wait
-   workspace_stage_patch_bundle_and_wait
-   workspace_stage_commit_bundle_and_wait
+   workspace_propose_file_replace_and_wait
+   workspace_propose_file_write_and_wait
+   workspace_propose_command_and_wait
+   workspace_propose_patch_and_wait
+   workspace_propose_git_commit_and_wait
+   workspace_propose_git_push_and_wait
    ```
 
-   이 도구들은 local `/pending` review UI에 pending proposal bundle을 만들고 잠깐 상태를 기다립니다. ChatGPT가 project file을 직접 수정하거나 command/git 작업을 직접 실행하지 않습니다. 실제 변경은 사용자가 local browser에서 승인한 뒤 local runner가 수행합니다.
+   이 도구들은 local `/pending` review UI에 작은 pending proposal bundle을 만들고 잠깐 상태를 기다립니다. ChatGPT가 project file을 직접 수정하거나 command/git 작업을 직접 실행하지 않습니다. 실제 변경은 사용자가 local browser에서 승인한 뒤 local runner가 수행합니다.
 
-   `workspace_stage_action_bundle_and_wait`는 한 번에 action 1개만 받습니다. `workspace_stage_command_bundle_and_wait`도 한 번에 command step 1개만 받습니다. 여러 수정, 여러 검증, 커밋은 반복 호출로 분리합니다.
+   public proposal wrapper는 generic internal bundle tool보다 더 작은 schema를 노출하도록 설계했습니다. 파일 수정 1개, 명령 1개, 커밋 1개, push 1개 단위로 사용하세요. 여러 수정, 여러 검증, 커밋은 반복 호출로 분리합니다.
 
    File action bundle은 `WORKSPACE_ROOT` 아래 non-git directory에서도 실행할 수 있습니다. 더 이상 `git status` 기반 clean-worktree preflight를 요구하지 않으며, file action rollback은 적용 전 file snapshot을 사용합니다.
 

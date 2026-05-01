@@ -19,18 +19,20 @@ The current default is the bundle-first MCP flow: ChatGPT submits a durable bund
 
 2. Stage a proposal bundle for local approval.
 
-   Preferred public bundle tools:
+   Preferred public proposal tools:
 
    ```text
-   workspace_stage_action_bundle_and_wait
-   workspace_stage_command_bundle_and_wait
-   workspace_stage_patch_bundle_and_wait
-   workspace_stage_commit_bundle_and_wait
+   workspace_propose_file_replace_and_wait
+   workspace_propose_file_write_and_wait
+   workspace_propose_command_and_wait
+   workspace_propose_patch_and_wait
+   workspace_propose_git_commit_and_wait
+   workspace_propose_git_push_and_wait
    ```
 
-   These tools create pending proposal bundles in the local `/pending` review UI and briefly wait for status. ChatGPT does not directly modify project files or directly run commands/git operations. Actual changes happen only after the user approves the proposal in the local browser and the local runner applies it.
+   These tools create small pending proposal bundles in the local `/pending` review UI and briefly wait for status. ChatGPT does not directly modify project files or directly run commands/git operations. Actual changes happen only after the user approves the proposal in the local browser and the local runner applies it.
 
-   `workspace_stage_action_bundle_and_wait` accepts exactly one action per call. `workspace_stage_command_bundle_and_wait` accepts exactly one command step per call. Split multiple edits, checks, or commits into repeated calls.
+   The public proposal wrappers intentionally expose smaller schemas than the generic internal bundle tools. Use one proposal per file edit, one proposal per command, one proposal per commit, and one proposal per push. Split multiple edits, checks, or commits into repeated calls.
 
    File action bundles can run in non-git directories under `WORKSPACE_ROOT`; they no longer require a `git status` clean-worktree preflight. Rollback for file actions uses file snapshots captured before applying the bundle.
 

@@ -216,24 +216,137 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             {"bundle_id": "cmd-test-commit", "timeout_seconds": 10, "poll_interval_seconds": 1.5},
         )
 
-    def test_workspace_info_lists_wait_tools(self) -> None:
+    def test_workspace_info_lists_proposal_tools(self) -> None:
         tools = set(server.workspace_info().tools)
 
         self.assertIn("workspace_wait_command_bundle_status", tools)
-        self.assertIn("workspace_stage_command_bundle_and_wait", tools)
-        self.assertIn("workspace_stage_patch_bundle_and_wait", tools)
-        self.assertIn("workspace_stage_action_bundle_and_wait", tools)
-        self.assertIn("workspace_stage_commit_bundle_and_wait", tools)
-        self.assertIn("workspace_submit_command_bundle", tools)
-        self.assertIn("workspace_submit_patch_bundle", tools)
-        self.assertIn("workspace_submit_action_bundle", tools)
-        self.assertIn("workspace_submit_commit_bundle", tools)
+        self.assertIn("workspace_propose_command_and_wait", tools)
+        self.assertIn("workspace_propose_file_write_and_wait", tools)
+        self.assertIn("workspace_propose_file_replace_and_wait", tools)
+        self.assertIn("workspace_propose_patch_and_wait", tools)
+        self.assertIn("workspace_propose_git_commit_and_wait", tools)
+        self.assertIn("workspace_propose_git_push_and_wait", tools)
         self.assertIn("workspace_list_tool_calls", tools)
         self.assertIn("workspace_tool_call_status", tools)
+        self.assertNotIn("workspace_stage_command_bundle_and_wait", tools)
+        self.assertNotIn("workspace_stage_patch_bundle_and_wait", tools)
+        self.assertNotIn("workspace_stage_action_bundle_and_wait", tools)
+        self.assertNotIn("workspace_stage_commit_bundle_and_wait", tools)
+        self.assertNotIn("workspace_submit_command_bundle", tools)
+        self.assertNotIn("workspace_submit_patch_bundle", tools)
+        self.assertNotIn("workspace_submit_action_bundle", tools)
+        self.assertNotIn("workspace_submit_commit_bundle", tools)
         self.assertNotIn("workspace_stage_command_bundle", tools)
         self.assertNotIn("workspace_stage_action_bundle", tools)
         self.assertNotIn("workspace_stage_patch_bundle", tools)
         self.assertNotIn("workspace_stage_commit_bundle", tools)
+
+    def test_propose_command_wraps_one_command_step(self) -> None:
+        calls: dict[str, object] = {}
+        expected = self.status_result("cmd-test-propose-command")
+
+        def fake_stage(title: str, cwd: str, steps: list[CommandBundleStep], timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+            calls["stage"] = {
+                "title": title,
+                "cwd": cwd,
+                "steps": steps,
+                "timeout_seconds": timeout_seconds,
+                "poll_interval_seconds": poll_interval_seconds,
+            }
+            return expected
+
+        server._workspace_stage_command_bundle_and_wait_impl = fake_stage
+
+        result = server.workspace_propose_command_and_wait(
+            title="Run status",
+            cwd=".",
+            argv=["git", "status", "--short"],
+            command_timeout_seconds=12,
+            timeout_seconds=7,
+            poll_interval_seconds=0.5,
+        )
+
+        self.assertIs(result, expected)
+        steps = calls["stage"]["steps"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0].argv, ["git", "status", "--short"])
+        self.assertEqual(steps[0].timeout_seconds, 12)
+        self.assertEqual(calls["stage"]["title"], "Run status")
+        self.assertEqual(calls["stage"]["timeout_seconds"], 7)
+
+    def test_propose_file_replace_wraps_one_action(self) -> None:
+        calls: dict[str, object] = {}
+        expected = self.status_result("cmd-test-propose-replace")
+
+        def fake_stage(title: str, cwd: str, actions: list[CommandBundleAction], timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+            calls["stage"] = {"title": title, "cwd": cwd, "actions": actions}
+            return expected
+
+        server._workspace_stage_action_bundle_and_wait_impl = fake_stage
+
+        result = server.workspace_propose_file_replace_and_wait(
+            title="Replace text",
+            cwd=".",
+            path="README.md",
+            old_text="old",
+            new_text="new",
+        )
+
+        self.assertIs(result, expected)
+        actions = calls["stage"]["actions"]
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].type, "replace_text")
+        self.assertEqual(actions[0].path, "README.md")
+        self.assertEqual(actions[0].old_text, "old")
+        self.assertEqual(actions[0].new_text, "new")
+
+    def test_propose_file_write_wraps_one_action(self) -> None:
+        calls: dict[str, object] = {}
+        expected = self.status_result("cmd-test-propose-write")
+
+        def fake_stage(title: str, cwd: str, actions: list[CommandBundleAction], timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+            calls["stage"] = {"title": title, "cwd": cwd, "actions": actions}
+            return expected
+
+        server._workspace_stage_action_bundle_and_wait_impl = fake_stage
+
+        result = server.workspace_propose_file_write_and_wait(
+            title="Write file",
+            cwd=".",
+            path="notes.txt",
+            content="hello",
+            overwrite=True,
+        )
+
+        self.assertIs(result, expected)
+        actions = calls["stage"]["actions"]
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].type, "write_file")
+        self.assertEqual(actions[0].path, "notes.txt")
+        self.assertEqual(actions[0].content, "hello")
+        self.assertTrue(actions[0].overwrite)
+
+    def test_propose_git_push_wraps_one_command_step(self) -> None:
+        calls: dict[str, object] = {}
+        expected = self.status_result("cmd-test-propose-push")
+
+        def fake_stage(title: str, cwd: str, steps: list[CommandBundleStep], timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+            calls["stage"] = {"title": title, "cwd": cwd, "steps": steps}
+            return expected
+
+        server._workspace_stage_command_bundle_and_wait_impl = fake_stage
+
+        result = server.workspace_propose_git_push_and_wait(cwd=".", remote="origin", branch="main")
+
+        self.assertIs(result, expected)
+        steps = calls["stage"]["steps"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(calls["stage"]["title"], "Push origin main")
+        self.assertEqual(steps[0].argv, ["git", "push", "origin", "main"])
+
+    def test_propose_git_push_rejects_flag_like_remote(self) -> None:
+        with self.assertRaises(ValueError):
+            server.workspace_propose_git_push_and_wait(cwd=".", remote="--force", branch="main")
 
     def test_instrumented_function_creates_completed_tool_call_record(self) -> None:
         expected = self.status_result("cmd-test-journal")

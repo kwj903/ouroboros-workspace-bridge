@@ -1012,16 +1012,14 @@ def workspace_info() -> WorkspaceInfo:
         "workspace_task_finish",
         "workspace_list_tasks",
         "workspace_stage_text_payload",
-        "workspace_submit_command_bundle",
-        "workspace_submit_action_bundle",
-        "workspace_submit_patch_bundle",
-        "workspace_submit_commit_bundle",
+        "workspace_propose_command_and_wait",
+        "workspace_propose_file_write_and_wait",
+        "workspace_propose_file_replace_and_wait",
+        "workspace_propose_patch_and_wait",
+        "workspace_propose_git_commit_and_wait",
+        "workspace_propose_git_push_and_wait",
         "workspace_command_bundle_status",
         "workspace_wait_command_bundle_status",
-        "workspace_stage_command_bundle_and_wait",
-        "workspace_stage_patch_bundle_and_wait",
-        "workspace_stage_action_bundle_and_wait",
-        "workspace_stage_commit_bundle_and_wait",
         "workspace_list_command_bundles",
         "workspace_cancel_command_bundle",
     ]
@@ -3418,7 +3416,7 @@ def _workspace_submit_commit_bundle_impl(
     )
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -3490,7 +3488,7 @@ def _workspace_stage_command_bundle_and_wait_impl(
     )
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -3559,7 +3557,7 @@ def _workspace_stage_patch_bundle_and_wait_impl(
     )
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -3631,7 +3629,7 @@ def _workspace_stage_action_bundle_and_wait_impl(
     )
 
 
-@mcp.tool(
+@_internal_tool(
     annotations={
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -3694,6 +3692,336 @@ def _workspace_stage_commit_bundle_and_wait_impl(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
+    )
+
+
+def _validate_git_remote_or_branch(value: str, label: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{label} cannot be empty.")
+    if normalized.startswith("-"):
+        raise ValueError(f"{label} cannot start with '-'.")
+    if any(ch.isspace() for ch in normalized):
+        raise ValueError(f"{label} cannot contain whitespace.")
+    return normalized
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_propose_command_and_wait(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
+    argv: Annotated[
+        list[str],
+        Field(
+            min_length=1,
+            max_length=40,
+            description=(
+                "Exactly one argv-based command proposal. This only creates a local pending bundle. "
+                "It does not run until approved at http://127.0.0.1:8790/pending."
+            ),
+        ),
+    ],
+    command_name: Annotated[
+        str | None,
+        Field(description="Optional display name for the command step. Defaults to title."),
+    ] = None,
+    command_timeout_seconds: Annotated[int, Field(ge=1, le=300)] = 60,
+    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Create exactly one command proposal in the local pending UI and briefly wait.
+
+    This tool only creates a local pending proposal. It never executes the command
+    in ChatGPT. The command runs only after the user approves the bundle at
+    http://127.0.0.1:8790/pending.
+    """
+    step = CommandBundleStep(
+        name=command_name or title,
+        argv=argv,
+        timeout_seconds=command_timeout_seconds,
+    )
+    return _record_tool_call(
+        "workspace_propose_command_and_wait",
+        {
+            "title": title,
+            "cwd": cwd,
+            "argv": argv,
+            "command_name": command_name,
+            "command_timeout_seconds": command_timeout_seconds,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_stage_command_bundle_and_wait_impl(
+            title,
+            cwd,
+            [step],
+            timeout_seconds,
+            poll_interval_seconds,
+        ),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_propose_file_write_and_wait(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
+    path: Annotated[str, Field(description="Relative file path to create or overwrite under cwd.")],
+    content: Annotated[
+        str,
+        Field(
+            max_length=MAX_WRITE_CHARS,
+            description=(
+                "UTF-8 text content. This only creates a local pending bundle. "
+                "It does not write until approved at http://127.0.0.1:8790/pending."
+            ),
+        ),
+    ],
+    overwrite: Annotated[bool, Field(description="Whether the proposal may overwrite an existing file.")] = False,
+    create_parent_dirs: Annotated[bool, Field(description="Whether the proposal may create missing parent directories.")] = True,
+    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Create exactly one file-write proposal in the local pending UI and briefly wait.
+
+    This tool only creates a local pending proposal. It never writes files in
+    ChatGPT. Files change only after the user approves the bundle at
+    http://127.0.0.1:8790/pending.
+    """
+    action = CommandBundleAction(
+        name=title,
+        type="write_file",
+        path=path,
+        content=content,
+        overwrite=overwrite,
+        create_parent_dirs=create_parent_dirs,
+    )
+    return _record_tool_call(
+        "workspace_propose_file_write_and_wait",
+        {
+            "title": title,
+            "cwd": cwd,
+            "path": path,
+            "content": content,
+            "overwrite": overwrite,
+            "create_parent_dirs": create_parent_dirs,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_stage_action_bundle_and_wait_impl(
+            title,
+            cwd,
+            [action],
+            timeout_seconds,
+            poll_interval_seconds,
+        ),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_propose_file_replace_and_wait(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
+    path: Annotated[str, Field(description="Relative UTF-8 file path under cwd.")],
+    old_text: Annotated[str, Field(min_length=1, description="Exact text to find.")],
+    new_text: Annotated[
+        str,
+        Field(
+            max_length=MAX_WRITE_CHARS,
+            description=(
+                "Replacement text. This only creates a local pending bundle. "
+                "It does not edit until approved at http://127.0.0.1:8790/pending."
+            ),
+        ),
+    ],
+    replace_all: Annotated[bool, Field(description="Replace all occurrences instead of only the first.")] = False,
+    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Create exactly one file replacement proposal in the local pending UI and briefly wait.
+
+    This tool only creates a local pending proposal. It never edits files in
+    ChatGPT. Files change only after the user approves the bundle at
+    http://127.0.0.1:8790/pending.
+    """
+    action = CommandBundleAction(
+        name=title,
+        type="replace_text",
+        path=path,
+        old_text=old_text,
+        new_text=new_text,
+        replace_all=replace_all,
+    )
+    return _record_tool_call(
+        "workspace_propose_file_replace_and_wait",
+        {
+            "title": title,
+            "cwd": cwd,
+            "path": path,
+            "old_text": old_text,
+            "new_text": new_text,
+            "replace_all": replace_all,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_stage_action_bundle_and_wait_impl(
+            title,
+            cwd,
+            [action],
+            timeout_seconds,
+            poll_interval_seconds,
+        ),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_propose_patch_and_wait(
+    title: Annotated[str, Field(min_length=1, max_length=160)],
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
+    patch: Annotated[str | None, Field(description="Unified diff patch text. Prefer smaller patches or file-specific wrappers.")] = None,
+    patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
+    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Create one patch proposal in the local pending UI and briefly wait.
+
+    This tool only creates a local pending proposal. It never applies patches in
+    ChatGPT. The patch applies only after the user approves the bundle at
+    http://127.0.0.1:8790/pending.
+    """
+    return _record_tool_call(
+        "workspace_propose_patch_and_wait",
+        {
+            "title": title,
+            "cwd": cwd,
+            "patch": patch,
+            "patch_ref": patch_ref,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_stage_patch_bundle_and_wait_impl(
+            title,
+            cwd,
+            patch,
+            patch_ref,
+            timeout_seconds,
+            poll_interval_seconds,
+        ),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_propose_git_commit_and_wait(
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
+    paths: Annotated[list[str], Field(min_length=1, max_length=100, description="Relative paths to stage and commit.")],
+    message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
+    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Create one git commit proposal in the local pending UI and briefly wait.
+
+    This tool only creates a local pending proposal. It never runs git add or git
+    commit in ChatGPT. Git runs only after the user approves the bundle at
+    http://127.0.0.1:8790/pending.
+    """
+    return _record_tool_call(
+        "workspace_propose_git_commit_and_wait",
+        {
+            "cwd": cwd,
+            "paths": paths,
+            "message": message,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_stage_commit_bundle_and_wait_impl(
+            cwd,
+            paths,
+            message,
+            timeout_seconds,
+            poll_interval_seconds,
+        ),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_propose_git_push_and_wait(
+    cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
+    remote: Annotated[str, Field(min_length=1, max_length=80, description="Git remote name, usually origin.")] = "origin",
+    branch: Annotated[str, Field(min_length=1, max_length=120, description="Git branch name, usually main.")] = "main",
+    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Create one git push proposal in the local pending UI and briefly wait.
+
+    This tool only creates a local pending proposal. It never pushes in ChatGPT.
+    Git push runs only after the user approves the bundle at
+    http://127.0.0.1:8790/pending.
+    """
+    safe_remote = _validate_git_remote_or_branch(remote, "remote")
+    safe_branch = _validate_git_remote_or_branch(branch, "branch")
+    title = f"Push {safe_remote} {safe_branch}"
+    step = CommandBundleStep(
+        name=f"git push {safe_remote} {safe_branch}",
+        argv=["git", "push", safe_remote, safe_branch],
+        timeout_seconds=60,
+    )
+    return _record_tool_call(
+        "workspace_propose_git_push_and_wait",
+        {
+            "cwd": cwd,
+            "remote": safe_remote,
+            "branch": safe_branch,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_stage_command_bundle_and_wait_impl(
+            title,
+            cwd,
+            [step],
+            timeout_seconds,
+            poll_interval_seconds,
+        ),
     )
 
 
