@@ -85,7 +85,7 @@ http://127.0.0.1:8790/pending
 
 ## Connect ChatGPT
 
-If you are unsure what to enter in each field of the new app screen, see [Connect as a ChatGPT custom app](chatgpt-app-setup.md) as well.
+If you are unsure what to enter in each field of the new app screen, see [Connect as a ChatGPT custom app](chatgpt-app-setup.md) as well. After connecting, see [Use the pending review UI](pending-review-ui.md) for the approval screen.
 
 1. Start the local session.
 

@@ -74,7 +74,7 @@ http://127.0.0.1:8790/pending
 
 ## ChatGPT 연결
 
-새 앱 화면의 각 항목에 무엇을 넣어야 하는지 헷갈리면 [ChatGPT 앱으로 연결하기](chatgpt-app-setup.md)를 함께 참고하세요.
+새 앱 화면의 각 항목에 무엇을 넣어야 하는지 헷갈리면 [ChatGPT 앱으로 연결하기](chatgpt-app-setup.md)를 함께 참고하세요. 연결 후 승인 화면 사용법은 [pending review UI 사용하기](pending-review-ui.md)를 참고하세요.
 
 1. 로컬 세션을 시작합니다.
 

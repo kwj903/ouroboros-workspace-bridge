@@ -50,6 +50,11 @@ During setup, choose the `WORKSPACE_ROOT` ChatGPT may access and the default hel
 
 `uv run woojae copy-url` copies the real token-protected MCP URL when `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and a platform clipboard helper are available. `uv run woojae mcp-url` prints a redacted URL preview for checking configuration without exposing the token.
 
+Next steps:
+
+- [Connect as a ChatGPT custom app](docs/en/chatgpt-app-setup.md)
+- [Use the pending review UI](docs/en/pending-review-ui.md)
+
 Stop the local session:
 
 ```bash
@@ -101,6 +106,7 @@ English docs:
 
 - [Quickstart](docs/en/quickstart.md)
 - [Connect as a ChatGPT custom app](docs/en/chatgpt-app-setup.md)
+- [Use the pending review UI](docs/en/pending-review-ui.md)
 - [Local session guide](docs/en/local-session.md)
 - [Recommended local workflow](docs/en/workflow.md)
 - [Troubleshooting](docs/en/troubleshooting.md)
@@ -110,6 +116,7 @@ Korean docs:
 
 - [빠른 시작](docs/ko/quickstart.md)
 - [ChatGPT 앱으로 연결하기](docs/ko/chatgpt-app-setup.md)
+- [pending review UI 사용하기](docs/ko/pending-review-ui.md)
 - [로컬 세션 운영](docs/ko/local-session.md)
 - [권장 로컬 작업 흐름](docs/ko/workflow.md)
 - [문제 해결](docs/ko/troubleshooting.md)
