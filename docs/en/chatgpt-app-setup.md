@@ -107,7 +107,8 @@ For the first test, ask ChatGPT to perform a harmless check.
 Example:
 
 ```text
-Check only the current project's git status.
+Use this workspace directory: /path/to/your/project
+Show me a brief overview of this directory's structure and tell me what kind of project it looks like.
 ```
 
 When the expected command bundle appears in the review UI, inspect it and approve it.

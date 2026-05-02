@@ -135,7 +135,14 @@ After creating the app, refresh or reconnect the connector. Confirm tools are vi
 http://127.0.0.1:8790/pending
 ```
 
-For a first test, ask ChatGPT to run a harmless project status or `git status` check. Approve only expected bundles in the local review UI.
+For a first test, ask ChatGPT:
+
+```text
+Use this workspace directory: /path/to/your/project
+Show me a brief overview of this directory's structure and tell me what kind of project it looks like.
+```
+
+When the expected pending bundle appears, read it in the local review UI and approve it. This confirms that ChatGPT, the MCP bridge, and the review UI are connected end to end.
 
 To print only a redacted URL preview:
 

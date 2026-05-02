@@ -55,6 +55,15 @@ Next steps:
 - [Connect as a ChatGPT custom app](docs/en/chatgpt-app-setup.md)
 - [Use the pending review UI](docs/en/pending-review-ui.md)
 
+First success test:
+
+```text
+Use this workspace directory: /path/to/your/project
+Show me a brief overview of this directory's structure and tell me what kind of project it looks like.
+```
+
+Approve only the expected pending bundle in the local review UI.
+
 Stop the local session:
 
 ```bash

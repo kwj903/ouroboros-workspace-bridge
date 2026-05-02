@@ -63,7 +63,8 @@ Approve only work that matches your request. Check the files, commands, and scop
 After connecting the app, try a harmless request first.
 
 ```text
-Check only the current project's git status.
+Use this workspace directory: /path/to/your/project
+Show me a brief overview of this directory's structure and tell me what kind of project it looks like.
 ```
 
 When the expected bundle appears, inspect it in the review UI and approve it.

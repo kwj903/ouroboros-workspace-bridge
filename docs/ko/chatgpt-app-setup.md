@@ -108,7 +108,8 @@ http://127.0.0.1:8790/pending
 예:
 
 ```text
-현재 프로젝트의 git status만 확인해줘.
+작업할 디렉토리는 /path/to/your/project 입니다.
+이 디렉토리의 구성을 간단히 보여주고, 어떤 종류의 프로젝트인지 요약해줘.
 ```
 
 review UI에 예상한 command bundle이 올라오면 내용을 확인한 뒤 승인합니다.

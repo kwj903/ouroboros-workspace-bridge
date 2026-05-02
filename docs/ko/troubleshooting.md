@@ -23,6 +23,19 @@ uv run woojae doctor
 - `uv`가 설치되어 있는지
 - token 값이 출력되지 않는지
 
+## 첫 실행 성공 체크리스트
+
+첫 설정 후에는 아래 순서로 확인하세요.
+
+1. `uv run woojae status`에서 review와 mcp가 reachable인지 확인합니다.
+2. `http://127.0.0.1:8790/pending`이 로컬에서 열리는지 확인합니다.
+3. `uv run woojae copy-url` 또는 `uv run woojae mcp-url`로 MCP URL 정보를 확인합니다.
+4. ChatGPT custom app에 현재 MCP 서버 URL이 들어갔는지 확인합니다.
+5. ChatGPT에게 대상 작업 디렉토리의 간단한 구성 요약을 요청했을 때 pending bundle이 생기는지 확인합니다.
+6. 해당 bundle을 승인했을 때 review UI 이력에서 결과가 보이는지 확인합니다.
+
+어느 단계에서 실패했는지 먼저 좁힌 뒤, 그 단계부터 해결하세요.
+
 ## Review UI가 열리지 않음
 
 증상:

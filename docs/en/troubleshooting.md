@@ -25,6 +25,19 @@ Expected high-level result:
 - `uv` is installed.
 - Token values are not printed.
 
+## First-run success checklist
+
+Use this checklist after the first setup:
+
+1. `uv run woojae status` shows review and mcp reachable.
+2. `http://127.0.0.1:8790/pending` opens locally.
+3. `uv run woojae copy-url` or `uv run woojae mcp-url` returns the expected MCP URL information.
+4. The ChatGPT custom app uses the current MCP server URL.
+5. Asking ChatGPT for a brief overview of the target workspace directory creates a pending bundle.
+6. Approving that bundle shows a result in the review UI history.
+
+If one step fails, troubleshoot that step first instead of repeating the full setup.
+
 ## Review UI is unreachable
 
 Symptoms:

@@ -220,7 +220,7 @@ After creating the app, refresh or reconnect the connector. Confirm tools are vi
 http://127.0.0.1:8790/pending
 ```
 
-For a first test, ask ChatGPT to run a harmless project status or `git status` check. Approve only expected bundles in the local review UI.
+For a first test, ask ChatGPT to summarize the target workspace directory structure and what kind of project it appears to be. Approve only expected bundles in the local review UI.
 
 To print only a redacted URL preview:
 
