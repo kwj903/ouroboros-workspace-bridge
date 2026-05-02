@@ -100,6 +100,7 @@ The official command form on every platform is `uv run woojae ...`. `scripts/dev
 English docs:
 
 - [Quickstart](docs/en/quickstart.md)
+- [Connect as a ChatGPT custom app](docs/en/chatgpt-app-setup.md)
 - [Local session guide](docs/en/local-session.md)
 - [Recommended local workflow](docs/en/workflow.md)
 - [Troubleshooting](docs/en/troubleshooting.md)
@@ -108,6 +109,7 @@ English docs:
 Korean docs:
 
 - [빠른 시작](docs/ko/quickstart.md)
+- [ChatGPT 앱으로 연결하기](docs/ko/chatgpt-app-setup.md)
 - [로컬 세션 운영](docs/ko/local-session.md)
 - [권장 로컬 작업 흐름](docs/ko/workflow.md)
 - [문제 해결](docs/ko/troubleshooting.md)
