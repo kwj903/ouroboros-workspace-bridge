@@ -1,3 +1,5 @@
+English | [한국어](README.ko.md)
+
 # Ouroboros Workspace Bridge
 
 <p align="center">
@@ -174,6 +176,7 @@ my-terminal-tool/
 ├── tests/
 ├── pyproject.toml
 ├── README.md
+├── README.ko.md
 ├── server.py
 └── uv.lock
 ```
