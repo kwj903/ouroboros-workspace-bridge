@@ -15,12 +15,50 @@ Ouroboros Workspace Bridge를 처음 실행해서 ChatGPT에 연결하는 가장
 
 ## ngrok 준비
 
-1. ngrok에 가입합니다.
-2. ngrok CLI를 설치합니다.
-3. ngrok CLI에 authtoken을 설정합니다.
-4. reserved domain은 선택 사항입니다.
+1. ngrok에 가입하거나 로그인합니다.
+2. ngrok dashboard의 authtoken 페이지에서 authtoken을 복사합니다.
+3. OS에 맞는 ngrok CLI를 설치하고 `ngrok help`로 확인합니다.
+4. `ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>`으로 authtoken을 로컬에 저장합니다.
+5. reserved domain은 선택 사항입니다.
 
 `NGROK_HOST`를 설정하지 않아도 첫 실행은 temporary URL mode로 가능합니다. 다만 `uv run woojae copy-url`은 고정 `NGROK_HOST`와 `MCP_ACCESS_TOKEN`이 모두 있어야 동작합니다.
+
+자주 쓰는 설치 명령:
+
+macOS:
+
+```bash
+brew install ngrok
+ngrok help
+ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>
+```
+
+Debian/Ubuntu Linux:
+
+```bash
+curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+  | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+
+echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
+  | sudo tee /etc/apt/sources.list.d/ngrok.list
+
+sudo apt update
+sudo apt install ngrok
+ngrok help
+ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>
+```
+
+다른 Linux 배포판은 [ngrok 공식 다운로드 페이지](https://ngrok.com/downloads)의 패키지 또는 zip 설치 방법을 참고하세요.
+
+Windows PowerShell:
+
+```powershell
+winget install ngrok -s msstore
+ngrok help
+ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>
+```
+
+winget이 없거나 Microsoft Store 사용이 막혀 있으면 [ngrok 공식 다운로드 페이지](https://ngrok.com/downloads)에서 Windows용 zip을 받은 뒤 `ngrok.exe`를 PATH에 추가하세요.
 
 토큰, ngrok authtoken, `.env` 값은 repository 파일에 넣지 마세요.
 
@@ -59,6 +97,14 @@ uv run woojae setup
 ```
 
 setup 중에는 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 도움말 언어(`Help language`)를 고릅니다. `Help language`를 `ko`로 저장하면 `uv run woojae help`가 기본적으로 한국어 설명을 표시합니다. 이미 shell에 `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, `WOOJAE_HELP_LANG`이 설정되어 있으면 그 값이 runtime `session.env`보다 우선합니다.
+
+초보자용 브라우저 온보딩을 함께 보고 싶으면 선택적으로 실행할 수 있습니다.
+
+```bash
+uv run woojae setup-ui
+```
+
+`setup-ui`는 `uv run woojae setup`을 대체하지 않습니다. 일회성 localhost 안내 화면이며, ngrok 준비, workspace 개념, ChatGPT 앱 연결, 첫 성공 테스트를 안내합니다. 기존 `/pending` 운영 UI와 달리 start/stop/restart 버튼은 제공하지 않습니다.
 
 ## 시작
 

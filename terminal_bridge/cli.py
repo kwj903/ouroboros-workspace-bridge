@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 
 from terminal_bridge import session_supervisor as supervisor
+from terminal_bridge import setup_ui
 from terminal_bridge.version import version_summary
 
 
@@ -73,6 +74,25 @@ COMMAND_HELP: tuple[CommandHelp, ...] = (
             "로컬 브리지를 준비하고 연결하기 위한 권장 절차를 보여줍니다.",
         ),
         examples=("uv run woojae checklist",),
+    ),
+    CommandHelp(
+        name="setup-ui",
+        aliases=("onboarding",),
+        category=CATEGORY_SETUP,
+        usage="uv run woojae setup-ui [--port 8791] [--no-open]",
+        summary=LocalizedText(
+            "Open the optional localhost setup wizard.",
+            "선택형 localhost 설정 마법사를 엽니다.",
+        ),
+        details=LocalizedText(
+            "Starts a temporary localhost-only onboarding page for checking prerequisites, ngrok setup, "
+            "workspace meaning, ChatGPT app connection steps, and the first success prompt. "
+            "It does not replace uv run woojae setup and does not start or stop the normal review/MCP session.",
+            "필수 도구, ngrok 준비, workspace 개념, ChatGPT 앱 연결 단계, 첫 성공 테스트 문구를 확인하는 "
+            "일회성 localhost 온보딩 페이지를 엽니다. uv run woojae setup을 대체하지 않으며 "
+            "일반 review/MCP 세션을 시작하거나 중지하지 않습니다.",
+        ),
+        examples=("uv run woojae setup-ui", "uv run woojae setup-ui --no-open"),
     ),
     CommandHelp(
         name="doctor",
@@ -561,6 +581,11 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("setup", "configure", "checklist", "doctor", "review", "start", "status", "stop"):
         subparsers.add_parser(name, help=help_summary(name))
 
+    for name in ("setup-ui", "onboarding"):
+        setup_ui_parser = subparsers.add_parser(name, help=help_summary(name))
+        setup_ui_parser.add_argument("--port", type=int, default=setup_ui.DEFAULT_PORT, help="Preferred localhost port. Defaults to 8791.")
+        setup_ui_parser.add_argument("--no-open", action="store_true", help="Print the setup URL without opening a browser.")
+
     subparsers.add_parser("restart-session", help=help_summary("restart-session"))
 
     for name in ("start-service", "stop-service"):
@@ -601,6 +626,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command in {"setup", "configure"}:
         return run_dev_session("configure")
+    if args.command in {"setup-ui", "onboarding"}:
+        if args.port < 1 or args.port > 65535:
+            print("[error] --port must be between 1 and 65535.", file=sys.stderr)
+            return 2
+        return setup_ui.run_setup_ui(port=args.port, open_browser=not args.no_open)
     if args.command in {"checklist", "doctor", "review", "start", "status", "stop"}:
         return run_dev_session(args.command)
     if args.command == "restart-session":

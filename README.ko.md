@@ -50,6 +50,14 @@ uv run woojae mcp-url
 
 setup 중에는 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 기본 도움말 언어를 선택합니다. 기존 shell 환경값인 `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, `WOOJAE_HELP_LANG`가 있으면 이를 존중합니다.
 
+선택형 브라우저 온보딩:
+
+```bash
+uv run woojae setup-ui
+```
+
+`setup-ui`는 처음 쓰는 사용자를 위한 임시 localhost 설정 마법사입니다. ngrok 준비, workspace 개념, ChatGPT 앱 연결, 첫 성공 테스트를 한 화면에서 안내합니다. `uv run woojae setup`을 대체하지 않으며, 일반 review/MCP 세션을 시작하거나 중지하거나 재시작하지 않습니다.
+
 `uv run woojae mcp-url`은 token을 노출하지 않고 redacted URL preview만 보여줍니다. `NGROK_HOST`, `MCP_ACCESS_TOKEN`, 플랫폼 clipboard helper가 준비되어 있고 실제 연결용 URL을 ChatGPT에 붙여넣을 준비가 되었을 때 `uv run woojae copy-url`을 사용하세요.
 
 다음 단계:

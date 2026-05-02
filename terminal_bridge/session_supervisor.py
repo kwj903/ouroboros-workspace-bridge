@@ -96,6 +96,42 @@ def normalize_help_language(value: str) -> str:
     return normalized if normalized in {"auto", "en", "ko"} else "auto"
 
 
+def ngrok_setup_hint_lines() -> list[str]:
+    lines = [
+        "ngrok setup help:",
+        "1. Create or sign in to an ngrok account and open the dashboard authtoken page.",
+        "2. Install the ngrok CLI for your OS:",
+    ]
+    if sys.platform == "darwin":
+        lines.append("   macOS: brew install ngrok")
+    elif is_windows():
+        lines.append("   Windows PowerShell: winget install ngrok -s msstore")
+    elif sys.platform.startswith("linux"):
+        lines.extend(
+            [
+                "   Debian/Ubuntu:",
+                "     curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null",
+                "     echo 'deb https://ngrok-agent.s3.amazonaws.com buster main' | sudo tee /etc/apt/sources.list.d/ngrok.list",
+                "     sudo apt update && sudo apt install ngrok",
+            ]
+        )
+    else:
+        lines.append("   Install ngrok from https://ngrok.com/downloads")
+    lines.extend(
+        [
+            "3. Verify the CLI: ngrok help",
+            "4. Connect your account: ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>",
+            "A reserved ngrok domain is optional for the first run; temporary URL mode can be used.",
+        ]
+    )
+    return lines
+
+
+def print_ngrok_setup_hint() -> None:
+    for line in ngrok_setup_hint_lines():
+        print(line)
+
+
 def parse_legacy_session_env(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
@@ -236,6 +272,15 @@ def configure() -> int:
     print("Workspace Terminal Bridge session configure")
     print(f"Runtime root: {current.runtime_root}")
     print(f"Session JSON: {session_json_path(current.runtime_root)}")
+    print()
+
+    if shutil.which("ngrok"):
+        print("[ok] ngrok CLI: found")
+        print("If this machine is not connected to your ngrok account yet, run:")
+        print("  ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>")
+    else:
+        print("[warn] ngrok CLI is not installed or not on PATH.")
+        print_ngrok_setup_hint()
     print()
 
     if current.mcp_access_token:
@@ -568,7 +613,11 @@ def doctor() -> int:
     else:
         print("[error] uv: missing")
         code = 1
-    print("[ok] ngrok: found" if shutil.which("ngrok") else "[warn] ngrok: missing; ngrok service will fail until ngrok is installed.")
+    if shutil.which("ngrok"):
+        print("[ok] ngrok: found")
+    else:
+        print("[warn] ngrok: missing; ngrok service will fail until ngrok is installed.")
+        print_ngrok_setup_hint()
     if sys.platform == "darwin":
         print("[ok] terminal-notifier: found" if shutil.which("terminal-notifier") else "[warn] terminal-notifier: missing; clickable macOS notifications require it.")
         print("[ok] osascript fallback: found" if shutil.which("osascript") else "[warn] osascript fallback: missing")

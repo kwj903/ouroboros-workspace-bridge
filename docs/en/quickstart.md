@@ -15,10 +15,48 @@ The official command form is `uv run woojae ...`. `scripts/dev_session.sh` and `
 
 ## Prepare ngrok
 
-1. Sign up for ngrok.
-2. Install the ngrok CLI.
-3. Configure your ngrok authtoken with the ngrok CLI.
-4. A reserved ngrok domain is optional. Temporary URL mode works for a first run, but `woojae copy-url` requires a configured `NGROK_HOST`.
+1. Sign up or sign in to ngrok.
+2. Open the ngrok dashboard authtoken page and copy your authtoken.
+3. Install the ngrok CLI for your OS and verify it with `ngrok help`.
+4. Save the authtoken locally with `ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>`.
+5. A reserved ngrok domain is optional. Temporary URL mode works for a first run, but `woojae copy-url` requires a configured `NGROK_HOST`.
+
+Common install commands:
+
+macOS:
+
+```bash
+brew install ngrok
+ngrok help
+ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>
+```
+
+Debian/Ubuntu Linux:
+
+```bash
+curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+  | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+
+echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
+  | sudo tee /etc/apt/sources.list.d/ngrok.list
+
+sudo apt update
+sudo apt install ngrok
+ngrok help
+ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>
+```
+
+For other Linux distributions, use the package or zip instructions from the [official ngrok downloads page](https://ngrok.com/downloads).
+
+Windows PowerShell:
+
+```powershell
+winget install ngrok -s msstore
+ngrok help
+ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>
+```
+
+If winget or Microsoft Store is unavailable, download the Windows zip from the [official ngrok downloads page](https://ngrok.com/downloads) and add `ngrok.exe` to PATH.
 
 Do not put ngrok auth tokens, MCP access tokens, or other secrets in repository files.
 
@@ -70,6 +108,14 @@ During setup:
 Existing shell values such as `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and `WOOJAE_HELP_LANG` take precedence over runtime `session.env`.
 
 Project-specific command help is available with `uv run woojae help`. Use `uv run woojae help --lang ko` for Korean help, or save `Help language` as `ko` during setup.
+
+You can optionally open the browser onboarding helper:
+
+```bash
+uv run woojae setup-ui
+```
+
+`setup-ui` does not replace `uv run woojae setup`. It is a one-time localhost guide for ngrok preparation, workspace concepts, ChatGPT app connection, and the first success test. Unlike the existing `/pending` operations UI, it does not provide start/stop/restart controls.
 
 ## Start
 
