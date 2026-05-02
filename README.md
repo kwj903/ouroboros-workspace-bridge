@@ -24,6 +24,8 @@ Author: KwakWooJae
 
 ## Quick Start
 
+Prerequisites: Python 3.12+, `uv`, ngrok CLI, and a ChatGPT environment that can create a custom MCP app/connector.
+
 macOS/Linux:
 
 ```bash
@@ -32,7 +34,7 @@ cd ouroboros-workspace-bridge
 uv sync
 uv run woojae setup
 uv run woojae start
-uv run woojae copy-url
+uv run woojae mcp-url
 ```
 
 Windows PowerShell:
@@ -48,7 +50,7 @@ uv run woojae mcp-url
 
 During setup, choose the `WORKSPACE_ROOT` ChatGPT may access and the default help language. Existing shell environment values such as `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and `WOOJAE_HELP_LANG` are respected.
 
-`uv run woojae copy-url` copies the real token-protected MCP URL when `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and a platform clipboard helper are available. `uv run woojae mcp-url` prints a redacted URL preview for checking configuration without exposing the token.
+`uv run woojae mcp-url` prints a redacted URL preview for checking configuration without exposing the token. Use `uv run woojae copy-url` when `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and a platform clipboard helper are configured and you are ready to paste the real token-protected MCP URL into ChatGPT.
 
 Next steps:
 

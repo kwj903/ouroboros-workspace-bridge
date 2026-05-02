@@ -24,6 +24,8 @@ Ouroboros by KwakWooJae의 일부입니다.
 
 ## 빠른 시작
 
+준비물: Python 3.12+, `uv`, ngrok CLI, custom MCP app/connector를 만들 수 있는 ChatGPT 환경.
+
 macOS/Linux:
 
 ```bash
@@ -32,7 +34,7 @@ cd ouroboros-workspace-bridge
 uv sync
 uv run woojae setup
 uv run woojae start
-uv run woojae copy-url
+uv run woojae mcp-url
 ```
 
 Windows PowerShell:
@@ -48,7 +50,7 @@ uv run woojae mcp-url
 
 setup 중에는 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 기본 도움말 언어를 선택합니다. 기존 shell 환경값인 `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, `WOOJAE_HELP_LANG`가 있으면 이를 존중합니다.
 
-`uv run woojae copy-url`은 `NGROK_HOST`, `MCP_ACCESS_TOKEN`, 플랫폼 clipboard helper가 준비되어 있을 때 실제 token-protected MCP URL을 복사합니다. `uv run woojae mcp-url`은 token을 노출하지 않고 redacted URL preview만 보여줍니다.
+`uv run woojae mcp-url`은 token을 노출하지 않고 redacted URL preview만 보여줍니다. `NGROK_HOST`, `MCP_ACCESS_TOKEN`, 플랫폼 clipboard helper가 준비되어 있고 실제 연결용 URL을 ChatGPT에 붙여넣을 준비가 되었을 때 `uv run woojae copy-url`을 사용하세요.
 
 다음 단계:
 
