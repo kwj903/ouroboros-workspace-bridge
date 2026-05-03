@@ -82,9 +82,13 @@ uv run woojae stop
 
 선택 설치 helper:
 
+이 스크립트는 필수가 아닌 OS별 설치 보조 도구입니다. `uv run woojae setup`을 대체하지 않고, 일반적인 `uv run woojae ...` 흐름을 더 편하게 사용할 수 있도록 로컬 편의 기능을 준비합니다.
+
 - `./install.sh`: macOS/Linux용 Bash helper.
 - `./install.ps1`: Windows PowerShell용 helper.
-- 두 helper 모두 의존성을 설치한 뒤 `uv run woojae ...` 명령으로 안내합니다.
+- Python 의존성을 설치/동기화하고, 로컬 워크플로우에 필요한 플랫폼 도구를 확인하거나 안내합니다.
+- 플랫폼 도구에는 브라우저 열기, clipboard 복사 helper, pending review 알림용 desktop notification 기능이 포함됩니다.
+- helper 실행 후에는 `uv run woojae setup` 또는 `uv run woojae setup-ui`로 실제 설정을 이어가세요.
 
 ## 업데이트
 

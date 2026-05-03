@@ -82,9 +82,13 @@ uv run woojae stop
 
 Optional install helpers:
 
+These scripts are optional OS-specific setup helpers. They do not replace `uv run woojae setup`; they prepare local conveniences so the normal `uv run woojae ...` workflow is easier to use.
+
 - `./install.sh`: Bash helper for macOS/Linux.
 - `./install.ps1`: PowerShell helper for Windows.
-- Both helpers install dependencies and point you back to `uv run woojae ...`.
+- They install/sync Python dependencies and check or guide platform tools used by the local workflow.
+- Platform tools include browser opening, clipboard copy helpers, and desktop notifications for pending review events when available.
+- After running a helper, continue with `uv run woojae setup` or `uv run woojae setup-ui`.
 
 ## Update
 
