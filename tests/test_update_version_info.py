@@ -46,7 +46,7 @@ After MCP tool or schema changes, refresh or reconnect the ChatGPT custom MCP co
 
     def test_normalize_for_check_detects_update_command_changes(self) -> None:
         first = update_version_info.render_update_info()
-        second = first.replace("uv run woojae status", "uv run woojae doctor")
+        second = first.replace("uv run woojae update --dry-run", "uv run woojae update --skip-restart")
 
         self.assertNotEqual(update_version_info.normalize_for_check(first), update_version_info.normalize_for_check(second))
 
