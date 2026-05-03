@@ -751,6 +751,85 @@ def cleanup_storage(*, apply: bool, older_than_days: int | None = None, include_
     return 0
 
 
+def run_project_command(command: list[str], *, dry_run: bool = False) -> int:
+    display = shlex.join(command)
+    print(f"$ {display}")
+    if dry_run:
+        return 0
+    completed = subprocess.run(command, cwd=str(PROJECT_ROOT), check=False)
+    return completed.returncode
+
+
+def git_output(command: list[str]) -> tuple[int, str, str]:
+    completed = subprocess.run(
+        command,
+        cwd=str(PROJECT_ROOT),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
+
+
+def update_installation(*, dry_run: bool = False, skip_restart: bool = False) -> int:
+    print("Ouroboros Workspace Bridge update")
+    print(f"Repository: {PROJECT_ROOT}")
+    print()
+
+    code, branch, stderr = git_output(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    if code != 0:
+        print(f"[error] Not a git checkout or git is unavailable: {stderr}", file=sys.stderr)
+        return code or 1
+    if branch == "HEAD":
+        print("[error] Detached HEAD checkout. Switch to a branch before updating.", file=sys.stderr)
+        return 1
+
+    code, status, stderr = git_output(["git", "status", "--porcelain"])
+    if code != 0:
+        print(f"[error] Could not check git status: {stderr}", file=sys.stderr)
+        return code or 1
+    if status:
+        print("[error] Local checkout has uncommitted changes. Commit, stash, or discard them before updating.", file=sys.stderr)
+        print()
+        print(status, file=sys.stderr)
+        return 1
+
+    print(f"Branch: {branch}")
+    if dry_run:
+        print("Mode: dry-run")
+    print()
+
+    steps: list[list[str]] = [
+        ["git", "pull", "--ff-only", "origin", branch],
+        ["uv", "sync"],
+    ]
+    for command in steps:
+        code = run_project_command(command, dry_run=dry_run)
+        if code != 0:
+            return code
+
+    if dry_run:
+        if not skip_restart:
+            print("$ uv run woojae restart-session")
+        print("$ uv run woojae status")
+        print()
+        print("Dry run complete. Re-run without --dry-run to update.")
+        return 0
+
+    if skip_restart:
+        print("[info] Session restart skipped by --skip-restart.")
+    else:
+        code = restart_session()
+        if code != 0:
+            return code
+
+    code = status_session()
+    print()
+    print("Update complete.")
+    print("If MCP tools changed, refresh or reconnect the ChatGPT app connector.")
+    return code
+
+
 def print_checklist() -> int:
     print("""Workspace Terminal Bridge development session checklist
 

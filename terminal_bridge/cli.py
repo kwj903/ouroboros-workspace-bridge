@@ -95,6 +95,26 @@ COMMAND_HELP: tuple[CommandHelp, ...] = (
         examples=("uv run woojae setup-ui", "uv run woojae setup-ui --no-open"),
     ),
     CommandHelp(
+        name="update",
+        category=CATEGORY_SETUP,
+        usage="uv run woojae update [--dry-run] [--skip-restart]",
+        summary=LocalizedText(
+            "Update an existing installation.",
+            "기존 설치를 최신 상태로 업데이트합니다.",
+        ),
+        details=LocalizedText(
+            "Checks that the local checkout is clean, pulls the current branch with --ff-only, runs uv sync, "
+            "restarts the local session, and prints status. Use --dry-run to preview the steps.",
+            "로컬 checkout이 깨끗한지 확인한 뒤 현재 branch를 --ff-only로 pull하고, uv sync를 실행하고, "
+            "로컬 세션을 재시작한 뒤 상태를 출력합니다. --dry-run으로 실행 전 단계를 미리 볼 수 있습니다.",
+        ),
+        examples=("uv run woojae update", "uv run woojae update --dry-run", "uv run woojae update --skip-restart"),
+        caution=LocalizedText(
+            "The command stops when local uncommitted changes are present. Commit, stash, or discard them first.",
+            "로컬에 커밋되지 않은 변경사항이 있으면 중단됩니다. 먼저 커밋, stash 또는 정리하세요.",
+        ),
+    ),
+    CommandHelp(
         name="doctor",
         category=CATEGORY_SETUP,
         usage="uv run woojae doctor",
@@ -477,6 +497,7 @@ def print_command_help(topic: str | None = None, *, language: str = "auto") -> i
         print("Common workflow:")
     for command in (
         "uv run woojae setup",
+        "uv run woojae update",
         "uv run woojae doctor",
         "uv run woojae start",
         "uv run woojae status",
@@ -586,6 +607,10 @@ def build_parser() -> argparse.ArgumentParser:
         setup_ui_parser.add_argument("--port", type=int, default=setup_ui.DEFAULT_PORT, help="Preferred localhost port. Defaults to 8791.")
         setup_ui_parser.add_argument("--no-open", action="store_true", help="Print the setup URL without opening a browser.")
 
+    update_parser = subparsers.add_parser("update", help=help_summary("update"))
+    update_parser.add_argument("--dry-run", action="store_true", help="Show update steps without changing files or restarting services.")
+    update_parser.add_argument("--skip-restart", action="store_true", help="Pull and sync without restarting the local session.")
+
     subparsers.add_parser("restart-session", help=help_summary("restart-session"))
 
     for name in ("start-service", "stop-service"):
@@ -631,6 +656,8 @@ def main(argv: list[str] | None = None) -> int:
             print("[error] --port must be between 1 and 65535.", file=sys.stderr)
             return 2
         return setup_ui.run_setup_ui(port=args.port, open_browser=not args.no_open)
+    if args.command == "update":
+        return supervisor.update_installation(dry_run=bool(args.dry_run), skip_restart=bool(args.skip_restart))
     if args.command in {"checklist", "doctor", "review", "start", "status", "stop"}:
         return run_dev_session(args.command)
     if args.command == "restart-session":

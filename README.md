@@ -86,6 +86,25 @@ Optional install helpers:
 - `./install.ps1`: PowerShell helper for Windows.
 - Both helpers install dependencies and point you back to `uv run woojae ...`.
 
+## Update
+
+From an existing checkout:
+
+```bash
+cd ouroboros-workspace-bridge
+uv run woojae update
+```
+
+`woojae update` stops if local uncommitted changes are present. It pulls the current branch with `--ff-only`, runs `uv sync`, restarts the local session, and prints status.
+
+Preview the update without changing files:
+
+```bash
+uv run woojae update --dry-run
+```
+
+After updates that change MCP tools, refresh or reconnect the ChatGPT app connector.
+
 ## After starting
 
 - A local MCP server is running for the configured workspace.

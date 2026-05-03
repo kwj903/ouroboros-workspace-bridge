@@ -72,10 +72,13 @@ Recent Commits is a generated snapshot. Run `uv run python scripts/update_versio
 ## How to Update Existing Installation
 
 ```bash
-git pull origin main
-uv sync
-uv run woojae restart-session
-uv run woojae status
+uv run woojae update
+```
+
+Preview the update steps without changing files:
+
+```bash
+uv run woojae update --dry-run
 ```
 
 After MCP tool or schema changes, refresh or reconnect the ChatGPT custom MCP connector.

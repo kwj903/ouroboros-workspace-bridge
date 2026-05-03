@@ -210,19 +210,31 @@ For stable usage, create a reserved ngrok domain and set `NGROK_HOST` during `uv
 
 ## Update Existing Installation
 
+From an existing checkout:
+
 ```bash
 cd ouroboros-workspace-bridge
-git pull origin main
-uv sync
-uv run woojae restart-session
-uv run woojae status
+uv run woojae update
 ```
 
-- `git pull` updates local files.
-- `uv sync` refreshes dependencies if `pyproject.toml` or the lock file changed.
-- `uv run woojae restart-session` restarts review, MCP, and ngrok with the new code.
-- `uv run woojae status` should show review and mcp reachable.
+- `uv run woojae update` stops if local uncommitted changes are present.
+- It pulls the current branch with `--ff-only`.
+- It runs `uv sync`.
+- It restarts review, MCP, and ngrok with the new code.
+- It prints the final local session status.
 - After MCP tool changes, refresh or reconnect the ChatGPT app connector.
+
+Preview the update steps without changing files:
+
+```bash
+uv run woojae update --dry-run
+```
+
+If you want to pull and sync without restarting the local session:
+
+```bash
+uv run woojae update --skip-restart
+```
 
 ## Approve Bundles
 

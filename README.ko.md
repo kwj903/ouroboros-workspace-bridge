@@ -86,6 +86,25 @@ uv run woojae stop
 - `./install.ps1`: Windows PowerShell용 helper.
 - 두 helper 모두 의존성을 설치한 뒤 `uv run woojae ...` 명령으로 안내합니다.
 
+## 업데이트
+
+기존 설치 디렉토리에서 실행하세요.
+
+```bash
+cd ouroboros-workspace-bridge
+uv run woojae update
+```
+
+`woojae update`는 로컬에 커밋되지 않은 변경사항이 있으면 중단됩니다. 현재 branch를 `--ff-only`로 pull하고, `uv sync`를 실행하고, 로컬 세션을 재시작한 뒤 상태를 출력합니다.
+
+실제 변경 없이 업데이트 단계를 미리 보려면 다음 명령을 사용하세요.
+
+```bash
+uv run woojae update --dry-run
+```
+
+MCP tool이 바뀐 업데이트 후에는 ChatGPT app connector를 refresh/reconnect하세요.
+
 ## 실행 후 확인할 것
 
 - 설정한 workspace를 대상으로 local MCP server가 실행됩니다.

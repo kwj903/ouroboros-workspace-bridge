@@ -203,19 +203,31 @@ uv run woojae mcp-url
 
 ## 기존 설치 업데이트
 
+기존 설치 디렉토리에서 실행하세요.
+
 ```bash
 cd ouroboros-workspace-bridge
-git pull origin main
-uv sync
-uv run woojae restart-session
-uv run woojae status
+uv run woojae update
 ```
 
-- `git pull`은 local checkout의 파일을 업데이트합니다.
-- `uv sync`는 `pyproject.toml` 또는 lock file 변경이 있을 때 의존성을 갱신합니다.
-- `uv run woojae restart-session`은 review, MCP, ngrok 세션을 새 코드로 재시작합니다.
-- `uv run woojae status`에서 review와 mcp가 reachable인지 확인하세요.
+- `uv run woojae update`는 로컬에 커밋되지 않은 변경사항이 있으면 중단됩니다.
+- 현재 branch를 `--ff-only`로 pull합니다.
+- `uv sync`를 실행합니다.
+- review, MCP, ngrok 세션을 새 코드로 재시작합니다.
+- 마지막 로컬 세션 상태를 출력합니다.
 - MCP tool이 바뀐 업데이트 후에는 ChatGPT app connector를 refresh/reconnect하세요.
+
+실제 변경 없이 업데이트 단계를 미리 보려면 다음 명령을 사용하세요.
+
+```bash
+uv run woojae update --dry-run
+```
+
+pull과 sync만 하고 로컬 세션 재시작을 생략하려면 다음 명령을 사용하세요.
+
+```bash
+uv run woojae update --skip-restart
+```
 
 ## Bundle 승인
 
