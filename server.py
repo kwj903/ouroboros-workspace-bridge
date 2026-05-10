@@ -72,7 +72,6 @@ from terminal_bridge.config import (
 )
 from terminal_bridge.models import (
     AuditLogResult,
-    BackupEntry,
     BackupListResult,
     BackupRestoreResult,
     CommandBundleAction,
@@ -98,10 +97,8 @@ from terminal_bridge.models import (
     ReplaceTextResult,
     RestoreResult,
     SearchTextResult,
-    TaskListEntry,
     TaskListResult,
     TaskStatusResult,
-    TaskStepEntry,
     TextPayloadStageResult,
     ToolCallListResult,
     ToolCallStatusResult,
@@ -140,6 +137,26 @@ from terminal_bridge.mcp_tools.bundles import (
     stage_commit_bundle_and_wait as _bundle_stage_commit_bundle_and_wait,
     stage_patch_bundle_and_wait as _bundle_stage_patch_bundle_and_wait,
     wait_command_bundle_status as _bundle_wait_command_bundle_status,
+)
+from terminal_bridge.mcp_tools.status import (
+    get_operation as _status_get_operation,
+    git_diff as _status_git_diff,
+    git_status as _status_git_status,
+    handoff_entry as _status_handoff_entry,
+    list_backups as _status_list_backups,
+    list_handoffs as _status_list_handoffs,
+    list_operations as _status_list_operations,
+    list_tasks as _status_list_tasks,
+    list_tool_calls as _status_list_tool_calls,
+    list_trash as _status_list_trash,
+    next_handoff as _status_next_handoff,
+    read_audit_log as _status_read_audit_log,
+    recover_last_activity as _status_recover_last_activity,
+    task_result as _status_task_result,
+    task_status as _status_task_status,
+    tool_call_status as _status_tool_call_status,
+    transport_git_status_summary as _status_transport_git_status_summary,
+    transport_probe as _status_transport_probe,
 )
 from terminal_bridge.operations import (
     _begin_operation,
@@ -568,45 +585,7 @@ def _write_task_record(record: dict[str, object]) -> None:
 
 
 def _task_result(record: dict[str, object]) -> TaskStatusResult:
-    raw_steps = record.get("steps")
-    steps: list[TaskStepEntry] = []
-
-    if isinstance(raw_steps, list):
-        for raw_step in raw_steps:
-            if not isinstance(raw_step, dict):
-                continue
-
-            steps.append(
-                TaskStepEntry(
-                    ts=str(raw_step.get("ts", "")),
-                    kind=str(raw_step.get("kind", "note")),
-                    message=str(raw_step.get("message", "")),
-                    data=raw_step.get("data") if isinstance(raw_step.get("data"), dict) else None,
-                )
-            )
-
-    raw_plan = record.get("plan")
-    plan = [str(item) for item in raw_plan] if isinstance(raw_plan, list) else []
-
-    raw_next_steps = record.get("next_steps")
-    next_steps = [str(item) for item in raw_next_steps] if isinstance(raw_next_steps, list) else []
-
-    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-
-    return TaskStatusResult(
-        task_id=str(record.get("task_id", "")),
-        title=str(record.get("title", "")),
-        goal=str(record.get("goal", "")),
-        status=str(record.get("status", "unknown")),
-        created_at=str(record.get("created_at", "")),
-        updated_at=str(record.get("updated_at", "")),
-        finished_at=record.get("finished_at") if isinstance(record.get("finished_at"), str) else None,
-        plan=plan,
-        steps=steps,
-        metadata=metadata,
-        summary=record.get("summary") if isinstance(record.get("summary"), str) else None,
-        next_steps=next_steps,
-    )
+    return _status_task_result(record)
 
 
 def _extract_bearer_token(headers: dict[str, str]) -> str | None:
@@ -1486,77 +1465,11 @@ def workspace_read_audit_log(
     event: Annotated[str | None, Field(description="Optional event name filter.")] = None,
 ) -> AuditLogResult:
     """Read recent MCP audit log entries. Useful for checking whether a tool call actually ran."""
-    _ensure_runtime_dirs()
-
-    if not AUDIT_LOG.exists():
-        return AuditLogResult(entries=[], count=0, truncated=False)
-
-    lines = AUDIT_LOG.read_text(encoding="utf-8").splitlines()
-    entries: list[dict[str, object]] = []
-
-    for line in reversed(lines):
-        if not line.strip():
-            continue
-
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        if event is not None and item.get("event") != event:
-            continue
-
-        entries.append(item)
-
-        if len(entries) >= limit:
-            break
-
-    return AuditLogResult(
-        entries=entries,
-        count=len(entries),
-        truncated=len(entries) >= limit,
-    )
+    return _status_read_audit_log(_ensure_runtime_dirs, AUDIT_LOG, limit, event)
 
 
 def _transport_git_status_summary(cwd: str) -> dict[str, object]:
-    try:
-        target = _resolve_workspace_path(cwd)
-        if not target.exists():
-            raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
-        if not target.is_dir():
-            raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
-
-        completed = subprocess.run(
-            ["git", "status", "--short", "--branch"],
-            cwd=str(target),
-            env=_safe_env(),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=5,
-            shell=False,
-            check=False,
-        )
-        stdout_lines = completed.stdout.splitlines()
-        stderr = completed.stderr.strip()
-        return {
-            "cwd": _relative(target),
-            "exit_code": completed.returncode,
-            "branch": stdout_lines[0] if stdout_lines else "",
-            "changed_line_count": max(0, len(stdout_lines) - 1),
-            "stderr": stderr[:300],
-            "truncated": len(stderr) > 300,
-        }
-    except Exception as exc:
-        return {
-            "cwd": cwd,
-            "exit_code": None,
-            "branch": "",
-            "changed_line_count": None,
-            "stderr": f"{type(exc).__name__}: {exc}"[:300],
-            "truncated": False,
-        }
+    return _status_transport_git_status_summary(cwd)
 
 
 @mcp.tool(
@@ -1580,23 +1493,15 @@ def workspace_transport_probe(
 
 
 def _workspace_transport_probe_impl(cwd: str, include_git_status: bool) -> dict[str, object]:
-    _ensure_runtime_dirs()
-    latest_tool_call_count = len(_list_tool_call_records(20))
-    latest_bundle_count = sum(1 for directory in _command_bundle_dirs() if directory.exists() for _ in directory.glob("cmd-*.json"))
-    git_status = _transport_git_status_summary(cwd) if include_git_status else None
-
-    return {
-        "ok": True,
-        "server_time": _now_iso(),
-        "pid": os.getpid(),
-        "workspace_root": str(WORKSPACE_ROOT),
-        "runtime_root": str(RUNTIME_ROOT),
-        "latest_tool_call_count": latest_tool_call_count,
-        "latest_bundle_count": latest_bundle_count,
-        "git_status": git_status,
-        "git_status_summary": git_status,
-        "diagnosis": "Transport probe reached the MCP server.",
-    }
+    return _status_transport_probe(
+        _ensure_runtime_dirs,
+        _list_tool_call_records,
+        _command_bundle_dirs,
+        WORKSPACE_ROOT,
+        RUNTIME_ROOT,
+        cwd,
+        include_git_status,
+    )
 
 
 @_internal_tool(
@@ -1689,99 +1594,20 @@ def workspace_recover_last_activity(
 
 
 def _workspace_recover_last_activity_impl(cwd: str, bundle_limit: int, audit_limit: int) -> dict[str, object]:
-    _ensure_runtime_dirs()
-
-    try:
-        git_status = _run_command(cwd, ["git", "status", "--short", "--branch"], timeout_seconds=30).model_dump()
-    except Exception as exc:
-        git_status = {
-            "cwd": cwd,
-            "command": ["git", "status", "--short", "--branch"],
-            "exit_code": None,
-            "stdout": "",
-            "stderr": f"{type(exc).__name__}: {exc}",
-            "truncated": False,
-        }
-
-    bundle_entries: list[dict[str, object]] = []
-    for directory in _command_bundle_dirs():
-        if not directory.exists():
-            continue
-        for bundle_path in directory.glob("cmd-*.json"):
-            try:
-                record = _read_json(bundle_path)
-            except Exception:
-                continue
-            steps = record.get("steps") if isinstance(record.get("steps"), list) else []
-            bundle_entries.append(
-                {
-                    "bundle_id": str(record.get("bundle_id", bundle_path.stem)),
-                    "title": str(record.get("title", "")),
-                    "cwd": str(record.get("cwd", "")),
-                    "status": str(record.get("status", directory.name)),
-                    "risk": str(record.get("risk", "unknown")),
-                    "command_count": len(steps),
-                    "updated_at": str(record.get("updated_at", "")),
-                    "error": record.get("error") if isinstance(record.get("error"), str) else None,
-                }
-            )
-
-    bundle_entries.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
-    latest_bundles = bundle_entries[:bundle_limit]
-
-    audit_entries: list[dict[str, object]] = []
-    for item in workspace_read_audit_log(limit=audit_limit).entries:
-        safe_item: dict[str, object] = {}
-        for key in (
-            "ts",
-            "event",
-            "bundle_id",
-            "operation_id",
-            "cwd",
-            "title",
-            "risk",
-            "intent_type",
-            "nonce",
-            "command_count",
-            "path_count",
-            "exit_code",
-            "truncated",
-        ):
-            if key in item:
-                safe_item[key] = item[key]
-        audit_entries.append(safe_item)
-
-    git_stdout = str(git_status.get("stdout", "")).strip()
-    if not latest_bundles:
-        diagnosis = "No command bundle records were found. If a mutation tool call appeared to hang, it may not have reached the MCP server."
-    elif git_stdout and git_stdout != "## main...origin/main":
-        diagnosis = "The worktree is not clean or the branch is ahead/behind. Inspect git_status and latest_bundles before retrying mutation tools."
-    else:
-        diagnosis = "Recent command bundle records and git status are available. Use latest_bundles to decide whether to retry, inspect status, or continue."
-
-    return {
-        "git_status": git_status,
-        "latest_bundles": latest_bundles,
-        "latest_audit_events": audit_entries,
-        "diagnosis": diagnosis,
-    }
+    return _status_recover_last_activity(
+        _ensure_runtime_dirs,
+        _run_command,
+        _command_bundle_dirs,
+        _read_json,
+        lambda limit: workspace_read_audit_log(limit=limit),
+        cwd,
+        bundle_limit,
+        audit_limit,
+    )
 
 
 def _handoff_entry(record: dict[str, object]) -> HandoffEntry:
-    return HandoffEntry(
-        handoff_id=str(record.get("handoff_id", "")),
-        bundle_id=str(record.get("bundle_id", "")),
-        status=str(record.get("status", "unknown")),
-        ok=record.get("ok") if isinstance(record.get("ok"), bool) else None,
-        risk=str(record.get("risk", "unknown")),
-        title=str(record.get("title", "")),
-        cwd=str(record.get("cwd", "")),
-        next=str(record.get("next", "inspect_logs")),
-        stdout_tail=str(record.get("stdout_tail", "")),
-        stderr_tail=str(record.get("stderr_tail", "")),
-        created_at=str(record.get("created_at", "")),
-        updated_at=str(record.get("updated_at", "")),
-    )
+    return _status_handoff_entry(record)
 
 
 @mcp.tool(
@@ -1794,8 +1620,7 @@ def _handoff_entry(record: dict[str, object]) -> HandoffEntry:
 )
 def workspace_next_handoff() -> HandoffEntry | None:
     """Return the latest local bundle handoff, if one exists."""
-    record = _next_handoff_record()
-    return _handoff_entry(record) if record is not None else None
+    return _status_next_handoff(_next_handoff_record)
 
 
 @mcp.tool(
@@ -1810,8 +1635,7 @@ def workspace_list_handoffs(
     limit: Annotated[int, Field(ge=1, le=100, description="Maximum handoff records to return.")] = 20,
 ) -> HandoffListResult:
     """List recent local bundle handoffs, newest first."""
-    entries = [_handoff_entry(record) for record in _list_handoff_records(limit)]
-    return HandoffListResult(entries=entries, count=len(entries))
+    return _status_list_handoffs(_list_handoff_records, limit)
 
 
 @mcp.tool(
@@ -1826,9 +1650,7 @@ def workspace_list_tool_calls(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum tool call records to return.")] = 50,
 ) -> ToolCallListResult:
     """List recent instrumented MCP tool calls, newest first."""
-    records = _list_tool_call_records(limit)
-    entries = [_tool_call_status_result(record) for record in records]
-    return ToolCallListResult(entries=entries, count=len(entries))
+    return _status_list_tool_calls(_list_tool_call_records, _tool_call_status_result, limit)
 
 
 @mcp.tool(
@@ -1843,7 +1665,7 @@ def workspace_tool_call_status(
     call_id: Annotated[str, Field(description="Tool call id returned by workspace_list_tool_calls.")],
 ) -> ToolCallStatusResult:
     """Return one instrumented MCP tool call record."""
-    return _tool_call_status_result(_read_tool_call_record(call_id))
+    return _status_tool_call_status(_read_tool_call_record, _tool_call_status_result, call_id)
 
 
 @_internal_tool(
@@ -1858,23 +1680,7 @@ def workspace_get_operation(
     operation_id: Annotated[str, Field(description="Operation id returned by write/delete/replace tools.")],
 ) -> OperationStatusResult:
     """Return a recorded operation status by operation_id."""
-    op_id = _normalize_operation_id(operation_id)
-    record = _read_operation_record(op_id)
-
-    if record is None:
-        raise FileNotFoundError(f"Operation not found: {op_id}")
-
-    return OperationStatusResult(
-        operation_id=op_id,
-        status=str(record.get("status", "unknown")),
-        tool=record.get("tool") if isinstance(record.get("tool"), str) else None,
-        started_at=record.get("started_at") if isinstance(record.get("started_at"), str) else None,
-        completed_at=record.get("completed_at") if isinstance(record.get("completed_at"), str) else None,
-        failed_at=record.get("failed_at") if isinstance(record.get("failed_at"), str) else None,
-        args=record.get("args") if isinstance(record.get("args"), dict) else None,
-        result=record.get("result") if isinstance(record.get("result"), dict) else None,
-        error=record.get("error") if isinstance(record.get("error"), str) else None,
-    )
+    return _status_get_operation(_normalize_operation_id, _read_operation_record, operation_id)
 
 
 @_internal_tool(
@@ -1889,35 +1695,7 @@ def workspace_list_operations(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum operations to return.")] = 50,
 ) -> OperationListResult:
     """List recent recorded operations, newest first."""
-    _ensure_runtime_dirs()
-
-    entries: list[OperationStatusResult] = []
-
-    for operation_path in sorted(OPERATION_DIR.glob("*.json"), reverse=True):
-        try:
-            record = json.loads(operation_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-
-        op_id = str(record.get("operation_id", operation_path.stem))
-        entries.append(
-            OperationStatusResult(
-                operation_id=op_id,
-                status=str(record.get("status", "unknown")),
-                tool=record.get("tool") if isinstance(record.get("tool"), str) else None,
-                started_at=record.get("started_at") if isinstance(record.get("started_at"), str) else None,
-                completed_at=record.get("completed_at") if isinstance(record.get("completed_at"), str) else None,
-                failed_at=record.get("failed_at") if isinstance(record.get("failed_at"), str) else None,
-                args=record.get("args") if isinstance(record.get("args"), dict) else None,
-                result=record.get("result") if isinstance(record.get("result"), dict) else None,
-                error=record.get("error") if isinstance(record.get("error"), str) else None,
-            )
-        )
-
-        if len(entries) >= limit:
-            break
-
-    return OperationListResult(entries=entries, count=len(entries))
+    return _status_list_operations(_ensure_runtime_dirs, OPERATION_DIR, limit)
 
 
 @mcp.tool(
@@ -1932,10 +1710,7 @@ def workspace_list_backups(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum backups to return.")] = 50,
 ) -> BackupListResult:
     """List recent file backups created before overwrite/append/replace/restore operations."""
-    _ensure_runtime_dirs()
-
-    entries = _list_backup_entries(limit)
-    return BackupListResult(entries=entries, count=len(entries))
+    return _status_list_backups(_ensure_runtime_dirs, _list_backup_entries, limit)
 
 
 @_direct_mutation_tool(
@@ -1995,10 +1770,7 @@ def workspace_list_trash(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum trash entries to return.")] = 50,
 ) -> TrashListResult:
     """List recent soft-deleted files and directories in MCP trash."""
-    _ensure_runtime_dirs()
-
-    entries = _list_trash_entries(limit)
-    return TrashListResult(entries=entries, count=len(entries))
+    return _status_list_trash(_ensure_runtime_dirs, _list_trash_entries, limit)
 
 
 @_direct_mutation_tool(
@@ -2166,10 +1938,7 @@ def workspace_task_status(
     task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
 ) -> TaskStatusResult:
     """Return a task record by task_id."""
-    normalized = _normalize_task_id(task_id)
-    record = _read_task(normalized)
-
-    return _task_result(record)
+    return _status_task_status(_normalize_task_id, _read_task, task_id)
 
 
 @mcp.tool(
@@ -2286,32 +2055,7 @@ def workspace_list_tasks(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum tasks to return.")] = 50,
 ) -> TaskListResult:
     """List recent task records, newest first."""
-    _ensure_runtime_dirs()
-
-    entries: list[TaskListEntry] = []
-
-    for task_path in _list_task_paths():
-        try:
-            record = json.loads(task_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-
-        entries.append(
-            TaskListEntry(
-                task_id=str(record.get("task_id", task_path.stem)),
-                title=str(record.get("title", "")),
-                status=str(record.get("status", "unknown")),
-                created_at=str(record.get("created_at", "")),
-                updated_at=str(record.get("updated_at", "")),
-                finished_at=record.get("finished_at") if isinstance(record.get("finished_at"), str) else None,
-                summary=record.get("summary") if isinstance(record.get("summary"), str) else None,
-            )
-        )
-
-        if len(entries) >= limit:
-            break
-
-    return TaskListResult(entries=entries, count=len(entries))
+    return _status_list_tasks(_ensure_runtime_dirs, _list_task_paths, limit)
 
 
 @mcp.tool(
@@ -2496,7 +2240,7 @@ def workspace_git_status(
     ] = ".",
 ) -> CommandResult:
     """Run git status under the configured WORKSPACE_ROOT."""
-    return _run_command(cwd=cwd, command=["git", "status", "--short", "--branch"], timeout_seconds=15)
+    return _status_git_status(_run_command, cwd)
 
 
 @mcp.tool(
@@ -2514,7 +2258,7 @@ def workspace_git_diff(
     ] = ".",
 ) -> CommandResult:
     """Run git diff under the configured WORKSPACE_ROOT."""
-    return _run_command(cwd=cwd, command=["git", "diff", "--no-ext-diff"], timeout_seconds=15)
+    return _status_git_diff(_run_command, cwd)
 
 
 
