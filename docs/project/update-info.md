@@ -12,27 +12,26 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
-- cea43ec Update docs for proposal wrapper workflow
-- 22af817 Avoid reopening browser during session restart
-- 2f9fd50 Add purpose-specific proposal wrapper tools
-- a0d69bd Refresh update info snapshot
-- 06a8da6 Document localized CLI help workflow
-- ff9c364 Persist CLI help language preference
-- 224defc Add localized CLI help command
-- 147c350 Improve public README and issue templates
-- bca50d1 Add runtime storage management commands
-- dda6993 Release 0.3.0 cross-platform session support
-- 3e48144 Fix process table layout overflow
-- 48cc1a8 Release 0.2.0
-- 890ce7c Clean up companion flow and relax bundle limits
-- 18c9442 Refactor MCP and review server helpers
-- 21708cc Add local pending action intents
-- a10a7a3 Add ChatGPT companion workflow prototype
-- 20dd5d4 Fix review UI horizontal overflow
-- 5adb855 Add bundle handoff queue
-- 25b799a Collapse intent inbox in review UI
-- 0afd266 Add intent inbox to review UI
-- 510f9f3 Show bundle handoff summaries in review UI
+- 82b6e58 docs: document MCP helper refactor workflow
+- e3846ba chore: stop tracking graphify outputs
+- 5d64d09 Merge branch 'refactor/server-readonly-tools'
+- 1138304 chore: update graphify output
+- b4943f1 refactor: extract status MCP tool helpers
+- 82aec40 chore: update graphify output
+- 43c8615 refactor: extract command bundle MCP helpers
+- 54d1457 refactor: extract proposal MCP tool helpers
+- 033f8a0 refactor: extract readonly MCP tool helpers
+- 1ccc968 chore: ignore graphify outputs
+- 5c26c9c Fix update info test expectation
+- 5ed6768 Improve README setup helper documentation
+- a046f6f Add update command for existing installs
+- 0a21bcb Add setup UI onboarding helper
+- 7f1558d Clarify README onboarding flow
+- f405349 Improve first-run onboarding docs
+- 259cd65 Add pending review UI guide
+- 1730f54 Add ChatGPT app setup guide
+- add45b7 Improve README landing quick start
+- 07c1b90 Add Korean README language switch
 
 ## How to Update Existing Installation
 
