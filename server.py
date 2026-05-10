@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import base64
-import fnmatch
 import html
 import hmac
 import json
@@ -27,8 +26,6 @@ from terminal_bridge.backups import (
     _sha256_file,
 )
 from terminal_bridge.browsing import (
-    _is_safe_visible_path,
-    _iter_visible_paths,
     _list_workspace,
     _read_workspace_file,
     _tree_workspace,
@@ -87,7 +84,6 @@ from terminal_bridge.models import (
     CommandBundleStep,
     CommandResult,
     DeleteResult,
-    FileMatchEntry,
     FindFilesResult,
     GitCommitResult,
     HandoffEntry,
@@ -100,11 +96,9 @@ from terminal_bridge.models import (
     PatchPreviewResult,
     ProjectSnapshotResult,
     ReadFileResult,
-    ReadManyFileEntry,
     ReadManyFilesResult,
     ReplaceTextResult,
     RestoreResult,
-    SearchTextMatch,
     SearchTextResult,
     TaskListEntry,
     TaskListResult,
@@ -122,6 +116,12 @@ from terminal_bridge.models import (
 )
 from terminal_bridge.handoffs import list_handoffs as _list_handoff_records
 from terminal_bridge.handoffs import next_handoff as _next_handoff_record
+from terminal_bridge.mcp_tools.readonly import (
+    find_files as _readonly_find_files,
+    project_snapshot as _readonly_project_snapshot,
+    read_many_files as _readonly_read_many_files,
+    search_text as _readonly_search_text,
+)
 from terminal_bridge.operations import (
     _begin_operation,
     _complete_operation,
@@ -2014,54 +2014,12 @@ def workspace_find_files(
     max_entries: Annotated[int, Field(ge=1, le=300, description="Maximum matching entries to return.")] = 100,
 ) -> FindFilesResult:
     """Find files or directories under the configured WORKSPACE_ROOT using a safe fnmatch pattern."""
-    target = _resolve_workspace_path(path)
-
-    if not target.exists():
-        raise FileNotFoundError(f"Path does not exist: {_relative(target)}")
-
-    if not target.is_dir():
-        raise NotADirectoryError(f"Path is not a directory: {_relative(target)}")
-
-    if pattern.strip() == "":
-        raise ValueError("pattern cannot be empty.")
-
-    scan_limit = min(max(max_entries * 20, 500), 3000)
-    paths, scan_truncated = _iter_visible_paths(target, scan_limit)
-
-    entries: list[FileMatchEntry] = []
-    truncated = scan_truncated
-
-    for item in paths:
-        rel = _relative(item)
-        kind = "directory" if item.is_dir() else "file" if item.is_file() else "other"
-
-        if kind == "file" and not include_files:
-            continue
-        if kind == "directory" and not include_directories:
-            continue
-
-        if not (fnmatch.fnmatch(item.name, pattern) or fnmatch.fnmatch(rel, pattern)):
-            continue
-
-        size_bytes: int | None = None
-        if item.is_file():
-            try:
-                size_bytes = item.stat().st_size
-            except OSError:
-                size_bytes = None
-
-        entries.append(FileMatchEntry(path=rel, kind=kind, size_bytes=size_bytes))
-
-        if len(entries) >= max_entries:
-            truncated = True
-            break
-
-    return FindFilesResult(
-        path=_relative(target),
+    return _readonly_find_files(
+        path=path,
         pattern=pattern,
-        entries=entries,
-        count=len(entries),
-        truncated=truncated,
+        include_files=include_files,
+        include_directories=include_directories,
+        max_entries=max_entries,
     )
 
 
@@ -2082,78 +2040,13 @@ def workspace_search_text(
     max_file_bytes: Annotated[int, Field(ge=1, le=1_000_000, description="Maximum bytes per file to scan.")] = 500_000,
 ) -> SearchTextResult:
     """Search text files under the configured WORKSPACE_ROOT for a plain text query."""
-    if query == "":
-        raise ValueError("query cannot be empty.")
-
-    target = _resolve_workspace_path(path)
-
-    if not target.exists():
-        raise FileNotFoundError(f"Path does not exist: {_relative(target)}")
-
-    if not target.is_dir():
-        raise NotADirectoryError(f"Path is not a directory: {_relative(target)}")
-
-    needle = query if case_sensitive else query.lower()
-    paths, scan_truncated = _iter_visible_paths(target, 5000)
-
-    matches: list[SearchTextMatch] = []
-    truncated = scan_truncated
-
-    for item in paths:
-        if not item.is_file():
-            continue
-
-        rel = _relative(item)
-
-        if not (fnmatch.fnmatch(item.name, file_glob) or fnmatch.fnmatch(rel, file_glob)):
-            continue
-
-        try:
-            if item.stat().st_size > max_file_bytes:
-                continue
-        except OSError:
-            continue
-
-        try:
-            text = item.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
-        except OSError:
-            continue
-
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            haystack = line if case_sensitive else line.lower()
-            if needle not in haystack:
-                continue
-
-            display_line = line
-            if len(display_line) > 500:
-                display_line = display_line[:500] + "..."
-
-            matches.append(
-                SearchTextMatch(
-                    path=rel,
-                    line_number=line_number,
-                    line=display_line,
-                )
-            )
-
-            if len(matches) >= max_matches:
-                truncated = True
-                return SearchTextResult(
-                    query=query,
-                    path=_relative(target),
-                    matches=matches,
-                    count=len(matches),
-                    truncated=truncated,
-                )
-
-    return SearchTextResult(
+    return _readonly_search_text(
         query=query,
-        path=_relative(target),
-        matches=matches,
-        count=len(matches),
-        truncated=truncated,
+        path=path,
+        file_glob=file_glob,
+        case_sensitive=case_sensitive,
+        max_matches=max_matches,
+        max_file_bytes=max_file_bytes,
     )
 
 
@@ -2171,62 +2064,11 @@ def workspace_read_many_files(
     total_limit: Annotated[int, Field(ge=1, le=320_000, description="Maximum total characters to return.")] = 100_000,
 ) -> ReadManyFilesResult:
     """Read multiple UTF-8 text files under the configured WORKSPACE_ROOT with per-file and total limits."""
-    if not paths:
-        raise ValueError("paths cannot be empty.")
-
-    entries: list[ReadManyFileEntry] = []
-    remaining = total_limit
-    truncated = False
-
-    for raw_path in paths:
-        if remaining <= 0:
-            truncated = True
-            entries.append(
-                ReadManyFileEntry(
-                    path=raw_path,
-                    error="Total output limit reached before reading this file.",
-                    truncated=True,
-                )
-            )
-            continue
-
-        try:
-            target = _resolve_workspace_path(raw_path)
-
-            if not target.exists():
-                raise FileNotFoundError(f"File does not exist: {_relative(target)}")
-
-            if not target.is_file():
-                raise IsADirectoryError(f"Path is not a file: {_relative(target)}")
-
-            raw = target.read_bytes()
-            text = raw.decode("utf-8")
-
-            local_limit = min(limit_per_file, remaining)
-            content, file_truncated = _truncate(text, local_limit)
-            remaining -= len(content)
-            truncated = truncated or file_truncated or len(content) < len(text)
-
-            entries.append(
-                ReadManyFileEntry(
-                    path=_relative(target),
-                    content=content,
-                    truncated=file_truncated,
-                    size_bytes=len(raw),
-                    sha256=_sha256_bytes(raw),
-                )
-            )
-
-        except Exception as exc:
-            entries.append(
-                ReadManyFileEntry(
-                    path=raw_path,
-                    error=f"{type(exc).__name__}: {exc}",
-                    truncated=False,
-                )
-            )
-
-    return ReadManyFilesResult(entries=entries, count=len(entries), truncated=truncated)
+    return _readonly_read_many_files(
+        paths=paths,
+        limit_per_file=limit_per_file,
+        total_limit=total_limit,
+    )
 
 
 @mcp.tool(
@@ -2243,51 +2085,11 @@ def workspace_project_snapshot(
     max_entries: Annotated[int, Field(ge=1, le=300, description="Tree entries.")] = 120,
 ) -> ProjectSnapshotResult:
     """Return a compact project snapshot: tree, key files, and git status."""
-    target = _resolve_workspace_path(path)
-
-    if not target.exists():
-        raise FileNotFoundError(f"Path does not exist: {_relative(target)}")
-
-    if not target.is_dir():
-        raise NotADirectoryError(f"Path is not a directory: {_relative(target)}")
-
-    tree_result = workspace_tree(path=_relative(target), max_depth=max_depth, max_entries=max_entries)
-
-    key_names = [
-        "README.md",
-        "pyproject.toml",
-        "uv.lock",
-        "package.json",
-        "go.mod",
-        "Cargo.toml",
-        "requirements.txt",
-        "Makefile",
-        "Dockerfile",
-        ".python-version",
-    ]
-
-    key_files: list[str] = []
-    for name in key_names:
-        candidate = target / name
-        if candidate.exists() and candidate.is_file() and _is_safe_visible_path(candidate):
-            key_files.append(_relative(candidate))
-
-    git_status_result = _run_command(
-        cwd=_relative(target),
-        command=["git", "status", "--short", "--branch"],
-        timeout_seconds=15,
-    )
-
-    git_status = git_status_result.stdout
-    if git_status_result.stderr:
-        git_status = (git_status + "\n" + git_status_result.stderr).strip()
-
-    return ProjectSnapshotResult(
-        path=_relative(target),
-        tree=tree_result.entries,
-        key_files=key_files,
-        git_status=git_status,
-        truncated=tree_result.truncated or git_status_result.truncated,
+    return _readonly_project_snapshot(
+        run_command=_run_command,
+        path=path,
+        max_depth=max_depth,
+        max_entries=max_entries,
     )
 
 
