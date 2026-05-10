@@ -139,13 +139,40 @@ Do not use `precheck_commands` in commit proposals. Verification should happen b
 
 The large entrypoint files should stay thin enough to review:
 
-- `server.py` owns MCP tool registration and high-level orchestration.
+- `server.py` owns MCP tool registration, public wrapper signatures, and high-level orchestration.
+- `terminal_bridge/mcp_tools/readonly.py` owns read-only inspection helper implementations used by public MCP wrappers.
+- `terminal_bridge/mcp_tools/proposals.py` owns proposal step/action construction and proposal wait delegation helpers.
+- `terminal_bridge/mcp_tools/bundles.py` owns command-bundle status, wait, list, cancel, and stage-and-wait helper implementations.
+- `terminal_bridge/mcp_tools/status.py` owns runtime status, audit, handoff, task, operation, backup/trash list, and git status/diff helper implementations.
 - `terminal_bridge/mcp_runtime.py` owns runtime directory setup, audit logging, tool-call journal wrapping, and command-bundle stage result conversion.
 - `scripts/command_bundle_review_server.py` owns local review HTTP routes.
 - `terminal_bridge/review_layout.py` owns the shared review UI shell, navigation, and CSS.
 - `terminal_bridge/review_intents.py` owns signed intent token import parsing for the local review UI.
 
-When adding new behavior, prefer placing pure helpers in `terminal_bridge/` and keeping entrypoint files focused on wiring.
+When adding new behavior, prefer placing pure helpers in `terminal_bridge/` or `terminal_bridge/mcp_tools/` and keeping entrypoint files focused on wiring. Public MCP tool names, decorators, signatures, and schemas should remain stable unless the change is explicitly a schema change.
+
+## Graphify workflow
+
+This repository may be treated as graphify-enabled when local `graphify-out/graph.json` or `graphify-out/GRAPH_REPORT.md` exists.
+
+Recommended internal workflow for structural refactors:
+
+```bash
+graphify update .
+```
+
+Use Graphify output to narrow impact analysis, then confirm changes against source files and tests. `graphify-out/` is a local analysis artifact by default. If it is temporarily tracked to carry analysis across local branches, remove it from the Git index again before public push:
+
+```bash
+git rm -r --cached graphify-out
+```
+
+Keep these ignore rules active before publishing:
+
+```gitignore
+graphify-out/
+.graphify_*
+```
 
 Do not use payload refs for short edits such as README link updates, small paragraph replacements, import lines, config tweaks, or test snippets. For short edits, put `content`, `old_text`, or `new_text` directly in a single action bundle.
 

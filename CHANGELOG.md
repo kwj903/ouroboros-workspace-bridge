@@ -14,11 +14,12 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 - User documentation now explains help language selection, `WOOJAE_HELP_LANG`, and Korean help usage.
 - Default public MCP tool guidance now favors small proposal wrapper tools while keeping the generic bundle functions internally available.
+- Refactored MCP tool helper implementations out of `server.py` into `terminal_bridge/mcp_tools/` modules while preserving public MCP tool names, wrappers, signatures, schemas, approval flow, and runner behavior.
+- Restored `graphify-out/` and `.graphify_*` ignore rules before public push preparation.
 
 ### Verified
 
-- `uv run python -m compileall -q server.py terminal_bridge scripts`
-- `env PYTHONPATH=. uv run --with pytest pytest`
+- `uv run --with pytest python -m pytest`
 - `git diff --check`
 
 ## 0.3.1

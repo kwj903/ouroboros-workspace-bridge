@@ -215,7 +215,8 @@ my-terminal-tool/
 
 핵심 구현 파일:
 
-- `server.py`: MCP tool 등록과 tool-facing orchestration.
+- `server.py`: MCP tool 등록, public wrapper signature, tool-facing orchestration.
+- `terminal_bridge/mcp_tools/`: `server.py`가 사용하는 helper 모듈입니다. read-only inspection, proposal 조립, command-bundle status/wait 흐름, runtime status view 구현을 분리합니다. Public MCP tool 이름과 schema는 계속 `server.py`에 정의됩니다.
 - `scripts/command_bundle_review_server.py`: 로컬 HTTP review server route와 request handling.
 - `terminal_bridge/mcp_runtime.py`: audit log, tool-call journal wrapping, runtime directory, command-bundle result conversion을 위한 공통 MCP runtime helper.
 - `terminal_bridge/review_layout.py`: review UI shell, navigation, shared CSS.
