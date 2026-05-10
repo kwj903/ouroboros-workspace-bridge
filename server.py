@@ -122,6 +122,17 @@ from terminal_bridge.mcp_tools.readonly import (
     read_many_files as _readonly_read_many_files,
     search_text as _readonly_search_text,
 )
+from terminal_bridge.mcp_tools.proposals import (
+    action_proposal_and_wait as _proposal_action_and_wait,
+    command_proposal_and_wait as _proposal_command_and_wait,
+    command_proposal_step as _proposal_command_step,
+    commit_proposal_and_wait as _proposal_commit_and_wait,
+    file_replace_proposal_action as _proposal_file_replace_action,
+    file_write_proposal_action as _proposal_file_write_action,
+    git_push_proposal as _proposal_git_push,
+    patch_proposal_and_wait as _proposal_patch_and_wait,
+    validate_git_remote_or_branch as _proposal_validate_git_remote_or_branch,
+)
 from terminal_bridge.operations import (
     _begin_operation,
     _complete_operation,
@@ -3498,14 +3509,7 @@ def _workspace_stage_commit_bundle_and_wait_impl(
 
 
 def _validate_git_remote_or_branch(value: str, label: str) -> str:
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{label} cannot be empty.")
-    if normalized.startswith("-"):
-        raise ValueError(f"{label} cannot start with '-'.")
-    if any(ch.isspace() for ch in normalized):
-        raise ValueError(f"{label} cannot contain whitespace.")
-    return normalized
+    return _proposal_validate_git_remote_or_branch(value, label)
 
 
 @mcp.tool(
@@ -3544,11 +3548,7 @@ def workspace_propose_command_and_wait(
     in ChatGPT. The command runs only after the user approves the bundle at
     http://127.0.0.1:8790/pending.
     """
-    step = CommandBundleStep(
-        name=command_name or title,
-        argv=argv,
-        timeout_seconds=command_timeout_seconds,
-    )
+    step = _proposal_command_step(title, argv, command_name, command_timeout_seconds)
     return _record_tool_call(
         "workspace_propose_command_and_wait",
         {
@@ -3560,10 +3560,11 @@ def workspace_propose_command_and_wait(
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
         },
-        lambda: _workspace_stage_command_bundle_and_wait_impl(
+        lambda: _proposal_command_and_wait(
+            _workspace_stage_command_bundle_and_wait_impl,
             title,
             cwd,
-            [step],
+            step,
             timeout_seconds,
             poll_interval_seconds,
         ),
@@ -3603,13 +3604,12 @@ def workspace_propose_file_write_and_wait(
     ChatGPT. Files change only after the user approves the bundle at
     http://127.0.0.1:8790/pending.
     """
-    action = CommandBundleAction(
-        name=title,
-        type="write_file",
-        path=path,
-        content=content,
-        overwrite=overwrite,
-        create_parent_dirs=create_parent_dirs,
+    action = _proposal_file_write_action(
+        title,
+        path,
+        content,
+        overwrite,
+        create_parent_dirs,
     )
     return _record_tool_call(
         "workspace_propose_file_write_and_wait",
@@ -3623,10 +3623,11 @@ def workspace_propose_file_write_and_wait(
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
         },
-        lambda: _workspace_stage_action_bundle_and_wait_impl(
+        lambda: _proposal_action_and_wait(
+            _workspace_stage_action_bundle_and_wait_impl,
             title,
             cwd,
-            [action],
+            action,
             timeout_seconds,
             poll_interval_seconds,
         ),
@@ -3666,13 +3667,12 @@ def workspace_propose_file_replace_and_wait(
     ChatGPT. Files change only after the user approves the bundle at
     http://127.0.0.1:8790/pending.
     """
-    action = CommandBundleAction(
-        name=title,
-        type="replace_text",
-        path=path,
-        old_text=old_text,
-        new_text=new_text,
-        replace_all=replace_all,
+    action = _proposal_file_replace_action(
+        title,
+        path,
+        old_text,
+        new_text,
+        replace_all,
     )
     return _record_tool_call(
         "workspace_propose_file_replace_and_wait",
@@ -3686,10 +3686,11 @@ def workspace_propose_file_replace_and_wait(
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
         },
-        lambda: _workspace_stage_action_bundle_and_wait_impl(
+        lambda: _proposal_action_and_wait(
+            _workspace_stage_action_bundle_and_wait_impl,
             title,
             cwd,
-            [action],
+            action,
             timeout_seconds,
             poll_interval_seconds,
         ),
@@ -3728,7 +3729,8 @@ def workspace_propose_patch_and_wait(
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
         },
-        lambda: _workspace_stage_patch_bundle_and_wait_impl(
+        lambda: _proposal_patch_and_wait(
+            _workspace_stage_patch_bundle_and_wait_impl,
             title,
             cwd,
             patch,
@@ -3769,7 +3771,8 @@ def workspace_propose_git_commit_and_wait(
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
         },
-        lambda: _workspace_stage_commit_bundle_and_wait_impl(
+        lambda: _proposal_commit_and_wait(
+            _workspace_stage_commit_bundle_and_wait_impl,
             cwd,
             paths,
             message,
@@ -3800,14 +3803,7 @@ def workspace_propose_git_push_and_wait(
     Git push runs only after the user approves the bundle at
     http://127.0.0.1:8790/pending.
     """
-    safe_remote = _validate_git_remote_or_branch(remote, "remote")
-    safe_branch = _validate_git_remote_or_branch(branch, "branch")
-    title = f"Push {safe_remote} {safe_branch}"
-    step = CommandBundleStep(
-        name=f"git push {safe_remote} {safe_branch}",
-        argv=["git", "push", safe_remote, safe_branch],
-        timeout_seconds=60,
-    )
+    safe_remote, safe_branch, title, step = _proposal_git_push(remote, branch)
     return _record_tool_call(
         "workspace_propose_git_push_and_wait",
         {
@@ -3817,10 +3813,11 @@ def workspace_propose_git_push_and_wait(
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
         },
-        lambda: _workspace_stage_command_bundle_and_wait_impl(
+        lambda: _proposal_command_and_wait(
+            _workspace_stage_command_bundle_and_wait_impl,
             title,
             cwd,
-            [step],
+            step,
             timeout_seconds,
             poll_interval_seconds,
         ),
