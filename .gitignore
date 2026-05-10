@@ -7,3 +7,7 @@ data/
 *.egg-info/
 build/
 dist/
+
+# graphify outputs and temporary extraction files
+graphify-out/
+.graphify_*
