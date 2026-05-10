@@ -9,5 +9,5 @@ build/
 dist/
 
 # graphify outputs and temporary extraction files
-graphify-out/
-.graphify_*
+# graphify-out/
+# .graphify_*
