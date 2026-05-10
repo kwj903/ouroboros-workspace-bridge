@@ -9,7 +9,6 @@ import os
 import secrets
 import subprocess
 import tempfile
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Literal
@@ -77,7 +76,6 @@ from terminal_bridge.models import (
     BackupListResult,
     BackupRestoreResult,
     CommandBundleAction,
-    CommandBundleListEntry,
     CommandBundleListResult,
     CommandBundleStageResult,
     CommandBundleStatusResult,
@@ -132,6 +130,16 @@ from terminal_bridge.mcp_tools.proposals import (
     git_push_proposal as _proposal_git_push,
     patch_proposal_and_wait as _proposal_patch_and_wait,
     validate_git_remote_or_branch as _proposal_validate_git_remote_or_branch,
+)
+from terminal_bridge.mcp_tools.bundles import (
+    cancel_command_bundle as _bundle_cancel_command_bundle,
+    command_bundle_status as _bundle_command_bundle_status,
+    list_command_bundles as _bundle_list_command_bundles,
+    stage_action_bundle_and_wait as _bundle_stage_action_bundle_and_wait,
+    stage_command_bundle_and_wait as _bundle_stage_command_bundle_and_wait,
+    stage_commit_bundle_and_wait as _bundle_stage_commit_bundle_and_wait,
+    stage_patch_bundle_and_wait as _bundle_stage_patch_bundle_and_wait,
+    wait_command_bundle_status as _bundle_wait_command_bundle_status,
 )
 from terminal_bridge.operations import (
     _begin_operation,
@@ -3026,22 +3034,7 @@ def workspace_command_bundle_status(
 
 
 def _workspace_command_bundle_status_impl(bundle_id: str) -> CommandBundleStatusResult:
-    _, record = _find_command_bundle(bundle_id)
-    steps = record.get("steps") if isinstance(record.get("steps"), list) else []
-
-    return CommandBundleStatusResult(
-        bundle_id=str(record.get("bundle_id", bundle_id)),
-        title=str(record.get("title", "")),
-        cwd=str(record.get("cwd", "")),
-        status=str(record.get("status", "unknown")),
-        risk=str(record.get("risk", "unknown")),
-        approval_required=bool(record.get("approval_required", False)),
-        command_count=len(steps),
-        created_at=str(record.get("created_at", "")),
-        updated_at=str(record.get("updated_at", "")),
-        result=record.get("result") if isinstance(record.get("result"), dict) else None,
-        error=record.get("error") if isinstance(record.get("error"), str) else None,
-    )
+    return _bundle_command_bundle_status(_find_command_bundle, bundle_id)
 
 
 @mcp.tool(
@@ -3078,29 +3071,12 @@ def _workspace_wait_command_bundle_status_impl(
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
-    deadline = time.monotonic() + timeout_seconds
-
-    while True:
-        _, record = _find_command_bundle(bundle_id)
-        steps = record.get("steps") if isinstance(record.get("steps"), list) else []
-        result = CommandBundleStatusResult(
-            bundle_id=str(record.get("bundle_id", bundle_id)),
-            title=str(record.get("title", "")),
-            cwd=str(record.get("cwd", "")),
-            status=str(record.get("status", "unknown")),
-            risk=str(record.get("risk", "unknown")),
-            approval_required=bool(record.get("approval_required", False)),
-            command_count=len(steps),
-            created_at=str(record.get("created_at", "")),
-            updated_at=str(record.get("updated_at", "")),
-            result=record.get("result") if isinstance(record.get("result"), dict) else None,
-            error=record.get("error") if isinstance(record.get("error"), str) else None,
-        )
-
-        if result.status != "pending" or time.monotonic() >= deadline:
-            return result
-
-        time.sleep(min(poll_interval_seconds, max(0.0, deadline - time.monotonic())))
+    return _bundle_wait_command_bundle_status(
+        _find_command_bundle,
+        bundle_id,
+        timeout_seconds,
+        poll_interval_seconds,
+    )
 
 
 @_internal_tool(
@@ -3287,17 +3263,14 @@ def _workspace_stage_command_bundle_and_wait_impl(
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
-    if len(steps) != 1:
-        raise ValueError(
-            "Only one command step is allowed per approval proposal. "
-            "Use repeated calls for multiple checks or commands."
-        )
-
-    staged = _workspace_submit_command_bundle_impl(title, cwd, steps)
-    return _workspace_wait_command_bundle_status_impl(
-        staged.bundle_id,
-        timeout_seconds=timeout_seconds,
-        poll_interval_seconds=poll_interval_seconds,
+    return _bundle_stage_command_bundle_and_wait(
+        _workspace_submit_command_bundle_impl,
+        _workspace_wait_command_bundle_status_impl,
+        title,
+        cwd,
+        steps,
+        timeout_seconds,
+        poll_interval_seconds,
     )
 
 
@@ -3362,11 +3335,15 @@ def _workspace_stage_patch_bundle_and_wait_impl(
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
-    staged = _workspace_submit_patch_bundle_impl(title, cwd, patch, patch_ref)
-    return _workspace_wait_command_bundle_status_impl(
-        staged.bundle_id,
-        timeout_seconds=timeout_seconds,
-        poll_interval_seconds=poll_interval_seconds,
+    return _bundle_stage_patch_bundle_and_wait(
+        _workspace_submit_patch_bundle_impl,
+        _workspace_wait_command_bundle_status_impl,
+        title,
+        cwd,
+        patch,
+        patch_ref,
+        timeout_seconds,
+        poll_interval_seconds,
     )
 
 
@@ -3428,17 +3405,14 @@ def _workspace_stage_action_bundle_and_wait_impl(
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
-    if len(actions) != 1:
-        raise ValueError(
-            "Only one action is allowed per approval proposal. "
-            "Use repeated calls for multi-step edits."
-        )
-
-    staged = _workspace_submit_action_bundle_impl(title, cwd, actions)
-    return _workspace_wait_command_bundle_status_impl(
-        staged.bundle_id,
-        timeout_seconds=timeout_seconds,
-        poll_interval_seconds=poll_interval_seconds,
+    return _bundle_stage_action_bundle_and_wait(
+        _workspace_submit_action_bundle_impl,
+        _workspace_wait_command_bundle_status_impl,
+        title,
+        cwd,
+        actions,
+        timeout_seconds,
+        poll_interval_seconds,
     )
 
 
@@ -3500,11 +3474,14 @@ def _workspace_stage_commit_bundle_and_wait_impl(
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
-    staged = _workspace_submit_commit_bundle_impl(cwd, paths, message)
-    return _workspace_wait_command_bundle_status_impl(
-        staged.bundle_id,
-        timeout_seconds=timeout_seconds,
-        poll_interval_seconds=poll_interval_seconds,
+    return _bundle_stage_commit_bundle_and_wait(
+        _workspace_submit_commit_bundle_impl,
+        _workspace_wait_command_bundle_status_impl,
+        cwd,
+        paths,
+        message,
+        timeout_seconds,
+        poll_interval_seconds,
     )
 
 
@@ -3836,33 +3813,7 @@ def workspace_list_command_bundles(
     limit: Annotated[int, Field(ge=1, le=200)] = 50,
 ) -> CommandBundleListResult:
     """List recent command bundles across pending/applied/rejected/failed states."""
-    entries: list[CommandBundleListEntry] = []
-
-    for directory in _command_bundle_dirs():
-        if not directory.exists():
-            continue
-
-        for path in directory.glob("cmd-*.json"):
-            try:
-                record = _read_json(path)
-            except Exception:
-                continue
-
-            steps = record.get("steps") if isinstance(record.get("steps"), list) else []
-            entries.append(
-                CommandBundleListEntry(
-                    bundle_id=str(record.get("bundle_id", path.stem)),
-                    title=str(record.get("title", "")),
-                    cwd=str(record.get("cwd", "")),
-                    status=str(record.get("status", directory.name)),
-                    risk=str(record.get("risk", "unknown")),
-                    command_count=len(steps),
-                    updated_at=str(record.get("updated_at", "")),
-                )
-            )
-
-    entries.sort(key=lambda item: item.updated_at, reverse=True)
-    return CommandBundleListResult(entries=entries[:limit], count=min(len(entries), limit))
+    return _bundle_list_command_bundles(_command_bundle_dirs, _read_json, limit)
 
 
 @mcp.tool(
@@ -3877,34 +3828,11 @@ def workspace_cancel_command_bundle(
     bundle_id: Annotated[str, Field(description="Pending command bundle id to reject.")],
 ) -> CommandBundleStatusResult:
     """Reject a pending command bundle without executing it."""
-    _, record = _find_command_bundle(bundle_id)
-
-    if record.get("status") != "pending":
-        raise ValueError(f"Only pending bundles can be cancelled. Current status: {record.get('status')}")
-
-    updated = _move_command_bundle(
+    return _bundle_cancel_command_bundle(
+        _find_command_bundle,
+        _move_command_bundle,
+        _audit,
         bundle_id,
-        "rejected",
-        {
-            "error": "Cancelled from ChatGPT.",
-            "result": None,
-        },
-    )
-    _audit("cancel_command_bundle", bundle_id=bundle_id)
-
-    steps = updated.get("steps") if isinstance(updated.get("steps"), list) else []
-    return CommandBundleStatusResult(
-        bundle_id=str(updated.get("bundle_id", bundle_id)),
-        title=str(updated.get("title", "")),
-        cwd=str(updated.get("cwd", "")),
-        status=str(updated.get("status", "rejected")),
-        risk=str(updated.get("risk", "unknown")),
-        approval_required=bool(updated.get("approval_required", False)),
-        command_count=len(steps),
-        created_at=str(updated.get("created_at", "")),
-        updated_at=str(updated.get("updated_at", "")),
-        result=updated.get("result") if isinstance(updated.get("result"), dict) else None,
-        error=updated.get("error") if isinstance(updated.get("error"), str) else None,
     )
 
 
