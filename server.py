@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import base64
 import html
 import hmac
 import json
@@ -216,6 +215,13 @@ from terminal_bridge.mcp_runtime import (
     _record_tool_call,
     _tool_call_status_result,
 )
+from terminal_bridge.mcp_intents import (
+    local_browser_host as _intent_local_browser_host,
+    local_pending_url as _intent_local_pending_url,
+    local_review_url as _intent_local_review_url,
+    sign_intent_payload as _sign_intent_payload_with_secret,
+    validate_intent_token as _validate_intent_token_with_secret,
+)
 
 allowed_hosts = [
     "127.0.0.1:*",
@@ -289,78 +295,28 @@ def _intent_secret() -> bytes:
     return secret
 
 
-def _b64url_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
-
-
-def _b64url_decode(value: str) -> bytes:
-    padding = "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode((value + padding).encode("ascii"))
-
-
 def _sign_intent_payload(payload: dict[str, object]) -> str:
-    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    body = _b64url_encode(serialized)
-    signature = hmac.new(_intent_secret(), body.encode("ascii"), "sha256").digest()
-    return f"{body}.{_b64url_encode(signature)}"
+    return _sign_intent_payload_with_secret(payload, _intent_secret())
 
 
 def _validate_intent_token(token: str, *, now: datetime | None = None) -> dict[str, object]:
-    try:
-        body, signature = token.split(".", 1)
-    except ValueError as exc:
-        raise ValueError("Invalid intent token format.") from exc
-
-    expected = _b64url_encode(hmac.new(_intent_secret(), body.encode("ascii"), "sha256").digest())
-    if not hmac.compare_digest(signature, expected):
-        raise ValueError("Invalid intent token signature.")
-
-    try:
-        payload = json.loads(_b64url_decode(body).decode("utf-8"))
-    except Exception as exc:
-        raise ValueError("Invalid intent token payload.") from exc
-
-    if not isinstance(payload, dict):
-        raise ValueError("Invalid intent token payload.")
-
-    expires_at = payload.get("expires_at")
-    if not isinstance(expires_at, str):
-        raise ValueError("Intent token is missing expires_at.")
-
-    current = now or datetime.now(timezone.utc)
-    try:
-        expires = datetime.fromisoformat(expires_at)
-    except ValueError as exc:
-        raise ValueError("Intent token has invalid expires_at.") from exc
-
-    if current > expires:
-        raise ValueError("Intent token has expired.")
-
-    return payload
+    return _validate_intent_token_with_secret(token, _intent_secret(), now=now)
 
 
 def _local_browser_host(host: str) -> str:
-    normalized = host.strip()
-    if normalized in {"", "0.0.0.0", "::"}:
-        return "127.0.0.1"
-    if ":" in normalized and not normalized.startswith("["):
-        return f"[{normalized}]"
-    return normalized
+    return _intent_local_browser_host(host)
 
 
 def _local_review_url(token: str) -> str:
-    host = _local_browser_host(os.getenv("BUNDLE_REVIEW_HOST", "127.0.0.1"))
+    host = os.getenv("BUNDLE_REVIEW_HOST", "127.0.0.1")
     port = int(os.getenv("BUNDLE_REVIEW_PORT", "8790"))
-    return f"http://{host}:{port}/review-intent?token={token}"
+    return _intent_local_review_url(token, host, port)
 
 
 def _local_pending_url(bundle_id: str | None = None) -> str:
-    host = _local_browser_host(os.getenv("BUNDLE_REVIEW_HOST", "127.0.0.1"))
+    host = os.getenv("BUNDLE_REVIEW_HOST", "127.0.0.1")
     port = int(os.getenv("BUNDLE_REVIEW_PORT", "8790"))
-    base = f"http://{host}:{port}/pending"
-    if bundle_id:
-        return f"{base}?bundle_id={bundle_id}"
-    return base
+    return _intent_local_pending_url(host, port, bundle_id)
 
 
 def _prepare_intent(intent_type: str, cwd: str, params: dict[str, object], risk: str, summary: str) -> dict[str, object]:
