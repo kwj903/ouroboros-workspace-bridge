@@ -22,6 +22,14 @@ uv run python scripts/smoke_check.py
 git diff --check
 ```
 
+Optional exploratory lint for touched files:
+
+```bash
+uv run ruff check path/to/changed_file.py
+```
+
+This repository does not yet enforce a full ruff-clean baseline. Treat existing findings outside the current change as follow-up cleanup unless the task is specifically a lint cleanup.
+
 ## Coding Rules
 
 - Keep local mutation behind approval bundles.
