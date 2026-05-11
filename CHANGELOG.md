@@ -15,11 +15,17 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - User documentation now explains help language selection, `WOOJAE_HELP_LANG`, and Korean help usage.
 - Default public MCP tool guidance now favors small proposal wrapper tools while keeping the generic bundle functions internally available.
 - Refactored MCP tool helper implementations out of `server.py` into `terminal_bridge/mcp_tools/` modules while preserving public MCP tool names, wrappers, signatures, schemas, approval flow, and runner behavior.
+- Refactored `server.py` internals for workspace tool list construction, MCP intent helpers, and stage bundle record construction without changing public MCP schemas or approval behavior.
+- Refactored review server internals by extracting bundle state helpers and audit loading/sanitization helpers while preserving route, rendering, and approval behavior.
+- Added `ruff` as a dev dependency, documented exploratory touched-file linting, and cleaned the targeted `server.py` / review server import baseline.
 - Restored `graphify-out/` and `.graphify_*` ignore rules before public push preparation.
 
 ### Verified
 
-- `uv run --with pytest python -m pytest`
+- `uv run python -m unittest discover -s tests`
+- `uv run python scripts/smoke_check.py`
+- `uv run ruff check server.py`
+- `uv run ruff check scripts/command_bundle_review_server.py`
 - `git diff --check`
 
 ## 0.3.1

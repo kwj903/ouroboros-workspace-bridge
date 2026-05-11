@@ -12,6 +12,15 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
+- 4a07231 chore: clean up ruff baseline imports
+- a0d6704 refactor: extract review audit helpers
+- b1818fe refactor: extract review server state helpers
+- 240bb05 refactor: extract stage bundle helpers
+- 3261fbf chore: add ruff as dev dependency
+- 4e16fd9 refactor: extract MCP intent helpers
+- f601e2b Merge pull request #1 from kwj903/codex/refactor-public-tool-surface
+- 772fc60 .gitignore update
+- e201361 docs: refresh update info snapshot
 - 82b6e58 docs: document MCP helper refactor workflow
 - e3846ba chore: stop tracking graphify outputs
 - 5d64d09 Merge branch 'refactor/server-readonly-tools'
@@ -23,15 +32,6 @@ Recent Commits is a generated snapshot. Run `uv run python scripts/update_versio
 - 033f8a0 refactor: extract readonly MCP tool helpers
 - 1ccc968 chore: ignore graphify outputs
 - 5c26c9c Fix update info test expectation
-- 5ed6768 Improve README setup helper documentation
-- a046f6f Add update command for existing installs
-- 0a21bcb Add setup UI onboarding helper
-- 7f1558d Clarify README onboarding flow
-- f405349 Improve first-run onboarding docs
-- 259cd65 Add pending review UI guide
-- 1730f54 Add ChatGPT app setup guide
-- add45b7 Improve README landing quick start
-- 07c1b90 Add Korean README language switch
 
 ## How to Update Existing Installation
 
