@@ -15,6 +15,7 @@ from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import TypedDict
 from urllib.parse import parse_qs, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -72,6 +73,12 @@ EVENT_TIMEOUT_SECONDS = 25.0
 VALID_STATUS_FILTERS = {"all", "pending", "applied", "failed", "rejected"}
 
 
+class BundleRowsState(TypedDict):
+    counts: dict[str, int]
+    latest_by_directory_status: dict[str, str | None]
+    latest_updated_at: str | None
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -99,7 +106,7 @@ def normalize_status_filter(value: str | None) -> str:
     return status
 
 
-def list_bundles(status_filter: str = "all") -> list[dict[str, object]]:
+def _load_bundle_records(status_filter: str = "all") -> list[dict[str, object]]:
     status_filter = normalize_status_filter(status_filter)
     rows: list[dict[str, object]] = []
 
@@ -124,6 +131,43 @@ def list_bundles(status_filter: str = "all") -> list[dict[str, object]]:
     return rows
 
 
+def _bundle_id_from_record(record: dict[str, object]) -> str | None:
+    bundle_id = record.get("bundle_id")
+    return str(bundle_id) if bundle_id else None
+
+
+def _bundle_rows_state(rows: list[dict[str, object]]) -> BundleRowsState:
+    counts = {
+        "pending": 0,
+        "applied": 0,
+        "failed": 0,
+        "rejected": 0,
+        "all": 0,
+    }
+    latest_by_directory_status: dict[str, str | None] = {}
+
+    for record in rows:
+        directory_status = str(record.get("_directory_status", ""))
+        if directory_status and directory_status not in latest_by_directory_status:
+            latest_by_directory_status[directory_status] = _bundle_id_from_record(record)
+
+        status = str(record.get("status", record.get("_directory_status", "unknown")))
+        if status in counts and status != "all":
+            counts[status] += 1
+        counts["all"] += 1
+
+    updated_at = rows[0].get("updated_at") if rows else None
+    return {
+        "counts": counts,
+        "latest_by_directory_status": latest_by_directory_status,
+        "latest_updated_at": str(updated_at) if updated_at else None,
+    }
+
+
+def list_bundles(status_filter: str = "all") -> list[dict[str, object]]:
+    return _load_bundle_records(status_filter)
+
+
 def pending_bundles() -> list[dict[str, object]]:
     return list_bundles("pending")
 
@@ -132,8 +176,7 @@ def latest_pending_bundle_id() -> str | None:
     rows = pending_bundles()
     if not rows:
         return None
-    bundle_id = rows[0].get("bundle_id")
-    return str(bundle_id) if bundle_id else None
+    return _bundle_id_from_record(rows[0])
 
 
 def command_bundle_revision() -> str:
@@ -183,37 +226,21 @@ def current_pending_bundle_ids() -> set[str]:
 
 
 def bundle_status_counts() -> dict[str, int]:
-    counts = {
-        "pending": 0,
-        "applied": 0,
-        "failed": 0,
-        "rejected": 0,
-        "all": 0,
-    }
-
-    for record in list_bundles("all"):
-        status = str(record.get("status", record.get("_directory_status", "unknown")))
-        if status in counts and status != "all":
-            counts[status] += 1
-        counts["all"] += 1
-
-    return counts
+    rows_state = _bundle_rows_state(list_bundles("all"))
+    return rows_state["counts"]
 
 
 def latest_bundle_id(status: str) -> str | None:
     rows = list_bundles(status)
     if not rows:
         return None
-    bundle_id = rows[0].get("bundle_id")
-    return str(bundle_id) if bundle_id else None
+    return _bundle_id_from_record(rows[0])
 
 
 def latest_updated_at() -> str | None:
-    rows = list_bundles("all")
-    if not rows:
-        return None
-    updated_at = rows[0].get("updated_at")
-    return str(updated_at) if updated_at else None
+    rows_state = _bundle_rows_state(list_bundles("all"))
+    value = rows_state["latest_updated_at"]
+    return value if isinstance(value, str) else None
 
 
 def step_result_status(step: dict[str, object]) -> str:
@@ -384,10 +411,11 @@ def latest_handoff_payload() -> dict[str, object]:
 
 
 def history_state() -> dict[str, object]:
+    rows_state = _bundle_rows_state(list_bundles("all"))
     return {
-        "counts": bundle_status_counts(),
-        "latest_failed_bundle_id": latest_bundle_id("failed"),
-        "latest_updated_at": latest_updated_at(),
+        "counts": rows_state["counts"],
+        "latest_failed_bundle_id": rows_state["latest_by_directory_status"].get("failed"),
+        "latest_updated_at": rows_state["latest_updated_at"],
     }
 
 
