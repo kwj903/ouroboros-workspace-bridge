@@ -967,6 +967,77 @@ def _run_command(cwd: str, command: list[str], timeout_seconds: int = 30) -> Com
     return result
 
 
+DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
+    "workspace_info",
+    "workspace_list",
+    "workspace_tree",
+    "workspace_read_file",
+    "workspace_find_files",
+    "workspace_search_text",
+    "workspace_read_many_files",
+    "workspace_project_snapshot",
+    "workspace_git_status",
+    "workspace_git_diff",
+    "workspace_preview_patch",
+    "workspace_transport_probe",
+    "workspace_prepare_check_intent",
+    "workspace_prepare_commit_current_changes_intent",
+    "workspace_prepare_dev_session_intent",
+    "workspace_read_audit_log",
+    "workspace_recover_last_activity",
+    "workspace_next_handoff",
+    "workspace_list_handoffs",
+    "workspace_list_tool_calls",
+    "workspace_tool_call_status",
+    "workspace_get_operation",
+    "workspace_list_operations",
+    "workspace_list_backups",
+    "workspace_list_trash",
+    "workspace_task_start",
+    "workspace_task_status",
+    "workspace_task_log_step",
+    "workspace_task_update_plan",
+    "workspace_task_finish",
+    "workspace_list_tasks",
+    "workspace_stage_text_payload",
+    "workspace_propose_command_and_wait",
+    "workspace_propose_file_write_and_wait",
+    "workspace_propose_file_replace_and_wait",
+    "workspace_propose_patch_and_wait",
+    "workspace_propose_git_commit_and_wait",
+    "workspace_propose_git_push_and_wait",
+    "workspace_command_bundle_status",
+    "workspace_wait_command_bundle_status",
+    "workspace_list_command_bundles",
+    "workspace_cancel_command_bundle",
+)
+
+DIRECT_MUTATION_MCP_TOOLS: tuple[str, ...] = (
+    "workspace_create_directory",
+    "workspace_write_file",
+    "workspace_append_file",
+    "workspace_replace_text",
+    "workspace_soft_delete",
+    "workspace_move_to_trash",
+    "workspace_restore_deleted",
+    "workspace_restore_backup",
+    "workspace_apply_patch",
+    "workspace_git_add",
+    "workspace_git_commit",
+    "workspace_exec",
+    "workspace_run_profile",
+)
+
+
+def _workspace_info_tools() -> list[str]:
+    tools = list(DEFAULT_PUBLIC_MCP_TOOLS)
+
+    if MCP_EXPOSE_DIRECT_MUTATION_TOOLS:
+        tools.extend(DIRECT_MUTATION_MCP_TOOLS)
+
+    return tools
+
+
 @mcp.tool(
     annotations={
         "readOnlyHint": True,
@@ -977,70 +1048,6 @@ def _run_command(cwd: str, command: list[str], timeout_seconds: int = 30) -> Com
 )
 def workspace_info() -> WorkspaceInfo:
     """Return basic information about the configured WORKSPACE_ROOT and enabled tools."""
-    tools = [
-        "workspace_info",
-        "workspace_list",
-        "workspace_tree",
-        "workspace_read_file",
-        "workspace_find_files",
-        "workspace_search_text",
-        "workspace_read_many_files",
-        "workspace_project_snapshot",
-        "workspace_git_status",
-        "workspace_git_diff",
-        "workspace_preview_patch",
-        "workspace_transport_probe",
-        "workspace_prepare_check_intent",
-        "workspace_prepare_commit_current_changes_intent",
-        "workspace_prepare_dev_session_intent",
-        "workspace_read_audit_log",
-        "workspace_recover_last_activity",
-        "workspace_next_handoff",
-        "workspace_list_handoffs",
-        "workspace_list_tool_calls",
-        "workspace_tool_call_status",
-        "workspace_get_operation",
-        "workspace_list_operations",
-        "workspace_list_backups",
-        "workspace_list_trash",
-        "workspace_task_start",
-        "workspace_task_status",
-        "workspace_task_log_step",
-        "workspace_task_update_plan",
-        "workspace_task_finish",
-        "workspace_list_tasks",
-        "workspace_stage_text_payload",
-        "workspace_propose_command_and_wait",
-        "workspace_propose_file_write_and_wait",
-        "workspace_propose_file_replace_and_wait",
-        "workspace_propose_patch_and_wait",
-        "workspace_propose_git_commit_and_wait",
-        "workspace_propose_git_push_and_wait",
-        "workspace_command_bundle_status",
-        "workspace_wait_command_bundle_status",
-        "workspace_list_command_bundles",
-        "workspace_cancel_command_bundle",
-    ]
-
-    if MCP_EXPOSE_DIRECT_MUTATION_TOOLS:
-        tools.extend(
-            [
-                "workspace_create_directory",
-                "workspace_write_file",
-                "workspace_append_file",
-                "workspace_replace_text",
-                "workspace_soft_delete",
-                "workspace_move_to_trash",
-                "workspace_restore_deleted",
-                "workspace_restore_backup",
-                "workspace_apply_patch",
-                "workspace_git_add",
-                "workspace_git_commit",
-                "workspace_exec",
-                "workspace_run_profile",
-            ]
-        )
-
     return WorkspaceInfo(
         root=str(WORKSPACE_ROOT),
         mode=(
@@ -1049,7 +1056,7 @@ def workspace_info() -> WorkspaceInfo:
             else "development_mvp_bundle_first"
         ),
         runtime_root=str(RUNTIME_ROOT),
-        tools=tools,
+        tools=_workspace_info_tools(),
     )
 
 
