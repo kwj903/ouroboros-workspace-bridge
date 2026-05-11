@@ -11,7 +11,6 @@ import subprocess
 import sys
 import threading
 import time
-from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -419,92 +418,34 @@ def history_state() -> dict[str, object]:
     }
 
 
-SENSITIVE_TEXT_MARKERS = (
-    "access_token",
-    "token",
-    "secret",
-    "password",
-    "passwd",
-    "api_key",
-    "apikey",
-    "authorization",
-    "bearer",
-)
-
-
 def safe_audit_text(value: object, max_chars: int = 180) -> str | None:
-    if value is None:
-        return None
+    from terminal_bridge.review_audit import safe_audit_text as helper
 
-    text = str(value).strip()
-    if text == "":
-        return None
-
-    lowered = text.lower()
-    if any(marker in lowered for marker in SENSITIVE_TEXT_MARKERS):
-        return "[redacted]"
-
-    return short_error(text, max_chars=max_chars)
+    return helper(value, max_chars=max_chars)
 
 
 def summarize_audit_command(value: object) -> str | None:
-    if isinstance(value, list):
-        parts = [safe_audit_text(item, max_chars=80) or "" for item in value[:6]]
-        if len(value) > 6:
-            parts.append("...")
-        summary = " ".join(part for part in parts if part)
-        return summary or None
+    from terminal_bridge.review_audit import summarize_audit_command as helper
 
-    return safe_audit_text(value, max_chars=180)
+    return helper(value)
 
 
 def sanitize_audit_event(record: dict[str, object]) -> dict[str, object]:
-    return {
-        "ts": safe_audit_text(record.get("ts")),
-        "event": safe_audit_text(record.get("event")),
-        "bundle_id": safe_audit_text(record.get("bundle_id")),
-        "title": safe_audit_text(record.get("title")),
-        "cwd": safe_audit_text(record.get("cwd")),
-        "risk": safe_audit_text(record.get("risk")),
-        "exit_code": record.get("exit_code") if type(record.get("exit_code")) is int else None,
-        "truncated": record.get("truncated") if type(record.get("truncated")) is bool else None,
-        "command": summarize_audit_command(record.get("command")),
-    }
+    from terminal_bridge.review_audit import sanitize_audit_event as helper
+
+    return helper(record)
 
 
 def recent_audit_events(limit: int = 20) -> list[dict[str, object]]:
-    if limit < 1 or not AUDIT_LOG.exists():
-        return []
+    from terminal_bridge.review_audit import recent_audit_events as helper
 
-    lines: deque[str] = deque(maxlen=limit * 4)
-    try:
-        with AUDIT_LOG.open("r", encoding="utf-8") as f:
-            for line in f:
-                lines.append(line)
-    except OSError:
-        return []
-
-    events: list[dict[str, object]] = []
-    for line in reversed(lines):
-        if len(events) >= limit:
-            break
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(record, dict):
-            continue
-        events.append(sanitize_audit_event(record))
-
-    return events
+    return helper(AUDIT_LOG, limit)
 
 
 def audit_state() -> dict[str, object]:
-    events = recent_audit_events(20)
-    return {
-        "count": len(events),
-        "events": events,
-    }
+    from terminal_bridge.review_audit import audit_state as helper
+
+    return helper(AUDIT_LOG, 20)
 
 
 def command_exists(name: str) -> bool:
