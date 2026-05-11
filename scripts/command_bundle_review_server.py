@@ -42,12 +42,9 @@ from terminal_bridge.handoffs import handoff_json, list_handoffs, next_handoff
 from terminal_bridge.review_intents import intent_import_redirect_location
 from terminal_bridge.review_layout import (
     SERVER_TAB_LABELS,
-    app_shell,
     escape,
-    management_nav_html,
     normalize_server_tab,
     page,
-    primary_nav_html,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

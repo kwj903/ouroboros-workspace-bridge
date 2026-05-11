@@ -7,7 +7,6 @@ import json
 import os
 import secrets
 import subprocess
-import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Literal
@@ -21,7 +20,6 @@ from terminal_bridge.backups import (
     _backup_file as _create_backup_file,
     _list_backup_entries,
     _restore_backup_payload,
-    _sha256_file,
 )
 from terminal_bridge.browsing import (
     _list_workspace,
@@ -29,8 +27,6 @@ from terminal_bridge.browsing import (
     _tree_workspace,
 )
 from terminal_bridge.bundles import (
-    _bundle_risk_rank,
-    _combined_bundle_risk,
     _command_bundle_dirs,
     _command_bundle_path,
     _find_command_bundle,
@@ -40,7 +36,6 @@ from terminal_bridge.bundles import (
     _write_command_bundle,
 )
 from terminal_bridge.bundle_serialization import (
-    _resolve_bundle_file_action_path,
     _serialize_action_steps,
     _serialize_command_steps,
     _serialize_commit_steps,
@@ -53,7 +48,6 @@ from terminal_bridge.commands import (
 )
 from terminal_bridge.config import (
     AUDIT_LOG,
-    BLOCKED_DIR_NAMES,
     MAX_STDERR_CHARS,
     MAX_STDOUT_CHARS,
     MAX_WRITE_CHARS,
@@ -63,10 +57,8 @@ from terminal_bridge.config import (
     MCP_PORT,
     NGROK_HOST,
     OPERATION_DIR,
-    PROJECT_ROOT,
     RUNTIME_ROOT,
     TEXT_PAYLOAD_CHUNK_MAX_CHARS,
-    TEXT_PAYLOAD_MAX_TOTAL_CHARS,
     WORKSPACE_ROOT,
 )
 from terminal_bridge.models import (
@@ -101,7 +93,6 @@ from terminal_bridge.models import (
     TextPayloadStageResult,
     ToolCallListResult,
     ToolCallStatusResult,
-    TrashEntry,
     TrashListResult,
     TreeResult,
     WorkspaceExecResult,
@@ -161,31 +152,23 @@ from terminal_bridge.operations import (
     _begin_operation,
     _complete_operation,
     _fail_operation,
-    _model_to_dict,
-    _new_operation_id,
     _normalize_operation_id,
-    _operation_path,
     _read_operation,
-    _write_operation_record,
 )
 from terminal_bridge.payloads import (
     _new_text_payload_id,
     _normalize_text_payload_id,
-    _serialize_text_payload_field,
     _stage_text_payload_chunk,
     _text_payload_dir,
-    _text_payload_manifest_path,
     _validate_text_payload_ref,
 )
 from terminal_bridge.patches import (
-    _clean_patch_path,
     _extract_patch_paths,
     _resolve_patch_path,
     _run_git_apply_with_stdin,
     _validate_patch_paths,
 )
 from terminal_bridge.safety import (
-    _is_blocked_name,
     _relative,
     _resolve_workspace_path,
     _validate_expected_sha256,

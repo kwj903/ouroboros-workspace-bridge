@@ -26,6 +26,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["terminal_bridge*"]
 
+[tool.ruff.lint.per-file-ignores]
+"scripts/command_bundle_review_server.py" = ["E402"]
+
 [dependency-groups]
 dev = [
     "ruff>=0.15.12",

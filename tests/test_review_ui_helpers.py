@@ -14,6 +14,7 @@ import server
 from scripts import command_bundle_review_server as review
 from scripts import command_bundle_watcher as watcher
 from terminal_bridge import config, handoffs, safety, tool_calls
+from terminal_bridge import review_layout
 from terminal_bridge import review_intents as intents
 from terminal_bridge import review_notifications as notifications
 
@@ -567,7 +568,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("/api/audit-state", html)
 
     def test_primary_nav_html_uses_large_category_labels(self) -> None:
-        html = review.primary_nav_html("history")
+        html = review_layout.primary_nav_html("history")
 
         self.assertIn("승인", html)
         self.assertIn("이력/결과", html)
@@ -575,7 +576,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn('aria-current="page"', html)
 
     def test_management_nav_html_contains_internal_tab_labels(self) -> None:
-        html = review.management_nav_html("overview")
+        html = review_layout.management_nav_html("overview")
 
         for label in ("개요", "서버", "프로세스", "연결", "환경", "로컬 도구", "진단"):
             self.assertIn(label, html)
@@ -787,7 +788,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("badge ok", html)
 
     def test_app_shell_includes_sidebar_brand_and_management_nav(self) -> None:
-        html = review.app_shell(
+        html = review_layout.app_shell(
             "관리",
             "<p>body</p>",
             active_nav="servers",
@@ -800,7 +801,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn('aria-current="page"', html)
 
     def test_app_shell_css_prevents_pending_page_horizontal_overflow(self) -> None:
-        html = review.app_shell(
+        html = review_layout.app_shell(
             "승인",
             review.approval_mode_card_html("yolo") + review.latest_handoff_html() + review.intent_inbox_html(),
             active_nav="pending",

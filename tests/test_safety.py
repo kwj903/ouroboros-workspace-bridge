@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 import server
+from terminal_bridge import config, patches
 
 
 class WorkspacePathSafetyTests(unittest.TestCase):
@@ -29,19 +30,19 @@ class WorkspacePathSafetyTests(unittest.TestCase):
 
 class PatchPathSafetyTests(unittest.TestCase):
     def test_clean_patch_path_removes_git_prefix(self) -> None:
-        self.assertEqual(server._clean_patch_path("a/README.md"), "README.md")
-        self.assertEqual(server._clean_patch_path("b/server.py"), "server.py")
+        self.assertEqual(patches._clean_patch_path("a/README.md"), "README.md")
+        self.assertEqual(patches._clean_patch_path("b/server.py"), "server.py")
 
     def test_clean_patch_path_allows_dev_null(self) -> None:
-        self.assertIsNone(server._clean_patch_path("/dev/null"))
+        self.assertIsNone(patches._clean_patch_path("/dev/null"))
 
     def test_clean_patch_path_rejects_unsafe_paths(self) -> None:
         with self.assertRaises(ValueError):
-            server._clean_patch_path("../README.md")
+            patches._clean_patch_path("../README.md")
         with self.assertRaises(ValueError):
-            server._clean_patch_path("/tmp/README.md")
+            patches._clean_patch_path("/tmp/README.md")
         with self.assertRaises(PermissionError):
-            server._clean_patch_path(".git/config")
+            patches._clean_patch_path(".git/config")
 
     def test_extract_patch_paths(self) -> None:
         patch = """diff --git a/README.md b/README.md
@@ -55,7 +56,7 @@ class PatchPathSafetyTests(unittest.TestCase):
 
     def test_validate_patch_paths_rejects_secrets(self) -> None:
         with self.assertRaises(PermissionError):
-            server._validate_patch_paths(server.PROJECT_ROOT, [".env"])
+            server._validate_patch_paths(config.PROJECT_ROOT, [".env"])
 
 
 class OperationIdTests(unittest.TestCase):
