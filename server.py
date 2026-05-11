@@ -2324,6 +2324,52 @@ def _read_staged_text_payload(payload_ref: str) -> tuple[str, dict[str, object]]
     return "".join(chunks), ref_info
 
 
+def _resolve_stage_bundle_cwd(cwd: str) -> tuple[Path, str]:
+    target = _resolve_workspace_path(cwd)
+
+    if not target.exists():
+        raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
+
+    if not target.is_dir():
+        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+
+    return target, _relative(target)
+
+
+def _write_pending_stage_bundle(
+    *,
+    version: int,
+    title: str,
+    cwd: str,
+    risk: str,
+    steps: list[dict[str, object]],
+    request_key: str,
+) -> CommandBundleStageResult:
+    bundle_id = _new_command_bundle_id()
+    now = _now_iso()
+    record: dict[str, object] = {
+        "version": version,
+        "bundle_id": bundle_id,
+        "title": title,
+        "cwd": cwd,
+        "status": "pending",
+        "risk": risk,
+        "approval_required": True,
+        "created_at": now,
+        "updated_at": now,
+        "steps": steps,
+        "result": None,
+        "error": None,
+        "request_key": request_key,
+        "request_key_version": 1,
+        "duplicate_of": None,
+    }
+
+    bundle_path = _command_bundle_path(bundle_id, "pending")
+    _write_command_bundle(bundle_path, record)
+    return _command_bundle_stage_result(bundle_path, record)
+
+
 @_internal_tool(
     annotations={
         "readOnlyHint": True,
@@ -2345,13 +2391,7 @@ def workspace_stage_patch_bundle(
     if patch is None and patch_ref is None:
         raise ValueError("patch or patch_ref is required.")
 
-    target = _resolve_workspace_path(cwd)
-
-    if not target.exists():
-        raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
-
-    if not target.is_dir():
-        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+    target, relative_cwd = _resolve_stage_bundle_cwd(cwd)
 
     step_source: dict[str, object]
     if patch_ref is not None:
@@ -2378,7 +2418,6 @@ def workspace_stage_patch_bundle(
     patch_paths = _extract_patch_paths(patch_text)
     _validate_patch_paths(target, patch_paths)
 
-    relative_cwd = _relative(target)
     patch_sha256 = _sha256_bytes(patch_text.encode("utf-8"))
     request_key = _request_key(
         {
@@ -2393,8 +2432,6 @@ def workspace_stage_patch_bundle(
     if deduped is not None:
         return deduped
 
-    bundle_id = _new_command_bundle_id()
-    now = _now_iso()
     serialized_steps = [
         {
             "type": "apply_patch",
@@ -2407,30 +2444,17 @@ def workspace_stage_patch_bundle(
             "reason": "Patch apply requires local approval.",
         }
     ]
-
-    record: dict[str, object] = {
-        "version": 3,
-        "bundle_id": bundle_id,
-        "title": title,
-        "cwd": relative_cwd,
-        "status": "pending",
-        "risk": "medium",
-        "approval_required": True,
-        "created_at": now,
-        "updated_at": now,
-        "steps": serialized_steps,
-        "result": None,
-        "error": None,
-        "request_key": request_key,
-        "request_key_version": 1,
-        "duplicate_of": None,
-    }
-
-    bundle_path = _command_bundle_path(bundle_id, "pending")
-    _write_command_bundle(bundle_path, record)
+    stage_result = _write_pending_stage_bundle(
+        version=3,
+        title=title,
+        cwd=relative_cwd,
+        risk="medium",
+        steps=serialized_steps,
+        request_key=request_key,
+    )
     _audit(
         "stage_patch_bundle",
-        bundle_id=bundle_id,
+        bundle_id=stage_result.bundle_id,
         cwd=relative_cwd,
         title=title,
         patch_sha256=patch_sha256,
@@ -2438,17 +2462,7 @@ def workspace_stage_patch_bundle(
         request_key=request_key,
     )
 
-    return CommandBundleStageResult(
-        bundle_id=bundle_id,
-        title=title,
-        cwd=relative_cwd,
-        status="pending",
-        risk="medium",
-        approval_required=True,
-        path=str(bundle_path),
-        review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
-        command_count=len(serialized_steps),
-    )
+    return stage_result
 
 
 @_internal_tool(
@@ -2470,16 +2484,9 @@ def workspace_stage_action_bundle(
     Project files are not modified until the local review UI approves and applies
     the staged bundle.
     """
-    target = _resolve_workspace_path(cwd)
-
-    if not target.exists():
-        raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
-
-    if not target.is_dir():
-        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+    target, relative_cwd = _resolve_stage_bundle_cwd(cwd)
 
     serialized_steps, risk, _ = _serialize_action_steps(target, actions)
-    relative_cwd = _relative(target)
     request_key = _request_key(
         {
             "kind": "action_bundle",
@@ -2493,32 +2500,17 @@ def workspace_stage_action_bundle(
     if deduped is not None:
         return deduped
 
-    bundle_id = _new_command_bundle_id()
-    now = _now_iso()
-
-    record: dict[str, object] = {
-        "version": 2,
-        "bundle_id": bundle_id,
-        "title": title,
-        "cwd": relative_cwd,
-        "status": "pending",
-        "risk": risk,
-        "approval_required": True,
-        "created_at": now,
-        "updated_at": now,
-        "steps": serialized_steps,
-        "result": None,
-        "error": None,
-        "request_key": request_key,
-        "request_key_version": 1,
-        "duplicate_of": None,
-    }
-
-    bundle_path = _command_bundle_path(bundle_id, "pending")
-    _write_command_bundle(bundle_path, record)
+    stage_result = _write_pending_stage_bundle(
+        version=2,
+        title=title,
+        cwd=relative_cwd,
+        risk=risk,
+        steps=serialized_steps,
+        request_key=request_key,
+    )
     _audit(
         "stage_action_bundle",
-        bundle_id=bundle_id,
+        bundle_id=stage_result.bundle_id,
         cwd=relative_cwd,
         title=title,
         risk=risk,
@@ -2526,17 +2518,7 @@ def workspace_stage_action_bundle(
         request_key=request_key,
     )
 
-    return CommandBundleStageResult(
-        bundle_id=bundle_id,
-        title=title,
-        cwd=relative_cwd,
-        status="pending",
-        risk=risk,
-        approval_required=True,
-        path=str(bundle_path),
-        review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
-        command_count=len(serialized_steps),
-    )
+    return stage_result
 
 
 @_internal_tool(
@@ -2560,13 +2542,7 @@ def workspace_stage_commit_bundle(
     ] = None,
 ) -> CommandBundleStageResult:
     """Stage a git add/commit workflow for local approval without executing it in ChatGPT."""
-    target = _resolve_workspace_path(cwd)
-
-    if not target.exists():
-        raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
-
-    if not target.is_dir():
-        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+    target, relative_cwd = _resolve_stage_bundle_cwd(cwd)
 
     serialized_steps, risk, safe_paths, commit_message = _serialize_commit_steps(
         target,
@@ -2574,7 +2550,6 @@ def workspace_stage_commit_bundle(
         message,
         precheck_commands,
     )
-    relative_cwd = _relative(target)
     request_key = _request_key(
         {
             "kind": "commit_bundle",
@@ -2588,33 +2563,18 @@ def workspace_stage_commit_bundle(
     if deduped is not None:
         return deduped
 
-    bundle_id = _new_command_bundle_id()
-    now = _now_iso()
     title = f"Commit: {commit_message[:120]}"
-
-    record: dict[str, object] = {
-        "version": 4,
-        "bundle_id": bundle_id,
-        "title": title,
-        "cwd": relative_cwd,
-        "status": "pending",
-        "risk": risk,
-        "approval_required": True,
-        "created_at": now,
-        "updated_at": now,
-        "steps": serialized_steps,
-        "result": None,
-        "error": None,
-        "request_key": request_key,
-        "request_key_version": 1,
-        "duplicate_of": None,
-    }
-
-    bundle_path = _command_bundle_path(bundle_id, "pending")
-    _write_command_bundle(bundle_path, record)
+    stage_result = _write_pending_stage_bundle(
+        version=4,
+        title=title,
+        cwd=relative_cwd,
+        risk=risk,
+        steps=serialized_steps,
+        request_key=request_key,
+    )
     _audit(
         "stage_commit_bundle",
-        bundle_id=bundle_id,
+        bundle_id=stage_result.bundle_id,
         cwd=relative_cwd,
         risk=risk,
         path_count=len(safe_paths),
@@ -2622,17 +2582,7 @@ def workspace_stage_commit_bundle(
         request_key=request_key,
     )
 
-    return CommandBundleStageResult(
-        bundle_id=bundle_id,
-        title=title,
-        cwd=relative_cwd,
-        status="pending",
-        risk=risk,
-        approval_required=True,
-        path=str(bundle_path),
-        review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
-        command_count=len(serialized_steps),
-    )
+    return stage_result
 
 
 @_internal_tool(
@@ -2653,16 +2603,9 @@ def workspace_stage_command_bundle(
     This does not modify project files. It writes a pending command bundle under
     the MCP runtime directory. A local runner can preview/apply/reject it.
     """
-    target = _resolve_workspace_path(cwd)
-
-    if not target.exists():
-        raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
-
-    if not target.is_dir():
-        raise NotADirectoryError(f"cwd is not a directory: {_relative(target)}")
+    target, relative_cwd = _resolve_stage_bundle_cwd(cwd)
 
     serialized_steps, risk, _ = _serialize_command_steps(target, steps)
-    relative_cwd = _relative(target)
     request_key = _request_key(
         {
             "kind": "command_bundle",
@@ -2675,32 +2618,17 @@ def workspace_stage_command_bundle(
     if deduped is not None:
         return deduped
 
-    bundle_id = _new_command_bundle_id()
-    now = _now_iso()
-
-    record: dict[str, object] = {
-        "version": 1,
-        "bundle_id": bundle_id,
-        "title": title,
-        "cwd": relative_cwd,
-        "status": "pending",
-        "risk": risk,
-        "approval_required": True,
-        "created_at": now,
-        "updated_at": now,
-        "steps": serialized_steps,
-        "result": None,
-        "error": None,
-        "request_key": request_key,
-        "request_key_version": 1,
-        "duplicate_of": None,
-    }
-
-    bundle_path = _command_bundle_path(bundle_id, "pending")
-    _write_command_bundle(bundle_path, record)
+    stage_result = _write_pending_stage_bundle(
+        version=1,
+        title=title,
+        cwd=relative_cwd,
+        risk=risk,
+        steps=serialized_steps,
+        request_key=request_key,
+    )
     _audit(
         "stage_command_bundle",
-        bundle_id=bundle_id,
+        bundle_id=stage_result.bundle_id,
         cwd=relative_cwd,
         title=title,
         risk=risk,
@@ -2708,17 +2636,7 @@ def workspace_stage_command_bundle(
         request_key=request_key,
     )
 
-    return CommandBundleStageResult(
-        bundle_id=bundle_id,
-        title=title,
-        cwd=relative_cwd,
-        status="pending",
-        risk=risk,
-        approval_required=True,
-        path=str(bundle_path),
-        review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
-        command_count=len(serialized_steps),
-    )
+    return stage_result
 
 
 @mcp.tool(
