@@ -151,8 +151,10 @@ def _merge_command_bundle_metadata(
         strict=validate_workspace_mode,
     )
     if workspace_mode is not None:
-        if validate_workspace_mode and workspace_mode != "direct":
-            raise ValueError("workspace_mode currently only supports 'direct'. task-workspace will be introduced in a later phase.")
+        if validate_workspace_mode and workspace_mode not in {"direct", "task-workspace"}:
+            raise ValueError("workspace_mode currently supports 'direct' or 'task-workspace'.")
+        if validate_workspace_mode and workspace_mode == "task-workspace" and normalized.get("task_id") is None:
+            raise ValueError("workspace_mode='task-workspace' requires task_id.")
         normalized["workspace_mode"] = workspace_mode
 
     return normalized

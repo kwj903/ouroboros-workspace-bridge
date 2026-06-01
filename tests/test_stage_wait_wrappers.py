@@ -524,11 +524,19 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             },
         )
 
-    def test_proposal_metadata_input_rejects_non_direct_mode(self) -> None:
-        for mode in ("task-workspace", "isolated"):
-            with self.subTest(mode=mode):
-                with self.assertRaisesRegex(ValueError, "only supports 'direct'"):
-                    server._proposal_metadata_input(workspace_mode=mode)
+    def test_proposal_metadata_input_accepts_task_workspace_with_task_id(self) -> None:
+        self.assertEqual(
+            server._proposal_metadata_input(task_id=" task-1 ", workspace_mode=" task-workspace "),
+            {"task_id": "task-1", "workspace_mode": "task-workspace"},
+        )
+
+    def test_proposal_metadata_input_rejects_task_workspace_without_task_id(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires task_id"):
+            server._proposal_metadata_input(workspace_mode="task-workspace")
+
+    def test_proposal_metadata_input_rejects_unknown_workspace_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "supports 'direct' or 'task-workspace'"):
+            server._proposal_metadata_input(task_id="task-1", workspace_mode="isolated")
 
     def test_propose_git_push_rejects_flag_like_remote(self) -> None:
         with self.assertRaises(ValueError):

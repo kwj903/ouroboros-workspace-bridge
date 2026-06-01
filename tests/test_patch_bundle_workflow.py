@@ -294,6 +294,49 @@ class PatchBundleStagingTests(unittest.TestCase):
         self.assertEqual(metadata["workspace_mode"], "direct")
         self.assertEqual(second.metadata, metadata)
 
+    def test_propose_command_bundle_records_task_workspace_metadata(self) -> None:
+        original_wait_impl = server._workspace_wait_command_bundle_status_impl
+
+        def immediate_wait(bundle_id: str, timeout_seconds: int, poll_interval_seconds: float) -> server.CommandBundleStatusResult:
+            return server._workspace_command_bundle_status_impl(bundle_id)
+
+        server._workspace_wait_command_bundle_status_impl = immediate_wait
+        try:
+            result = server.workspace_propose_command_and_wait(
+                title=f"Task workspace command {uuid4().hex[:8]}",
+                cwd=self.project_cwd(),
+                argv=["git", "status", "--short"],
+                timeout_seconds=1,
+                poll_interval_seconds=0.2,
+                task_id="task-workspace-a",
+                client_id="client-a",
+                session_id="session-a",
+                project_id="project-alpha",
+                workspace_mode="task-workspace",
+            )
+        finally:
+            server._workspace_wait_command_bundle_status_impl = original_wait_impl
+
+        self.bundle_ids.append(result.bundle_id)
+        _, record = server._find_command_bundle(result.bundle_id)
+        metadata = record.get("metadata")
+
+        self.assertIsInstance(metadata, dict)
+        self.assertEqual(metadata["task_id"], "task-workspace-a")
+        self.assertEqual(metadata["workspace_mode"], "task-workspace")
+        self.assertEqual(metadata["source_cwd"], self.project_cwd())
+        self.assertEqual(metadata["effective_cwd"], self.project_cwd())
+        self.assertEqual(result.metadata, metadata)
+
+    def test_task_workspace_requires_task_id(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires task_id"):
+            server.workspace_propose_command_and_wait(
+                title="Missing task id",
+                cwd=self.project_cwd(),
+                argv=["git", "status", "--short"],
+                workspace_mode="task-workspace",
+            )
+
     def test_rejects_invalid_patch_path(self) -> None:
         patch = new_file_patch("../outside.md")
 

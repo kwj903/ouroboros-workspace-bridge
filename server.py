@@ -2404,8 +2404,10 @@ def _proposal_metadata_input(
         metadata[key] = normalized
 
     mode = metadata.get("workspace_mode")
-    if mode is not None and mode != "direct":
-        raise ValueError("workspace_mode currently only supports 'direct'. task-workspace will be introduced in a later phase.")
+    if mode is not None and mode not in {"direct", "task-workspace"}:
+        raise ValueError("workspace_mode currently supports 'direct' or 'task-workspace'.")
+    if mode == "task-workspace" and metadata.get("task_id") is None:
+        raise ValueError("workspace_mode='task-workspace' requires task_id.")
 
     return metadata or None
 
@@ -3268,7 +3270,7 @@ def workspace_propose_command_and_wait(
     client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
@@ -3337,7 +3339,7 @@ def workspace_propose_file_write_and_wait(
     client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
@@ -3415,7 +3417,7 @@ def workspace_propose_file_replace_and_wait(
     client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
 ) -> CommandBundleStatusResult:
     """Create exactly one file replacement proposal in the local pending UI and briefly wait.
 
@@ -3480,7 +3482,7 @@ def workspace_propose_patch_and_wait(
     client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
 ) -> CommandBundleStatusResult:
     """Create one patch proposal in the local pending UI and briefly wait.
 
@@ -3536,7 +3538,7 @@ def workspace_propose_git_commit_and_wait(
     client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
 ) -> CommandBundleStatusResult:
     """Create one git commit proposal in the local pending UI and briefly wait.
 
@@ -3588,7 +3590,7 @@ def workspace_propose_git_push_and_wait(
     client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
