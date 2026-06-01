@@ -181,6 +181,54 @@ def save_scoped_approval_mode(
     return record
 
 
+def list_scoped_approval_modes(*, scope_root: Path = APPROVAL_SCOPE_DIR) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    root = scope_root.expanduser().resolve(strict=False)
+    for scope_type, dirname in _SCOPED_APPROVAL_DIRS.items():
+        scope_dir = root / dirname
+        if not scope_dir.exists():
+            continue
+        for path in sorted(scope_dir.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            mode = _load_optional_approval_mode(path)
+            if mode is None:
+                continue
+            scope_id = str(data.get("scope_id") or path.stem).strip()
+            try:
+                normalized_id = _normalize_scope_id(scope_id)
+            except ValueError:
+                continue
+            rows.append(
+                {
+                    "scope_type": scope_type,
+                    "scope_id": normalized_id,
+                    "mode": mode,
+                    "updated_at": str(data.get("updated_at") or ""),
+                    "path": str(path),
+                }
+            )
+    return rows
+
+
+def delete_scoped_approval_mode(
+    scope_type: str,
+    scope_id: object | None = None,
+    *,
+    scope_root: Path = APPROVAL_SCOPE_DIR,
+) -> bool:
+    path = scoped_approval_mode_path(scope_type, scope_id, scope_root=scope_root)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def _metadata_from_bundle_or_metadata(value: dict[str, object] | None) -> dict[str, object]:
     if not isinstance(value, dict):
         return {}

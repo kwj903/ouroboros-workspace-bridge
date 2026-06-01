@@ -35,6 +35,8 @@ from terminal_bridge.review_notifications import (
 from terminal_bridge import bundle_watcher
 from terminal_bridge.approval_modes import (
     VALID_APPROVAL_MODES,
+    delete_scoped_approval_mode,
+    list_scoped_approval_modes,
     load_effective_approval_mode,
     load_approval_mode,
     normalize_approval_mode,
@@ -1100,6 +1102,52 @@ def scoped_approval_mode_card_html() -> str:
           <button class="secondary" type="submit">Scoped mode 저장</button>
         </div>
       </form>
+    </div>
+    """
+
+
+def saved_scoped_approval_modes_html() -> str:
+    rows = list_scoped_approval_modes()
+    if not rows:
+        return """
+    <div class="card">
+      <h2>Saved scoped overrides</h2>
+      <p class="meta">저장된 scoped approval override가 없습니다.</p>
+    </div>
+    """
+
+    items: list[str] = []
+    for row in rows:
+        scope_type = row.get("scope_type", "")
+        scope_id = row.get("scope_id", "")
+        mode = row.get("mode", "normal")
+        updated_at = row.get("updated_at", "")
+        items.append(
+            f"""
+            <div class="mode-option">
+              <div>
+                <div class="mode-title">
+                  <span>{escape(scope_type)}: <code>{escape(scope_id)}</code></span>
+                  {status_badge(approval_mode_label(mode), "danger" if normalize_approval_mode(mode) == "yolo" else "ok" if normalize_approval_mode(mode) == "safe-auto" else "neutral")}
+                </div>
+                <p class="meta">updated: {escape(updated_at or "unknown")}</p>
+              </div>
+              <form method="post" action="/settings/approval-mode/delete">
+                <input type="hidden" name="scope_type" value="{escape(scope_type)}">
+                <input type="hidden" name="scope_id" value="{escape(scope_id)}">
+                <button class="reject" type="submit">삭제</button>
+              </form>
+            </div>
+            """
+        )
+
+    return f"""
+    <div class="card">
+      <h2>Saved scoped overrides</h2>
+      <p class="meta">현재 저장된 project/client/task별 approval override입니다.</p>
+      <div class="mode-grid">
+        {''.join(items)}
+      </div>
     </div>
     """
 
@@ -2216,6 +2264,7 @@ class Handler(BaseHTTPRequestHandler):
                 approval_mode_banner_html(approval_mode)
                 + approval_mode_card_html(approval_mode)
                 + scoped_approval_mode_card_html()
+                + saved_scoped_approval_modes_html()
                 + "<p><a href='/history'>전체 이력 보기</a></p>"
                 + metadata_filter_form_html("/pending", metadata_filters)
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
@@ -2374,6 +2423,27 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             self.redirect(location)
+            return
+
+        if parts == ["settings", "approval-mode", "delete"]:
+            if not is_local_client_address(str(self.client_address[0])):
+                self.send_html("Forbidden", "<p>Local requests only.</p>", status=403, active_nav="pending")
+                return
+
+            form = self.read_form()
+            raw_scope_type = str(form.get("scope_type", [""])[0]).strip().lower()
+            raw_scope_id = str(form.get("scope_id", [""])[0]).strip()
+            try:
+                delete_scoped_approval_mode(raw_scope_type, raw_scope_id)
+            except ValueError as exc:
+                self.send_html(
+                    "Invalid approval scope",
+                    f'<p><a href="/pending">← 승인 대기로 돌아가기</a></p><p>{escape(str(exc))}</p>',
+                    status=400,
+                    active_nav="pending",
+                )
+                return
+            self.redirect("/pending")
             return
 
         if parts == ["settings", "approval-mode"]:

@@ -19,7 +19,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 - The bundle watcher now resolves approval mode per pending bundle using metadata scope priority before falling back to the existing global mode.
 - Review UI bundle cards now show the effective approval mode and scope used for that bundle.
-- Review UI pending settings include a scoped approval override form.
+- Review UI pending settings include a scoped approval override form and a saved scoped override list with delete actions.
 - User documentation now explains help language selection, `WOOJAE_HELP_LANG`, and Korean help usage.
 - Default public MCP tool guidance now favors small proposal wrapper tools while keeping the generic bundle functions internally available.
 - Refactored MCP tool helper implementations out of `server.py` into `terminal_bridge/mcp_tools/` modules while preserving public MCP tool names, wrappers, signatures, schemas, approval flow, and runner behavior.

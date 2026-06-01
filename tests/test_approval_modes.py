@@ -111,6 +111,25 @@ class ApprovalModePersistenceTests(unittest.TestCase):
                     self.assertEqual(result.mode, "safe-auto")
                     self.assertEqual(result.scope_type, "global")
 
+    def test_list_and_delete_scoped_approval_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "approval_modes"
+
+            approval_modes.save_scoped_approval_mode("project", "safe-auto", "project-a", scope_root=root)
+            approval_modes.save_scoped_approval_mode("task", "yolo", "task-a", scope_root=root)
+
+            rows = approval_modes.list_scoped_approval_modes(scope_root=root)
+            self.assertEqual(
+                {(row["scope_type"], row["scope_id"], row["mode"]) for row in rows},
+                {("project", "project-a", "safe-auto"), ("task", "task-a", "yolo")},
+            )
+
+            self.assertTrue(approval_modes.delete_scoped_approval_mode("project", "project-a", scope_root=root))
+            self.assertFalse(approval_modes.delete_scoped_approval_mode("project", "project-a", scope_root=root))
+
+            rows = approval_modes.list_scoped_approval_modes(scope_root=root)
+            self.assertEqual([(row["scope_type"], row["scope_id"]) for row in rows], [("task", "task-a")])
+
     def test_invalid_scope_id_cannot_escape_scope_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "approval_modes"

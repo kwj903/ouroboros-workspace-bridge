@@ -14,7 +14,7 @@ from uuid import uuid4
 import server
 from scripts import command_bundle_review_server as review
 from scripts import command_bundle_watcher as watcher
-from terminal_bridge import config, handoffs, safety, tool_calls
+from terminal_bridge import approval_modes, config, handoffs, safety, tool_calls
 from terminal_bridge import review_layout
 from terminal_bridge import review_intents as intents
 from terminal_bridge import review_notifications as notifications
@@ -1205,6 +1205,19 @@ class WatcherHelperTests(unittest.TestCase):
         self.assertIn('name="scope_type"', html)
         self.assertIn('name="scope_id"', html)
         self.assertIn('name="mode"', html)
+
+    def test_saved_scoped_approval_modes_html_renders_delete_form(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "approval_modes"
+            approval_modes.save_scoped_approval_mode("task", "safe-auto", "task-a", scope_root=root)
+            with patch.object(review, "list_scoped_approval_modes", lambda: approval_modes.list_scoped_approval_modes(scope_root=root)):
+                html = review.saved_scoped_approval_modes_html()
+
+        self.assertIn("Saved scoped overrides", html)
+        self.assertIn("task", html)
+        self.assertIn("task-a", html)
+        self.assertIn("Safe Auto", html)
+        self.assertIn('/settings/approval-mode/delete', html)
 
 
 if __name__ == "__main__":
