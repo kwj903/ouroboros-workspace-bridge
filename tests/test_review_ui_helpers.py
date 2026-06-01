@@ -157,6 +157,40 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("Task workspace: missing", html)
         self.assertIn("workspace: runtime/task_workspaces/task-a-123456789abc/repo", html)
 
+    def test_bundle_task_workspace_html_renders_worktree_branch(self) -> None:
+        record = {
+            "bundle_id": "cmd-task",
+            "cwd": ".",
+            "metadata": {
+                "workspace_mode": "task-workspace",
+                "task_id": "task-a",
+                "project_id": "project-alpha",
+            },
+        }
+        resolution = TaskWorkspaceResolution(
+            workspace_mode="task-workspace",
+            status="worktree",
+            reason="found",
+            exists=True,
+            task_id="task-a",
+            project_id="project-alpha",
+            source_cwd=".",
+            workspace_key="task-a-123456789abc",
+            workspace_path=str(review.RUNTIME_ROOT / "task_workspaces" / "task-a-123456789abc" / "repo"),
+            record_path=str(review.RUNTIME_ROOT / "task_workspaces" / "task-a-123456789abc" / "workspace.json"),
+            record={
+                "worktree_branch": "task/task-a-123456789abc",
+                "base_ref": "main",
+            },
+        )
+
+        with patch.object(review, "resolve_task_workspace_for_bundle", lambda item: resolution):
+            html = review.bundle_task_workspace_html(record)
+
+        self.assertIn("Task workspace: worktree", html)
+        self.assertIn("branch: task/task-a-123456789abc", html)
+        self.assertIn("base: main", html)
+
     def test_bundle_metadata_filter_uses_and_conditions(self) -> None:
         rows = [
             {

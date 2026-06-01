@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from terminal_bridge.bundles import _default_command_bundle_metadata, _normalize_command_bundle_metadata
 from terminal_bridge.config import TASK_WORKSPACES_DIR, WORKSPACE_ROOT
@@ -14,6 +16,7 @@ from terminal_bridge.tasks import _normalize_task_id
 TASK_WORKSPACE_MODE = "task-workspace"
 TASK_WORKSPACE_RECORD_NAME = "workspace.json"
 TASK_WORKSPACE_REPO_DIR_NAME = "repo"
+GitRunner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,18 @@ def _task_workspace_root(runtime_root: Path | None = None) -> Path:
     if runtime_root is None:
         return TASK_WORKSPACES_DIR.expanduser().resolve(strict=False)
     return (runtime_root.expanduser() / "task_workspaces").resolve(strict=False)
+
+
+def _run_git(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        shell=False,
+        check=True,
+    )
 
 
 def _normalize_project_id(project_id: object | None, source_cwd: str) -> str:
@@ -136,11 +151,66 @@ def _task_workspace_paths(
 def _record_with_current_status(record: dict[str, object]) -> dict[str, object]:
     refreshed = dict(record)
     raw_workspace_path = str(refreshed.get("workspace_path") or "").strip()
-    exists = bool(raw_workspace_path) and Path(raw_workspace_path).exists()
+    workspace_path = Path(raw_workspace_path) if raw_workspace_path else None
+    exists = bool(workspace_path) and workspace_path.exists()
     if refreshed.get("status") != "archived":
-        refreshed["status"] = "created" if exists else "missing"
+        if workspace_path is not None and _is_git_worktree_path(workspace_path):
+            refreshed["status"] = "worktree"
+            refreshed["worktree_status"] = "ready"
+        elif refreshed.get("status") == "worktree":
+            refreshed["status"] = "missing"
+            refreshed["worktree_status"] = "missing"
+        else:
+            refreshed["status"] = "created" if exists else "missing"
     refreshed["exists"] = exists
     return refreshed
+
+
+def _is_git_worktree_path(path: Path) -> bool:
+    return path.is_dir() and (path / ".git").exists()
+
+
+def _git_stdout(git_runner: GitRunner, argv: list[str]) -> str:
+    completed = git_runner(argv)
+    return completed.stdout.strip()
+
+
+def _source_git_info(
+    source_path: Path,
+    *,
+    workspace_root: Path,
+    git_runner: GitRunner,
+) -> dict[str, str]:
+    try:
+        source_git_root = Path(
+            _git_stdout(git_runner, ["git", "-C", str(source_path), "rev-parse", "--show-toplevel"])
+        ).expanduser().resolve(strict=False)
+    except subprocess.CalledProcessError as exc:
+        raise ValueError("source_cwd is not a git repository.") from exc
+
+    root = workspace_root.expanduser().resolve(strict=False)
+    if source_git_root != root and not source_git_root.is_relative_to(root):
+        raise ValueError("source git root escapes WORKSPACE_ROOT.")
+
+    try:
+        base_ref = _git_stdout(git_runner, ["git", "-C", str(source_git_root), "rev-parse", "--abbrev-ref", "HEAD"])
+        base_sha = _git_stdout(git_runner, ["git", "-C", str(source_git_root), "rev-parse", "HEAD"])
+    except subprocess.CalledProcessError as exc:
+        raise ValueError("source git repository does not have a valid HEAD.") from exc
+
+    return {
+        "source_git_root": str(source_git_root),
+        "base_ref": base_ref or "HEAD",
+        "base_sha": base_sha,
+    }
+
+
+def _target_has_unknown_files(path: Path) -> bool:
+    if not path.exists():
+        return False
+    if _is_git_worktree_path(path):
+        return False
+    return any(path.iterdir())
 
 
 def _missing_record(fields: dict[str, object]) -> dict[str, object]:
@@ -208,6 +278,90 @@ def prepare_task_workspace(
         raise ValueError("Invalid task workspace record path.")
     _write_json(record_path, record)
     return _record_with_current_status(record)
+
+
+def create_task_worktree(
+    task_id: str,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+    git_runner: GitRunner = _run_git,
+) -> dict[str, object]:
+    fields = _task_workspace_paths(
+        task_id,
+        cwd=cwd,
+        project_id=project_id,
+        runtime_root=runtime_root,
+        workspace_root=workspace_root,
+    )
+    source_path = fields["source_path"]
+    if not isinstance(source_path, Path) or not source_path.exists() or not source_path.is_dir():
+        raise NotADirectoryError(f"source_cwd does not exist or is not a directory: {fields['source_cwd']}")
+
+    git_info = _source_git_info(
+        source_path,
+        workspace_root=workspace_root,
+        git_runner=git_runner,
+    )
+
+    record_path = fields["record_path"]
+    existing: dict[str, object] = {}
+    if isinstance(record_path, Path) and record_path.exists():
+        existing = _read_json(record_path)
+
+    workspace_path = fields["workspace_path"]
+    if not isinstance(workspace_path, Path):
+        raise ValueError("Invalid task workspace path.")
+    if _target_has_unknown_files(workspace_path):
+        raise ValueError("task workspace target path is not empty; refusing to overwrite unknown files.")
+
+    branch = str(existing.get("worktree_branch") or f"task/{fields['workspace_key']}")
+    now = _now_iso()
+
+    if not _is_git_worktree_path(workspace_path):
+        workspace_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            git_runner(
+                [
+                    "git",
+                    "-C",
+                    str(git_info["source_git_root"]),
+                    "worktree",
+                    "add",
+                    "-b",
+                    branch,
+                    str(workspace_path),
+                    str(git_info["base_sha"]),
+                ]
+            )
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+            raise RuntimeError(f"git worktree add failed: {detail}") from exc
+
+    record = {
+        "task_id": fields["task_id"],
+        "project_id": fields["project_id"],
+        "source_cwd": fields["source_cwd"],
+        "source_git_root": git_info["source_git_root"],
+        "workspace_mode": TASK_WORKSPACE_MODE,
+        "workspace_key": fields["workspace_key"],
+        "workspace_path": str(workspace_path),
+        "record_path": str(record_path),
+        "worktree_branch": branch,
+        "worktree_status": "ready",
+        "base_ref": str(existing.get("base_ref") or git_info["base_ref"]),
+        "base_sha": str(existing.get("base_sha") or git_info["base_sha"]),
+        "status": "worktree",
+        "exists": True,
+        "created_at": str(existing.get("created_at") or now),
+        "updated_at": now,
+    }
+    if not isinstance(record_path, Path):
+        raise ValueError("Invalid task workspace record path.")
+    _write_json(record_path, record)
+    return record
 
 
 def read_task_workspace(

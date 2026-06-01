@@ -448,7 +448,8 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - Phase 3-B는 runtime task workspace record/directory foundation을 추가했다. Record는 `runtime/task_workspaces/<task_id>-<hash>/workspace.json`에 저장되고, workspace path는 같은 directory의 `repo` 하위 경로로 계산된다.
 - Public MCP helper로 `workspace_prepare_task_workspace`, `workspace_task_workspace_status`, `workspace_list_task_workspaces`를 제공한다.
 - Review UI는 `task-workspace` bundle에 대해 workspace record가 `created`인지 `missing`인지 표시한다.
-- 아직 실제 `git worktree` 생성, runner의 task workspace apply, merge queue는 구현하지 않았다.
+- Phase 3-C는 명시 호출형 `workspace_create_task_worktree`로 source git repo 검증 후 runtime 아래 실제 git worktree를 생성하는 foundation을 추가했다.
+- 아직 runner의 task workspace apply routing과 merge queue는 구현하지 않았다.
 
 성공 기준:
 

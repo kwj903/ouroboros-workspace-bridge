@@ -44,6 +44,7 @@ BUNDLE_TOOLS = {
     "workspace_list_command_bundles",
     "workspace_cancel_command_bundle",
     "workspace_prepare_task_workspace",
+    "workspace_create_task_worktree",
     "workspace_task_workspace_status",
     "workspace_list_task_workspaces",
 }

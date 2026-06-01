@@ -390,11 +390,15 @@ class TaskWorkspaceStatusResult(BaseModel):
     task_id: str
     project_id: str
     source_cwd: str
+    source_git_root: str | None = None
     workspace_mode: str
     workspace_key: str
     workspace_path: str
     record_path: str
     worktree_branch: str | None = None
+    worktree_status: str | None = None
+    base_ref: str | None = None
+    base_sha: str | None = None
     status: str
     exists: bool
     created_at: str

@@ -201,6 +201,7 @@ from terminal_bridge.tasks import (
     _write_task,
 )
 from terminal_bridge.task_workspaces import (
+    create_task_worktree as _create_task_worktree,
     list_task_workspaces as _list_task_workspaces,
     prepare_task_workspace as _prepare_task_workspace,
     read_task_workspace as _read_task_workspace,
@@ -961,6 +962,7 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_task_finish",
     "workspace_list_tasks",
     "workspace_prepare_task_workspace",
+    "workspace_create_task_worktree",
     "workspace_task_workspace_status",
     "workspace_list_task_workspaces",
     "workspace_stage_text_payload",
@@ -2089,6 +2091,32 @@ def workspace_prepare_task_workspace(
         "workspace_prepare_task_workspace",
         {"task_id": task_id, "cwd": cwd, "project_id": project_id},
         lambda: TaskWorkspaceStatusResult(**_prepare_task_workspace(task_id, cwd=cwd, project_id=project_id)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_create_task_worktree(
+    task_id: Annotated[str, Field(description="Task id for the isolated git worktree.")],
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+) -> TaskWorkspaceStatusResult:
+    """Create or refresh a real git worktree for a task workspace.
+
+    This only prepares the isolated worktree under the MCP runtime directory. It
+    does not route approved bundles to that worktree and does not merge changes
+    back into the source project.
+    """
+    return _record_tool_call(
+        "workspace_create_task_worktree",
+        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
+        lambda: TaskWorkspaceStatusResult(**_create_task_worktree(task_id, cwd=cwd, project_id=project_id)),
     )
 
 

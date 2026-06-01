@@ -950,6 +950,7 @@ def bundle_task_workspace_html(record: dict[str, object]) -> str:
         return '<div class="subnav">' + status_badge(f"Task workspace: invalid ({type(exc).__name__})", "danger") + "</div>"
 
     tone = {
+        "worktree": "ok",
         "created": "ok",
         "missing": "warn",
         "archived": "neutral",
@@ -958,6 +959,13 @@ def bundle_task_workspace_html(record: dict[str, object]) -> str:
     path_display = compact_task_workspace_path(resolution.workspace_path or "")
     if path_display:
         badges.append(status_badge(f"workspace: {path_display}", "neutral"))
+    task_record = resolution.record if isinstance(resolution.record, dict) else {}
+    branch = str(task_record.get("worktree_branch") or "").strip()
+    if branch:
+        badges.append(status_badge(f"branch: {branch}", "neutral"))
+    base_ref = str(task_record.get("base_ref") or "").strip()
+    if base_ref:
+        badges.append(status_badge(f"base: {base_ref}", "neutral"))
     return '<div class="subnav">' + "".join(badges) + "</div>"
 
 
