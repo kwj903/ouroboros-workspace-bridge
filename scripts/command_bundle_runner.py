@@ -17,7 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from terminal_bridge.config import RUNTIME_ROOT, WORKSPACE_ROOT
+from terminal_bridge.commands import _classify_exec_command, _validate_exec_argv
+from terminal_bridge.config import BLOCKED_DIR_NAMES, BLOCKED_FILE_PATTERNS, RUNTIME_ROOT, WORKSPACE_ROOT
 from terminal_bridge.handoffs import write_handoff_from_bundle
 
 COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
@@ -31,31 +32,6 @@ TEXT_PAYLOAD_DIR = RUNTIME_ROOT / "text_payloads"
 MAX_STDOUT_CHARS = 20_000
 MAX_STDERR_CHARS = 8_000
 TEXT_PAYLOAD_MAX_TOTAL_CHARS = 1_000_000
-
-BLOCKED_DIR_NAMES = {
-    ".ssh",
-    ".aws",
-    ".gnupg",
-    ".config",
-    ".git",
-    ".venv",
-    "node_modules",
-    "__pycache__",
-    ".mcp_trash",
-}
-
-BLOCKED_FILE_PATTERNS = [
-    ".env",
-    ".env.*",
-    "*.pem",
-    "*.key",
-    "id_rsa",
-    "id_ed25519",
-    ".git-credentials",
-    "credentials",
-    "credentials.json",
-]
-
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -595,6 +571,10 @@ def apply_command(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
     argv = step.get("argv")
     if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
         raise ValueError("Invalid command argv")
+    argv = _validate_exec_argv(argv)
+    risk, reason = _classify_exec_command(cwd, argv)
+    if risk == "blocked":
+        raise PermissionError(f"blocked command cannot be applied: {reason}")
 
     timeout = int(step.get("timeout_seconds", 60))
     print(f"running command: {argv}")

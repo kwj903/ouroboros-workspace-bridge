@@ -97,26 +97,13 @@ TEXT_PAYLOAD_CHUNK_MAX_CHARS = 32_000
 TEXT_PAYLOAD_MAX_TOTAL_CHARS = 1_000_000
 
 BLOCKED_DIR_NAMES = {
-    ".ssh",
     ".aws",
     ".gnupg",
-    ".config",
     ".git",
-    ".venv",
-    "node_modules",
-    "__pycache__",
-    ".mcp_trash",
 }
 
 BLOCKED_FILE_PATTERNS = [
     ".env",
-    "*.pem",
-    "*.key",
-    "id_rsa",
-    "id_ed25519",
-    ".git-credentials",
-    "credentials",
-    "credentials.json",
 ]
 
 SAFE_ARG_FLAGS = {
@@ -135,17 +122,9 @@ SAFE_ARG_FLAGS = {
 BLOCKED_EXECUTABLES = {
     "sudo",
     "su",
-    "ssh",
-    "scp",
-    "sftp",
-    "rsync",
-    "launchctl",
-    "osascript",
     "diskutil",
     "dd",
     "mkfs",
-    "killall",
-    "pkill",
 }
 
 APPROVAL_REQUIRED_EXECUTABLES = {
@@ -153,6 +132,17 @@ APPROVAL_REQUIRED_EXECUTABLES = {
     "sh",
     "zsh",
     "curl",
+    "chmod",
+    "chown",
+    "killall",
+    "launchctl",
+    "osascript",
+    "pkill",
+    "rm",
+    "rsync",
+    "scp",
+    "sftp",
+    "ssh",
     "wget",
     "pip",
     "pip3",

@@ -37,8 +37,14 @@ Start with **Normal** mode.
 | Mode | Meaning |
 | --- | --- |
 | Normal | Manual review for every pending bundle. |
-| Safe Auto | Conservative handling for simple low-risk checks. |
-| YOLO | Faster mode for short trusted sessions only. |
+| Safe Auto | Conservative handling for simple low-risk command checks. |
+| YOLO | Auto-approves pending bundles unless they are hard-blocked. Use it only for trusted development sessions. |
+
+YOLO is intentionally more flexible for local development. The hard-blocked set is narrow:
+
+- Still hard-blocked: paths outside `WORKSPACE_ROOT`, exact `.env`, `.git`, `.aws`, `.gnupg`, `sudo`, `su`, `dd`, `mkfs`, `diskutil`.
+- Not hard-blocked for development flow: `.env.example`, `.env.local`, `.ssh`, `.venv`, `node_modules`, `ssh`, `scp`, `sftp`, `rsync`, shell `-c/-lc`, package install/sync commands, and ordinary git operations.
+- Non-blocked work may still be labeled `medium` or `high` risk. YOLO may auto-approve those bundles, while Safe Auto remains conservative.
 
 If a red warning is shown, it usually means the current approval mode is less conservative. Switch back to **Normal** unless you intentionally changed it.
 

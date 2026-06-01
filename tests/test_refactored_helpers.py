@@ -5,8 +5,10 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from uuid import uuid4
 
+from scripts import command_bundle_runner
 from terminal_bridge import (
     bundle_serialization,
     cli,
@@ -156,6 +158,18 @@ class RefactoredSafetyHelperTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             safety._resolve_workspace_path(".env")
 
+    def test_allows_former_dev_blocked_workspace_paths(self) -> None:
+        for path in (
+            ".env.example",
+            ".env.local",
+            ".ssh/config",
+            ".venv/bin/python",
+            "node_modules/pkg/index.js",
+            "__pycache__/module.pyc",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(safety._resolve_workspace_path(path), config.WORKSPACE_ROOT / path)
+
     def test_relative_workspace_root(self) -> None:
         self.assertEqual(safety._relative(config.WORKSPACE_ROOT), ".")
 
@@ -186,6 +200,69 @@ class RefactoredCommandHelperTests(unittest.TestCase):
 
         self.assertEqual(risk, "medium")
         self.assertIn("bash", reason)
+
+    def test_classifies_requested_yolo_relaxed_commands_as_non_blocked(self) -> None:
+        cases = (
+            ["ssh", "example.local"],
+            ["bash", "-lc", "echo hi"],
+            ["bash", "-lc", "cat .env.example"],
+            ["bash", "-lc", "cat .env.local"],
+            ["sh", "-c", "echo hi"],
+            ["zsh", "-lc", "echo hi"],
+            ["git", "push"],
+            ["npm", "install"],
+            ["pnpm", "install"],
+            ["uv", "sync"],
+            ["pip", "install", "package"],
+            ["rm", "build/output.txt"],
+            ["chmod", "600", "README.md"],
+            ["chown", "user", "README.md"],
+            ["launchctl", "list"],
+            ["osascript", "-e", "return 1"],
+            ["killall", "ExampleApp"],
+            ["pkill", "ExampleApp"],
+            ["curl", "https://example.invalid"],
+            ["wget", "https://example.invalid"],
+        )
+
+        for argv in cases:
+            with self.subTest(argv=argv):
+                risk, _reason = commands._classify_exec_command(config.PROJECT_ROOT, list(argv))
+                self.assertIn(risk, {"medium", "high"})
+
+    def test_classifies_development_paths_as_non_blocked(self) -> None:
+        for path in (
+            ".env.example",
+            ".env.local",
+            ".ssh/config",
+            ".venv/bin/python",
+            "node_modules/pkg/index.js",
+            "__pycache__/module.pyc",
+        ):
+            with self.subTest(path=path):
+                risk, _reason = commands._classify_exec_command(config.PROJECT_ROOT, ["cat", path])
+                self.assertNotEqual(risk, "blocked")
+
+    def test_classifies_hard_blocked_paths_and_executables(self) -> None:
+        blocked_cases = (
+            ["cat", ".env"],
+            ["cat", ".git/config"],
+            ["cat", ".aws/credentials"],
+            ["cat", ".gnupg/pubring.kbx"],
+            ["cat", "/tmp/outside-workspace"],
+            ["bash", "-lc", "cat .env"],
+            ["bash", "-lc", "cat /tmp/outside-workspace"],
+            ["sudo", "ls"],
+            ["su", "user"],
+            ["dd", "if=input", "of=output"],
+            ["mkfs", "/dev/disk1"],
+            ["diskutil", "list"],
+        )
+
+        for argv in blocked_cases:
+            with self.subTest(argv=argv):
+                risk, _reason = commands._classify_exec_command(config.PROJECT_ROOT, list(argv))
+                self.assertEqual(risk, "blocked")
 
     def test_classifies_exec_commands(self) -> None:
         risk, _reason = commands._classify_exec_command(
@@ -348,6 +425,35 @@ class RefactoredBundleSerializationHelperTests(unittest.TestCase):
 
         with self.assertRaises(PermissionError):
             bundle_serialization._resolve_bundle_file_action_path(config.PROJECT_ROOT, ".env")
+
+    def test_allows_dev_bundle_file_action_paths(self) -> None:
+        for path in (".env.example", ".env.local", ".venv/bin/python", "node_modules/pkg/index.js", ".ssh/config"):
+            with self.subTest(path=path):
+                resolved = bundle_serialization._resolve_bundle_file_action_path(config.PROJECT_ROOT, path)
+
+                self.assertNotEqual(resolved, "")
+
+
+class CommandBundleRunnerSafetyTests(unittest.TestCase):
+    def test_runner_uses_shared_blocked_file_policy(self) -> None:
+        self.assertTrue(command_bundle_runner.is_blocked_name(".env"))
+        self.assertFalse(command_bundle_runner.is_blocked_name(".env.example"))
+        self.assertFalse(command_bundle_runner.is_blocked_name(".env.local"))
+
+    def test_runner_file_paths_allow_dev_locations(self) -> None:
+        for path in (".env.example", ".env.local", ".venv/bin/python", "node_modules/pkg/index.js", ".ssh/config"):
+            with self.subTest(path=path):
+                self.assertEqual(command_bundle_runner.resolve_file_path(path), config.WORKSPACE_ROOT / path)
+
+    def test_runner_rechecks_hard_blocked_command_before_apply(self) -> None:
+        with mock.patch("scripts.command_bundle_runner.subprocess.run") as run:
+            with self.assertRaises(PermissionError):
+                command_bundle_runner.apply_command(
+                    config.PROJECT_ROOT,
+                    {"name": "sudo", "argv": ["sudo", "ls"], "risk": "high"},
+                )
+
+            run.assert_not_called()
 
 
 class RefactoredPatchHelperTests(unittest.TestCase):

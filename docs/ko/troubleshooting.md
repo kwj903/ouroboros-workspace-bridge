@@ -88,6 +88,32 @@ uv run woojae status
 
 `server.py` 또는 MCP tool schema가 바뀌었다면 ChatGPT 앱에서 MCP 연결도 refresh하세요.
 
+## ChatGPT tool로 세션 재시작을 실행했을 때 연결이 끊김
+
+증상:
+
+- ChatGPT가 `uv run woojae restart-session` 같은 세션 재시작 bundle을 만든 뒤 MCP 연결이 끊깁니다.
+- review UI에 재시작 bundle이 pending, rejected, failed 이력으로 남아 보일 수 있습니다.
+
+이것은 대부분 정상적인 부작용입니다. MCP 서버가 자기 자신을 재시작하면 현재 ChatGPT tool connection도 함께 끊길 수 있습니다.
+
+권장 복구:
+
+```bash
+uv run woojae status
+uv run woojae start
+# 또는
+uv run woojae restart-session
+```
+
+그 다음 ChatGPT 앱에서 MCP 연결을 refresh하고, ChatGPT에서 `workspace_transport_probe` 또는 `workspace_git_status` 같은 읽기 도구로 연결을 확인합니다.
+
+권장 운영 방식:
+
+- MCP/review/ngrok 전체 세션 재시작은 가능하면 로컬 터미널에서 직접 실행합니다.
+- ChatGPT tool proposal로 서버 자체를 재시작하는 방식은 연결이 끊겨 상태 반영이 꼬일 수 있으므로 디버깅 목적이 아니면 피합니다.
+- rejected 또는 failed로 남은 재시작 bundle은 이미 처리된 이력일 수 있으므로 `/history`와 bundle status를 함께 확인합니다.
+
 ## ngrok 연결 문제
 
 증상:

@@ -19,6 +19,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Refactored review server internals by extracting bundle state helpers and audit loading/sanitization helpers while preserving route, rendering, and approval behavior.
 - Added `ruff` as a dev dependency, documented exploratory touched-file linting, and cleaned the targeted `server.py` / review server import baseline.
 - Restored `graphify-out/` and `.graphify_*` ignore rules before public push preparation.
+- Relaxed YOLO hard-block classification to keep only workspace escapes, exact `.env`, `.git`, `.aws`, `.gnupg`, and destructive disk/admin executables blocked while routing risky development commands through approval risk levels.
 
 ### Verified
 

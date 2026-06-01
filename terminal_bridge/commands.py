@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 from pathlib import Path
 from typing import Literal
 
@@ -172,16 +173,24 @@ def _classify_exec_command(
 
         return _is_blocked_name(candidate.name)
 
+    def shell_body_touches_blocked_location(body: str) -> bool:
+        try:
+            tokens = shlex.split(body, comments=False, posix=True)
+        except ValueError:
+            return False
+
+        return any(pathish_arg_touches_blocked_location(token) for token in tokens)
+
     executable = Path(argv[0]).name
     command_text = " ".join(argv)
 
     if executable in BLOCKED_EXECUTABLES:
         return "blocked", f"Executable is blocked: {executable}"
 
-    if executable in {"bash", "sh", "zsh"} and "-c" in argv[1:]:
-        return "blocked", "Shell -c execution is blocked in workspace_exec."
-
     shell_body_index = _shell_command_body_index(argv)
+    if shell_body_index is not None and shell_body_touches_blocked_location(argv[shell_body_index]):
+        return "blocked", "Shell command body touches a blocked or out-of-workspace path."
+
     path_args = [arg for index, arg in enumerate(argv[1:], 1) if index != shell_body_index]
     if any(pathish_arg_touches_blocked_location(arg) for arg in path_args):
         return "blocked", "Command argument touches a blocked or out-of-workspace path."

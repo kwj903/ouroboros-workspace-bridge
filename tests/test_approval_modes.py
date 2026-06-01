@@ -130,6 +130,14 @@ class ApprovalModeDecisionTests(unittest.TestCase):
 
         self.assertTrue(approval_modes.should_auto_approve(record, "yolo"))
 
+    def test_yolo_allows_relaxed_development_paths(self) -> None:
+        for path in (".env.example", ".env.local", ".ssh/config", ".venv/bin/python", "node_modules/pkg/index.js"):
+            with self.subTest(path=path):
+                record = bundle_record(risk="high", steps=[{"type": "write_file", "risk": "medium", "path": path}])
+
+                self.assertFalse(approval_modes.bundle_touches_sensitive_path(record))
+                self.assertTrue(approval_modes.should_auto_approve(record, "yolo"))
+
     def test_yolo_rejects_blocked_bundles(self) -> None:
         record = bundle_record(risk="blocked")
 
@@ -139,6 +147,12 @@ class ApprovalModeDecisionTests(unittest.TestCase):
         record = bundle_record(risk="high", steps=[{"type": "write_file", "risk": "medium", "path": ".env"}])
 
         self.assertFalse(approval_modes.should_auto_approve(record, "yolo"))
+
+        for path in (".git/config", ".aws/credentials", ".gnupg/pubring.kbx"):
+            with self.subTest(path=path):
+                record = bundle_record(risk="high", steps=[{"type": "write_file", "risk": "medium", "path": path}])
+
+                self.assertFalse(approval_modes.should_auto_approve(record, "yolo"))
 
 
 class ApprovalModeReviewUiTests(unittest.TestCase):

@@ -21,11 +21,23 @@ class WorkspacePathSafetyTests(unittest.TestCase):
 
     def test_rejects_blocked_directory(self) -> None:
         with self.assertRaises(PermissionError):
-            server._resolve_workspace_path(".ssh/config")
+            server._resolve_workspace_path(".git/config")
 
     def test_rejects_secret_like_file(self) -> None:
         with self.assertRaises(PermissionError):
             server._resolve_workspace_path("project/.env")
+
+    def test_allows_development_and_example_secret_paths(self) -> None:
+        for path in (
+            ".env.example",
+            ".env.local",
+            ".ssh/config",
+            ".venv/bin/python",
+            "node_modules/pkg/index.js",
+            "__pycache__/module.pyc",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(server._resolve_workspace_path(path), config.WORKSPACE_ROOT / path)
 
 
 class PatchPathSafetyTests(unittest.TestCase):
@@ -57,6 +69,11 @@ class PatchPathSafetyTests(unittest.TestCase):
     def test_validate_patch_paths_rejects_secrets(self) -> None:
         with self.assertRaises(PermissionError):
             server._validate_patch_paths(config.PROJECT_ROOT, [".env"])
+
+    def test_validate_patch_paths_allows_env_examples(self) -> None:
+        for path in (".env.example", ".env.local"):
+            with self.subTest(path=path):
+                server._validate_patch_paths(config.PROJECT_ROOT, [path])
 
 
 class OperationIdTests(unittest.TestCase):

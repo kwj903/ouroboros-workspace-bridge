@@ -41,17 +41,23 @@ Approval mode는 pending bundle을 얼마나 자동으로 처리할지 정하는
 | --- | --- | --- |
 | Normal | 모든 pending bundle을 사용자가 직접 승인합니다. | 처음 사용하는 사용자, 안전이 중요한 작업 |
 | Safe Auto | 보수적으로 low-risk command-only 확인 bundle만 자동 승인될 수 있습니다. | 흐름에 익숙해진 뒤 반복 확인이 많을 때 |
-| YOLO | blocked-risk를 제외한 pending bundle이 자동 승인될 수 있습니다. | 짧고 신뢰할 수 있는 세션에서만 임시 사용 |
+| YOLO | hard-blocked bundle을 제외한 pending bundle이 자동 승인될 수 있습니다. | 신뢰할 수 있는 개발 세션에서 빠르게 진행할 때 |
 
 처음 사용할 때는 **Normal**을 권장합니다.
 
-YOLO는 빠르지만 위험합니다. 켜져 있으면 화면 상단에 다음과 같은 경고가 보일 수 있습니다.
+YOLO는 개발 작업을 빠르게 진행하기 위한 모드입니다. 현재 hard block은 의도적으로 좁게 유지됩니다.
+
+- 계속 hard-blocked: `WORKSPACE_ROOT` 밖 경로, 정확한 `.env`, `.git`, `.aws`, `.gnupg`, `sudo`, `su`, `dd`, `mkfs`, `diskutil`
+- hard-blocked가 아닌 개발 작업: `.env.example`, `.env.local`, `.ssh`, `.venv`, `node_modules`, `ssh`, `scp`, `sftp`, `rsync`, shell `-c/-lc`, package install/sync, 일반 git 작업
+- hard-blocked가 아닌 작업도 필요하면 `medium` 또는 `high` risk로 표시될 수 있습니다. YOLO에서는 이런 pending bundle이 자동 승인될 수 있고, Safe Auto에서는 계속 보수적으로 다룹니다.
+
+YOLO가 켜져 있으면 화면 상단에 다음과 같은 경고가 보일 수 있습니다.
 
 ```text
 YOLO mode is ON. Pending bundles may be auto-approved except blocked-risk bundles.
 ```
 
-이 메시지는 오류가 아니라 현재 승인 모드가 자동 승인에 가까운 위험한 상태라는 알림입니다. 의도한 상황이 아니라면 **Normal**로 되돌리세요.
+이 메시지는 오류가 아니라 현재 승인 모드가 자동 승인에 가까운 상태라는 알림입니다. 의도한 상황이 아니라면 **Normal**로 되돌리세요.
 
 ## 승인 대기 번들이 없을 때
 

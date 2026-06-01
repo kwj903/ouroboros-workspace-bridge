@@ -91,6 +91,32 @@ uv run woojae status
 
 If `server.py` or MCP tool schemas changed, refresh the MCP connection in the ChatGPT app after restart.
 
+## Connection drops after restarting the session from ChatGPT
+
+Symptoms:
+
+- ChatGPT creates a session restart bundle such as `uv run woojae restart-session`, then the MCP connection drops.
+- The review UI may still show that restart bundle in pending, rejected, or failed history.
+
+This is usually an expected side effect. When the MCP server restarts itself, the active ChatGPT tool connection can be interrupted.
+
+Recommended recovery:
+
+```bash
+uv run woojae status
+uv run woojae start
+# or
+uv run woojae restart-session
+```
+
+Then refresh the MCP connection in the ChatGPT app and confirm the connection with a read-only tool such as `workspace_transport_probe` or `workspace_git_status`.
+
+Recommended operating rule:
+
+- Restart the full MCP/review/ngrok session from a local terminal when possible.
+- Avoid restarting the server through a ChatGPT tool proposal unless you are intentionally debugging the restart flow.
+- A rejected or failed restart bundle may be an already-processed history item. Check `/history` and the bundle status together.
+
 ## ngrok is not connected
 
 Symptoms:
