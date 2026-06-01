@@ -14,6 +14,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Purpose-specific public proposal tools: `workspace_propose_command_and_wait`, `workspace_propose_file_write_and_wait`, `workspace_propose_file_replace_and_wait`, `workspace_propose_patch_and_wait`, `workspace_propose_git_commit_and_wait`, and `workspace_propose_git_push_and_wait`.
 - Optional proposal metadata inputs (`task_id`, `client_id`, `session_id`, `project_id`, `workspace_mode`) for direct-mode proposal routing and filtering.
 - Scoped approval mode storage and effective lookup for project, client, and task-specific Safe Auto/YOLO settings.
+- Task workspace runtime record foundation with public MCP helpers `workspace_prepare_task_workspace`, `workspace_task_workspace_status`, and `workspace_list_task_workspaces`.
 
 ### Changed
 
@@ -21,6 +22,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Review UI bundle cards now show the effective approval mode and scope used for that bundle.
 - Review UI pending settings include a scoped approval override form and a saved scoped override list with delete actions.
 - Proposal metadata now accepts `workspace_mode="task-workspace"` when a `task_id` is provided, preparing the metadata foundation for isolated task workspaces.
+- Review UI bundle cards now show task workspace status for `workspace_mode="task-workspace"` bundles.
 - User documentation now explains help language selection, `WOOJAE_HELP_LANG`, and Korean help usage.
 - Default public MCP tool guidance now favors small proposal wrapper tools while keeping the generic bundle functions internally available.
 - Refactored MCP tool helper implementations out of `server.py` into `terminal_bridge/mcp_tools/` modules while preserving public MCP tool names, wrappers, signatures, schemas, approval flow, and runner behavior.

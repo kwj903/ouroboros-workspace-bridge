@@ -1,0 +1,331 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+from terminal_bridge.bundles import _default_command_bundle_metadata, _normalize_command_bundle_metadata
+from terminal_bridge.config import TASK_WORKSPACES_DIR, WORKSPACE_ROOT
+from terminal_bridge.storage import _now_iso, _read_json, _write_json
+from terminal_bridge.tasks import _normalize_task_id
+
+
+TASK_WORKSPACE_MODE = "task-workspace"
+TASK_WORKSPACE_RECORD_NAME = "workspace.json"
+TASK_WORKSPACE_REPO_DIR_NAME = "repo"
+
+
+@dataclass(frozen=True)
+class TaskWorkspaceResolution:
+    workspace_mode: str
+    status: str
+    reason: str
+    exists: bool
+    task_id: str | None = None
+    project_id: str | None = None
+    source_cwd: str | None = None
+    workspace_key: str | None = None
+    workspace_path: str | None = None
+    record_path: str | None = None
+    record: dict[str, object] | None = None
+
+    def as_dict(self) -> dict[str, object | None]:
+        return {
+            "workspace_mode": self.workspace_mode,
+            "status": self.status,
+            "reason": self.reason,
+            "exists": self.exists,
+            "task_id": self.task_id,
+            "project_id": self.project_id,
+            "source_cwd": self.source_cwd,
+            "workspace_key": self.workspace_key,
+            "workspace_path": self.workspace_path,
+            "record_path": self.record_path,
+            "record": self.record,
+        }
+
+
+def _task_workspace_root(runtime_root: Path | None = None) -> Path:
+    if runtime_root is None:
+        return TASK_WORKSPACES_DIR.expanduser().resolve(strict=False)
+    return (runtime_root.expanduser() / "task_workspaces").resolve(strict=False)
+
+
+def _normalize_project_id(project_id: object | None, source_cwd: str) -> str:
+    if project_id is None:
+        return str(_default_command_bundle_metadata(source_cwd)["project_id"])
+    if not isinstance(project_id, str):
+        raise ValueError("project_id must be a string when provided.")
+
+    normalized = project_id.strip()
+    if not normalized:
+        return str(_default_command_bundle_metadata(source_cwd)["project_id"])
+    if len(normalized) > 256:
+        raise ValueError("project_id is too long.")
+    if "/" in normalized or "\\" in normalized or "\x00" in normalized:
+        raise ValueError("project_id cannot contain path separators.")
+    return normalized
+
+
+def _resolve_source_cwd(cwd: object, *, workspace_root: Path = WORKSPACE_ROOT) -> tuple[str, Path]:
+    root = workspace_root.expanduser().resolve(strict=False)
+    raw_text = "." if cwd is None else str(cwd).strip() or "."
+    raw = Path(raw_text).expanduser()
+    if raw.is_absolute():
+        raise ValueError("source_cwd must be a relative path under WORKSPACE_ROOT.")
+
+    candidate = (root / raw).resolve(strict=False)
+    if candidate != root and not candidate.is_relative_to(root):
+        raise ValueError("source_cwd escapes WORKSPACE_ROOT.")
+
+    relative = "." if candidate == root else str(candidate.relative_to(root))
+    return relative, candidate
+
+
+def _workspace_key(task_id: str, project_id: str, source_cwd: str) -> str:
+    payload = json.dumps(
+        {
+            "project_id": project_id,
+            "source_cwd": source_cwd,
+            "task_id": task_id,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+    return f"{task_id}-{digest}"
+
+
+def _task_workspace_paths(
+    task_id: object,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+) -> dict[str, object]:
+    normalized_task_id = _normalize_task_id(str(task_id or ""))
+    source_cwd, source_path = _resolve_source_cwd(cwd, workspace_root=workspace_root)
+    normalized_project_id = _normalize_project_id(project_id, source_cwd)
+    key = _workspace_key(normalized_task_id, normalized_project_id, source_cwd)
+    root = _task_workspace_root(runtime_root)
+    workspace_dir = (root / key).resolve(strict=False)
+    workspace_path = (workspace_dir / TASK_WORKSPACE_REPO_DIR_NAME).resolve(strict=False)
+    record_path = (workspace_dir / TASK_WORKSPACE_RECORD_NAME).resolve(strict=False)
+
+    for path in (workspace_dir, workspace_path, record_path):
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("task workspace path resolves outside task workspace root.") from exc
+
+    return {
+        "task_id": normalized_task_id,
+        "project_id": normalized_project_id,
+        "source_cwd": source_cwd,
+        "source_path": source_path,
+        "workspace_key": key,
+        "workspace_dir": workspace_dir,
+        "workspace_path": workspace_path,
+        "record_path": record_path,
+    }
+
+
+def _record_with_current_status(record: dict[str, object]) -> dict[str, object]:
+    refreshed = dict(record)
+    raw_workspace_path = str(refreshed.get("workspace_path") or "").strip()
+    exists = bool(raw_workspace_path) and Path(raw_workspace_path).exists()
+    if refreshed.get("status") != "archived":
+        refreshed["status"] = "created" if exists else "missing"
+    refreshed["exists"] = exists
+    return refreshed
+
+
+def _missing_record(fields: dict[str, object]) -> dict[str, object]:
+    return {
+        "task_id": fields["task_id"],
+        "project_id": fields["project_id"],
+        "source_cwd": fields["source_cwd"],
+        "workspace_mode": TASK_WORKSPACE_MODE,
+        "workspace_key": fields["workspace_key"],
+        "workspace_path": str(fields["workspace_path"]),
+        "record_path": str(fields["record_path"]),
+        "worktree_branch": f"task/{fields['workspace_key']}",
+        "status": "missing",
+        "exists": False,
+        "created_at": "",
+        "updated_at": "",
+    }
+
+
+def prepare_task_workspace(
+    task_id: str,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+) -> dict[str, object]:
+    fields = _task_workspace_paths(
+        task_id,
+        cwd=cwd,
+        project_id=project_id,
+        runtime_root=runtime_root,
+        workspace_root=workspace_root,
+    )
+    source_path = fields["source_path"]
+    if not isinstance(source_path, Path) or not source_path.exists() or not source_path.is_dir():
+        raise NotADirectoryError(f"source_cwd does not exist or is not a directory: {fields['source_cwd']}")
+
+    record_path = fields["record_path"]
+    existing: dict[str, object] = {}
+    if isinstance(record_path, Path) and record_path.exists():
+        existing = _read_json(record_path)
+
+    now = _now_iso()
+    workspace_path = fields["workspace_path"]
+    if not isinstance(workspace_path, Path):
+        raise ValueError("Invalid task workspace path.")
+    workspace_path.mkdir(parents=True, exist_ok=True)
+
+    record = {
+        "task_id": fields["task_id"],
+        "project_id": fields["project_id"],
+        "source_cwd": fields["source_cwd"],
+        "workspace_mode": TASK_WORKSPACE_MODE,
+        "workspace_key": fields["workspace_key"],
+        "workspace_path": str(workspace_path),
+        "record_path": str(record_path),
+        "worktree_branch": str(existing.get("worktree_branch") or f"task/{fields['workspace_key']}"),
+        "status": "created",
+        "exists": True,
+        "created_at": str(existing.get("created_at") or now),
+        "updated_at": now,
+    }
+    if not isinstance(record_path, Path):
+        raise ValueError("Invalid task workspace record path.")
+    _write_json(record_path, record)
+    return _record_with_current_status(record)
+
+
+def read_task_workspace(
+    task_id: str,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+) -> dict[str, object]:
+    fields = _task_workspace_paths(
+        task_id,
+        cwd=cwd,
+        project_id=project_id,
+        runtime_root=runtime_root,
+        workspace_root=workspace_root,
+    )
+    record_path = fields["record_path"]
+    if isinstance(record_path, Path) and record_path.exists():
+        return _record_with_current_status(_read_json(record_path))
+    return _missing_record(fields)
+
+
+def list_task_workspaces(
+    *,
+    project_id: str | None = None,
+    runtime_root: Path | None = None,
+) -> list[dict[str, object]]:
+    root = _task_workspace_root(runtime_root)
+    normalized_project_id = project_id.strip() if isinstance(project_id, str) and project_id.strip() else None
+    if normalized_project_id is not None:
+        _normalize_project_id(normalized_project_id, ".")
+
+    rows: list[dict[str, object]] = []
+    if not root.exists():
+        return rows
+
+    for path in sorted(root.glob(f"*/{TASK_WORKSPACE_RECORD_NAME}")):
+        try:
+            record = _record_with_current_status(_read_json(path))
+        except Exception:
+            continue
+        if normalized_project_id is not None and record.get("project_id") != normalized_project_id:
+            continue
+        rows.append(record)
+
+    rows.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+    return rows
+
+
+def archive_task_workspace(
+    task_id: str,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+) -> dict[str, object]:
+    record = read_task_workspace(
+        task_id,
+        cwd=cwd,
+        project_id=project_id,
+        runtime_root=runtime_root,
+        workspace_root=workspace_root,
+    )
+    if not record.get("created_at"):
+        raise FileNotFoundError(f"Task workspace not found: {task_id}")
+    record["status"] = "archived"
+    record["updated_at"] = _now_iso()
+    _write_json(Path(str(record["record_path"])), record)
+    return _record_with_current_status(record)
+
+
+def resolve_task_workspace_for_bundle(
+    record: dict[str, object] | None,
+    *,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+) -> TaskWorkspaceResolution:
+    normalized_record = record if isinstance(record, dict) else {"cwd": "."}
+    metadata = _normalize_command_bundle_metadata(normalized_record)
+    workspace_mode = str(metadata.get("workspace_mode") or "direct").strip() or "direct"
+    if workspace_mode != TASK_WORKSPACE_MODE:
+        return TaskWorkspaceResolution(
+            workspace_mode=workspace_mode,
+            status="skipped",
+            reason="direct-mode",
+            exists=False,
+            task_id=metadata.get("task_id") if isinstance(metadata.get("task_id"), str) else None,
+            project_id=metadata.get("project_id") if isinstance(metadata.get("project_id"), str) else None,
+            source_cwd=metadata.get("source_cwd") if isinstance(metadata.get("source_cwd"), str) else None,
+        )
+
+    task_id = metadata.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("workspace_mode='task-workspace' requires task_id.")
+
+    source_cwd = metadata.get("source_cwd") if isinstance(metadata.get("source_cwd"), str) else normalized_record.get("cwd", ".")
+    project_id = metadata.get("project_id") if isinstance(metadata.get("project_id"), str) else None
+    workspace_record = read_task_workspace(
+        task_id,
+        cwd=source_cwd,
+        project_id=project_id,
+        runtime_root=runtime_root,
+        workspace_root=workspace_root,
+    )
+    status = str(workspace_record.get("status") or "missing")
+    exists = bool(workspace_record.get("exists"))
+    return TaskWorkspaceResolution(
+        workspace_mode=TASK_WORKSPACE_MODE,
+        status=status,
+        reason="found" if exists else "missing",
+        exists=exists,
+        task_id=str(workspace_record.get("task_id") or task_id),
+        project_id=str(workspace_record.get("project_id") or project_id or ""),
+        source_cwd=str(workspace_record.get("source_cwd") or source_cwd or "."),
+        workspace_key=str(workspace_record.get("workspace_key") or ""),
+        workspace_path=str(workspace_record.get("workspace_path") or ""),
+        record_path=str(workspace_record.get("record_path") or ""),
+        record=workspace_record if exists else None,
+    )

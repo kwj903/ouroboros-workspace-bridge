@@ -386,7 +386,7 @@ Task workspace mode는 한 서버 안에서 여러 작업을 관리하는 방식
 - `workspace_list_command_bundles`와 `workspace_list_handoffs`는 task/client/session/project/workspace mode metadata filter를 지원한다.
 - Review UI는 pending/history/detail/latest handoff 카드에 metadata badge를 표시하고 `/pending`, `/history`, `/bundles`에서 query-parameter metadata filter를 지원한다.
 - Phase 2-A에서 direct-mode public proposal wrappers의 optional metadata 입력이 완료되었다.
-- 현재 `workspace_mode` 입력은 `direct`만 허용한다. `task-workspace` mode는 아직 활성화하지 않고 다음 큰 단계에서 다룬다.
+- 이후 Phase 3 metadata slice에서 `workspace_mode="task-workspace"` 입력은 `task_id`가 있을 때 허용되도록 확장되었다. 기본값과 기존 단일 작업 workflow는 계속 `direct`이다.
 
 Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 
@@ -421,7 +421,7 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - 자동 승인 watcher는 pending bundle metadata의 `task_id`, `client_id`, `project_id`를 기준으로 `task > client > project > global` 우선순위를 적용한다.
 - 기존 global approval mode 저장과 기본값 `normal`은 fallback으로 유지된다.
 - Review UI는 bundle별 effective approval mode와 scope를 표시한다.
-- 이 단계에서는 `task-workspace` mode를 활성화하지 않는다.
+- Phase 2 자체에서는 `task-workspace` mode를 활성화하지 않았다. 이후 Phase 3 metadata slice에서 `task_id` 조건부 `task-workspace` metadata가 허용되었다.
 
 성공 기준:
 
@@ -441,6 +441,14 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 4. task diff/test/log 조회 도구 추가.
 5. task result를 `ready_to_merge` 상태로 올리는 흐름 추가.
 6. 작업 보드 UI 추가.
+
+구현 상태:
+
+- Phase 3 metadata foundation은 `task_id`가 있을 때 proposal metadata의 `workspace_mode="task-workspace"`를 허용한다.
+- Phase 3-B는 runtime task workspace record/directory foundation을 추가했다. Record는 `runtime/task_workspaces/<task_id>-<hash>/workspace.json`에 저장되고, workspace path는 같은 directory의 `repo` 하위 경로로 계산된다.
+- Public MCP helper로 `workspace_prepare_task_workspace`, `workspace_task_workspace_status`, `workspace_list_task_workspaces`를 제공한다.
+- Review UI는 `task-workspace` bundle에 대해 workspace record가 `created`인지 `missing`인지 표시한다.
+- 아직 실제 `git worktree` 생성, runner의 task workspace apply, merge queue는 구현하지 않았다.
 
 성공 기준:
 

@@ -104,6 +104,8 @@ from terminal_bridge.models import (
     SearchTextResult,
     TaskListResult,
     TaskStatusResult,
+    TaskWorkspaceListResult,
+    TaskWorkspaceStatusResult,
     TextPayloadStageResult,
     ToolCallListResult,
     ToolCallStatusResult,
@@ -197,6 +199,11 @@ from terminal_bridge.tasks import (
     _read_task,
     _task_path,
     _write_task,
+)
+from terminal_bridge.task_workspaces import (
+    list_task_workspaces as _list_task_workspaces,
+    prepare_task_workspace as _prepare_task_workspace,
+    read_task_workspace as _read_task_workspace,
 )
 from terminal_bridge.tool_calls import list_tool_calls as _list_tool_call_records
 from terminal_bridge.tool_calls import read_tool_call as _read_tool_call_record
@@ -953,6 +960,9 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_task_update_plan",
     "workspace_task_finish",
     "workspace_list_tasks",
+    "workspace_prepare_task_workspace",
+    "workspace_task_workspace_status",
+    "workspace_list_task_workspaces",
     "workspace_stage_text_payload",
     "workspace_propose_command_and_wait",
     "workspace_propose_file_write_and_wait",
@@ -2054,6 +2064,80 @@ def workspace_list_tasks(
 ) -> TaskListResult:
     """List recent task records, newest first."""
     return _status_list_tasks(_ensure_runtime_dirs, _list_task_paths, limit)
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_prepare_task_workspace(
+    task_id: Annotated[str, Field(description="Task id for the isolated task workspace.")],
+    cwd: Annotated[str, Field(description="Relative source workspace directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+) -> TaskWorkspaceStatusResult:
+    """Create or refresh a runtime task workspace record and empty isolated repo directory.
+
+    This prepares the runtime bookkeeping for task-workspace mode only. It does not
+    create a git worktree, copy source files, merge changes, or change runner apply
+    behavior.
+    """
+    return _record_tool_call(
+        "workspace_prepare_task_workspace",
+        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
+        lambda: TaskWorkspaceStatusResult(**_prepare_task_workspace(task_id, cwd=cwd, project_id=project_id)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_task_workspace_status(
+    task_id: Annotated[str, Field(description="Task id for the isolated task workspace.")],
+    cwd: Annotated[str, Field(description="Relative source workspace directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+) -> TaskWorkspaceStatusResult:
+    """Return the task workspace record status for a task/source/project tuple."""
+    return _record_tool_call(
+        "workspace_task_workspace_status",
+        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
+        lambda: TaskWorkspaceStatusResult(**_read_task_workspace(task_id, cwd=cwd, project_id=project_id)),
+    )
+
+
+def _task_workspace_list_result(project_id: str | None = None) -> TaskWorkspaceListResult:
+    records = _list_task_workspaces(project_id=project_id)
+    return TaskWorkspaceListResult(
+        entries=[TaskWorkspaceStatusResult(**record) for record in records],
+        count=len(records),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_list_task_workspaces(
+    project_id: Annotated[str | None, Field(description="Optional exact project id filter. Empty strings are ignored.")] = None,
+) -> TaskWorkspaceListResult:
+    """List known runtime task workspace records."""
+    return _record_tool_call(
+        "workspace_list_task_workspaces",
+        {"project_id": project_id},
+        lambda: _task_workspace_list_result(project_id),
+    )
 
 
 @mcp.tool(

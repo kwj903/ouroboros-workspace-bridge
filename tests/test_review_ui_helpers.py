@@ -18,6 +18,7 @@ from terminal_bridge import approval_modes, config, handoffs, safety, tool_calls
 from terminal_bridge import review_layout
 from terminal_bridge import review_intents as intents
 from terminal_bridge import review_notifications as notifications
+from terminal_bridge.task_workspaces import TaskWorkspaceResolution
 
 
 class ReviewServerHelperTests(unittest.TestCase):
@@ -115,6 +116,46 @@ class ReviewServerHelperTests(unittest.TestCase):
 
         self.assertIn("project: sha256:12345678", html)
         self.assertNotIn("1234567890abcdef", html)
+
+    def test_bundle_task_workspace_html_skips_direct_mode(self) -> None:
+        html = review.bundle_task_workspace_html(
+            {
+                "bundle_id": "cmd-direct",
+                "cwd": ".",
+                "metadata": {"workspace_mode": "direct", "task_id": "task-a"},
+            }
+        )
+
+        self.assertEqual(html, "")
+
+    def test_bundle_task_workspace_html_renders_resolution(self) -> None:
+        record = {
+            "bundle_id": "cmd-task",
+            "cwd": ".",
+            "metadata": {
+                "workspace_mode": "task-workspace",
+                "task_id": "task-a",
+                "project_id": "project-alpha",
+            },
+        }
+        resolution = TaskWorkspaceResolution(
+            workspace_mode="task-workspace",
+            status="missing",
+            reason="missing",
+            exists=False,
+            task_id="task-a",
+            project_id="project-alpha",
+            source_cwd=".",
+            workspace_key="task-a-123456789abc",
+            workspace_path=str(review.RUNTIME_ROOT / "task_workspaces" / "task-a-123456789abc" / "repo"),
+            record_path=str(review.RUNTIME_ROOT / "task_workspaces" / "task-a-123456789abc" / "workspace.json"),
+        )
+
+        with patch.object(review, "resolve_task_workspace_for_bundle", lambda item: resolution):
+            html = review.bundle_task_workspace_html(record)
+
+        self.assertIn("Task workspace: missing", html)
+        self.assertIn("workspace: runtime/task_workspaces/task-a-123456789abc/repo", html)
 
     def test_bundle_metadata_filter_uses_and_conditions(self) -> None:
         rows = [

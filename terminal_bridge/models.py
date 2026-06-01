@@ -384,3 +384,23 @@ class TaskListEntry(BaseModel):
 class TaskListResult(BaseModel):
     entries: list[TaskListEntry]
     count: int
+
+
+class TaskWorkspaceStatusResult(BaseModel):
+    task_id: str
+    project_id: str
+    source_cwd: str
+    workspace_mode: str
+    workspace_key: str
+    workspace_path: str
+    record_path: str
+    worktree_branch: str | None = None
+    status: str
+    exists: bool
+    created_at: str
+    updated_at: str
+
+
+class TaskWorkspaceListResult(BaseModel):
+    entries: list[TaskWorkspaceStatusResult]
+    count: int

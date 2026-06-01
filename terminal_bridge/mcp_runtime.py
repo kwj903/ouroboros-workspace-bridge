@@ -16,6 +16,7 @@ from terminal_bridge.config import (
     OPERATION_DIR,
     RUNTIME_ROOT,
     TASK_DIR,
+    TASK_WORKSPACES_DIR,
     TEXT_PAYLOAD_DIR,
     TOOL_CALL_DIR,
     TRASH_DIR,
@@ -36,6 +37,7 @@ def _ensure_runtime_dirs() -> None:
     TRASH_DIR.mkdir(parents=True, exist_ok=True)
     OPERATION_DIR.mkdir(parents=True, exist_ok=True)
     TASK_DIR.mkdir(parents=True, exist_ok=True)
+    TASK_WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)
     TEXT_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
     TOOL_CALL_DIR.mkdir(parents=True, exist_ok=True)
     HANDOFF_DIR.mkdir(parents=True, exist_ok=True)

@@ -57,6 +57,7 @@ from terminal_bridge.review_layout import (
     normalize_server_tab,
     page,
 )
+from terminal_bridge.task_workspaces import resolve_task_workspace_for_bundle
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = PROJECT_ROOT / "scripts" / "command_bundle_runner.py"
@@ -926,6 +927,40 @@ def bundle_effective_approval_mode_html(
     )
 
 
+def compact_task_workspace_path(path: str) -> str:
+    text = str(path or "").strip()
+    if not text:
+        return ""
+    try:
+        raw = Path(text).expanduser()
+        rel = raw.relative_to(RUNTIME_ROOT.expanduser())
+        return f"runtime/{rel}"
+    except Exception:
+        return text
+
+
+def bundle_task_workspace_html(record: dict[str, object]) -> str:
+    metadata = _normalize_command_bundle_metadata(record)
+    if metadata.get("workspace_mode") != "task-workspace":
+        return ""
+
+    try:
+        resolution = resolve_task_workspace_for_bundle(record)
+    except Exception as exc:
+        return '<div class="subnav">' + status_badge(f"Task workspace: invalid ({type(exc).__name__})", "danger") + "</div>"
+
+    tone = {
+        "created": "ok",
+        "missing": "warn",
+        "archived": "neutral",
+    }.get(resolution.status, "neutral")
+    badges = [status_badge(f"Task workspace: {resolution.status}", tone)]
+    path_display = compact_task_workspace_path(resolution.workspace_path or "")
+    if path_display:
+        badges.append(status_badge(f"workspace: {path_display}", "neutral"))
+    return '<div class="subnav">' + "".join(badges) + "</div>"
+
+
 def handoff_metadata_badges_html(record: dict[str, object]) -> str:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     return metadata_badges_html(metadata)
@@ -1670,6 +1705,7 @@ def bundle_card_html(record: dict[str, object]) -> str:
       <h2><a href="/bundles/{escape(bundle_id)}">{escape(record.get("title", ""))}</a></h2>
       {bundle_metadata_badges_html(record)}
       {bundle_effective_approval_mode_html(record)}
+      {bundle_task_workspace_html(record)}
       <p class="meta">
         ID: <code>{escape(bundle_id)}</code><br>
         작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
@@ -1791,6 +1827,7 @@ def bundle_detail_html(path: Path, record: dict[str, object]) -> str:
       <h2>{escape(record.get("title", bundle_id))}</h2>
       {bundle_metadata_badges_html(record)}
       {bundle_effective_approval_mode_html(record)}
+      {bundle_task_workspace_html(record)}
       <p class="meta">
         ID: <code>{escape(bundle_id)}</code><br>
         작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
@@ -2242,6 +2279,7 @@ class Handler(BaseHTTPRequestHandler):
                       <h2><a href="/bundles/{escape(bundle_id)}">{escape(record.get("title", ""))}</a></h2>
                       {bundle_metadata_badges_html(record)}
                       {bundle_effective_approval_mode_html(record)}
+                      {bundle_task_workspace_html(record)}
                       <p class="meta">
                         ID: <code>{escape(bundle_id)}</code><br>
                         작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
