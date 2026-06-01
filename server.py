@@ -48,8 +48,19 @@ from terminal_bridge.commands import (
 )
 from terminal_bridge.config import (
     AUDIT_LOG,
+    DEFAULT_DIFF_PREVIEW_CHARS,
+    MAX_COMMAND_TIMEOUT_SECONDS,
+    MAX_DIFF_PREVIEW_CHARS,
+    MAX_EXEC_ARGV_ITEMS,
+    MAX_FIND_ENTRIES,
+    MAX_READ_CHARS,
+    MAX_READ_MANY_FILE_CHARS,
+    MAX_READ_MANY_TOTAL_CHARS,
+    MAX_SEARCH_FILE_BYTES,
+    MAX_SEARCH_MATCHES,
     MAX_STDERR_CHARS,
     MAX_STDOUT_CHARS,
+    MAX_TREE_ENTRIES,
     MAX_WRITE_CHARS,
     MCP_ACCESS_TOKEN,
     MCP_EXPOSE_DIRECT_MUTATION_TOOLS,
@@ -61,6 +72,7 @@ from terminal_bridge.config import (
     TEXT_PAYLOAD_CHUNK_MAX_CHARS,
     WORKSPACE_ROOT,
 )
+from terminal_bridge.truncation import truncate_text
 from terminal_bridge.models import (
     AuditLogResult,
     BackupListResult,
@@ -745,9 +757,7 @@ def _ensure_workspace_root_exists() -> None:
 
 
 def _truncate(text: str, limit: int) -> tuple[str, bool]:
-    if len(text) <= limit:
-        return text, False
-    return text[:limit], True
+    return truncate_text(text, limit)
 
 
 def _backup_file(path: Path) -> str | None:
@@ -1037,7 +1047,7 @@ def workspace_list(
 def workspace_tree(
     path: Annotated[str, Field(description="Relative directory path under the configured WORKSPACE_ROOT.")] = ".",
     max_depth: Annotated[int, Field(ge=1, le=5)] = 2,
-    max_entries: Annotated[int, Field(ge=1, le=300)] = 120,
+    max_entries: Annotated[int, Field(ge=1, le=MAX_TREE_ENTRIES)] = 120,
 ) -> TreeResult:
     """Return a compact tree view under the configured WORKSPACE_ROOT."""
     return _tree_workspace(path, max_depth, max_entries)
@@ -1054,7 +1064,7 @@ def workspace_tree(
 def workspace_read_file(
     path: Annotated[str, Field(description="Relative file path under the configured WORKSPACE_ROOT.")],
     offset: Annotated[int, Field(ge=0)] = 0,
-    limit: Annotated[int, Field(ge=1, le=160_000)] = 40_000,
+    limit: Annotated[int, Field(ge=1, le=MAX_READ_CHARS)] = 40_000,
 ) -> ReadFileResult:
     """Read a UTF-8 text file under the configured WORKSPACE_ROOT."""
     return _read_workspace_file(path, offset, limit)
@@ -1748,7 +1758,7 @@ def workspace_find_files(
     pattern: Annotated[str, Field(description="fnmatch pattern such as '*.py' or '*server*'.")] = "*",
     include_files: Annotated[bool, Field(description="Whether to include files.")] = True,
     include_directories: Annotated[bool, Field(description="Whether to include directories.")] = False,
-    max_entries: Annotated[int, Field(ge=1, le=300, description="Maximum matching entries to return.")] = 100,
+    max_entries: Annotated[int, Field(ge=1, le=MAX_FIND_ENTRIES, description="Maximum matching entries to return.")] = 100,
 ) -> FindFilesResult:
     """Find files or directories under the configured WORKSPACE_ROOT using a safe fnmatch pattern."""
     return _readonly_find_files(
@@ -1773,8 +1783,8 @@ def workspace_search_text(
     path: Annotated[str, Field(description="Relative directory path under the configured WORKSPACE_ROOT.")] = ".",
     file_glob: Annotated[str, Field(description="File glob such as '*.py' or '*'.")] = "*",
     case_sensitive: Annotated[bool, Field(description="Whether matching is case-sensitive.")] = False,
-    max_matches: Annotated[int, Field(ge=1, le=300, description="Maximum matches to return.")] = 100,
-    max_file_bytes: Annotated[int, Field(ge=1, le=1_000_000, description="Maximum bytes per file to scan.")] = 500_000,
+    max_matches: Annotated[int, Field(ge=1, le=MAX_SEARCH_MATCHES, description="Maximum matches to return.")] = 100,
+    max_file_bytes: Annotated[int, Field(ge=1, le=MAX_SEARCH_FILE_BYTES, description="Maximum bytes per file to scan.")] = 500_000,
 ) -> SearchTextResult:
     """Search text files under the configured WORKSPACE_ROOT for a plain text query."""
     return _readonly_search_text(
@@ -1797,8 +1807,8 @@ def workspace_search_text(
 )
 def workspace_read_many_files(
     paths: Annotated[list[str], Field(description="Relative file paths under the configured WORKSPACE_ROOT.")],
-    limit_per_file: Annotated[int, Field(ge=1, le=80_000, description="Maximum characters per file.")] = 20_000,
-    total_limit: Annotated[int, Field(ge=1, le=320_000, description="Maximum total characters to return.")] = 100_000,
+    limit_per_file: Annotated[int, Field(ge=1, le=MAX_READ_MANY_FILE_CHARS, description="Maximum characters per file.")] = 20_000,
+    total_limit: Annotated[int, Field(ge=1, le=MAX_READ_MANY_TOTAL_CHARS, description="Maximum total characters to return.")] = 100_000,
 ) -> ReadManyFilesResult:
     """Read multiple UTF-8 text files under the configured WORKSPACE_ROOT with per-file and total limits."""
     return _readonly_read_many_files(
@@ -1819,7 +1829,7 @@ def workspace_read_many_files(
 def workspace_project_snapshot(
     path: Annotated[str, Field(description="Relative project directory under the configured WORKSPACE_ROOT.")] = ".",
     max_depth: Annotated[int, Field(ge=1, le=5, description="Tree depth.")] = 2,
-    max_entries: Annotated[int, Field(ge=1, le=300, description="Tree entries.")] = 120,
+    max_entries: Annotated[int, Field(ge=1, le=MAX_TREE_ENTRIES, description="Tree entries.")] = 120,
 ) -> ProjectSnapshotResult:
     """Return a compact project snapshot: tree, key files, and git status."""
     return _readonly_project_snapshot(
@@ -2064,7 +2074,10 @@ def workspace_apply_patch(
     operation_id: Annotated[str | None, Field(description="Optional idempotency key for retry-safe patch application.")] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=120)] = 30,
     return_diff: Annotated[bool, Field(description="Whether to include git diff in the tool result. Keep false for large changes.")] = False,
-    diff_max_chars: Annotated[int, Field(ge=1, le=20_000, description="Maximum diff characters to return when return_diff is true.")] = 4_000,
+    diff_max_chars: Annotated[
+        int,
+        Field(ge=1, le=MAX_DIFF_PREVIEW_CHARS, description="Maximum diff characters to return when return_diff is true."),
+    ] = DEFAULT_DIFF_PREVIEW_CHARS,
 ) -> PatchApplyResult:
     """Apply a unified diff patch under the configured WORKSPACE_ROOT after git apply --check. Existing files are backed up first."""
     op_id, previous = _begin_operation(
@@ -2220,9 +2233,13 @@ def workspace_exec(
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     argv: Annotated[
         list[str],
-        Field(description="Command argv to run with shell=False. The first item is the executable."),
+        Field(
+            min_length=1,
+            max_length=MAX_EXEC_ARGV_ITEMS,
+            description="Command argv to run with shell=False. The first item is the executable.",
+        ),
     ],
-    timeout_seconds: Annotated[int, Field(ge=1, le=300)] = 60,
+    timeout_seconds: Annotated[int, Field(ge=1, le=MAX_COMMAND_TIMEOUT_SECONDS)] = 60,
     operation_id: Annotated[
         str | None,
         Field(description="Optional idempotency key for retry-safe command execution."),
@@ -3112,7 +3129,7 @@ def workspace_propose_command_and_wait(
         list[str],
         Field(
             min_length=1,
-            max_length=40,
+            max_length=MAX_EXEC_ARGV_ITEMS,
             description=(
                 "Exactly one argv-based command proposal. This only creates a local pending bundle. "
                 "It does not run until approved at http://127.0.0.1:8790/pending."
@@ -3123,7 +3140,7 @@ def workspace_propose_command_and_wait(
         str | None,
         Field(description="Optional display name for the command step. Defaults to title."),
     ] = None,
-    command_timeout_seconds: Annotated[int, Field(ge=1, le=300)] = 60,
+    command_timeout_seconds: Annotated[int, Field(ge=1, le=MAX_COMMAND_TIMEOUT_SECONDS)] = 60,
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:

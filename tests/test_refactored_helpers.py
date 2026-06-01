@@ -4,10 +4,13 @@ import os
 import shutil
 import tempfile
 import unittest
+from inspect import signature
 from pathlib import Path
+from typing import Any, get_args, get_type_hints
 from unittest import mock
 from uuid import uuid4
 
+import server
 from scripts import command_bundle_runner
 from terminal_bridge import (
     bundle_serialization,
@@ -21,6 +24,124 @@ from terminal_bridge import (
     tasks,
 )
 from terminal_bridge.models import CommandBundleAction, CommandBundleStep
+
+
+def _field_metadata_value(function: Any, parameter_name: str, metadata_name: str) -> object:
+    annotation = get_type_hints(function, include_extras=True)[parameter_name]
+    for annotation_arg in get_args(annotation):
+        metadata = getattr(annotation_arg, "metadata", None)
+        if metadata is None:
+            continue
+        for item in metadata:
+            if hasattr(item, metadata_name):
+                return getattr(item, metadata_name)
+    raise AssertionError(f"{function.__name__}.{parameter_name} has no {metadata_name} metadata")
+
+
+class ConfigLimitTests(unittest.TestCase):
+    def test_gpt55_limit_constants(self) -> None:
+        self.assertEqual(config.MAX_READ_CHARS, 320_000)
+        self.assertEqual(config.MAX_WRITE_CHARS, 400_000)
+        self.assertEqual(config.MAX_TREE_ENTRIES, 800)
+        self.assertEqual(config.MAX_STDOUT_CHARS, 120_000)
+        self.assertEqual(config.MAX_STDERR_CHARS, 80_000)
+        self.assertEqual(config.TEXT_PAYLOAD_CHUNK_MAX_CHARS, 64_000)
+        self.assertEqual(config.TEXT_PAYLOAD_MAX_TOTAL_CHARS, 2_000_000)
+        self.assertEqual(config.MAX_EXEC_ARG_CHARS, 64_000)
+        self.assertEqual(config.MAX_EXEC_ARGV_TOTAL_CHARS, 256_000)
+        self.assertEqual(config.MAX_EXEC_ARGV_ITEMS, 80)
+        self.assertEqual(config.MAX_READ_MANY_FILE_CHARS, 160_000)
+        self.assertEqual(config.MAX_READ_MANY_TOTAL_CHARS, 800_000)
+        self.assertEqual(config.MAX_FIND_ENTRIES, 800)
+        self.assertEqual(config.MAX_SEARCH_MATCHES, 800)
+        self.assertEqual(config.MAX_SEARCH_FILE_BYTES, 1_000_000)
+        self.assertEqual(config.MAX_DIFF_PREVIEW_CHARS, 120_000)
+        self.assertEqual(config.DEFAULT_DIFF_PREVIEW_CHARS, 20_000)
+        self.assertEqual(config.MAX_COMMAND_TIMEOUT_SECONDS, 900)
+
+    def test_runner_limit_constants_are_imported_from_config(self) -> None:
+        self.assertEqual(command_bundle_runner.MAX_STDOUT_CHARS, config.MAX_STDOUT_CHARS)
+        self.assertEqual(command_bundle_runner.MAX_STDERR_CHARS, config.MAX_STDERR_CHARS)
+        self.assertEqual(
+            command_bundle_runner.TEXT_PAYLOAD_MAX_TOTAL_CHARS,
+            config.TEXT_PAYLOAD_MAX_TOTAL_CHARS,
+        )
+
+
+class TruncateHelperTests(unittest.TestCase):
+    def test_truncate_preserves_short_text(self) -> None:
+        for truncate in (server._truncate, patches._truncate, command_bundle_runner.truncate):
+            with self.subTest(truncate=truncate.__module__):
+                text, truncated = truncate("short text", 80)
+
+                self.assertEqual(text, "short text")
+                self.assertFalse(truncated)
+
+    def test_truncate_preserves_head_tail_and_marker(self) -> None:
+        text = "HEAD-" + ("x" * 100) + "-TAIL"
+
+        for truncate in (server._truncate, patches._truncate, command_bundle_runner.truncate):
+            with self.subTest(truncate=truncate.__module__):
+                result, truncated = truncate(text, 80)
+
+                self.assertTrue(truncated)
+                self.assertLessEqual(len(result), 80)
+                self.assertTrue(result.startswith("HEAD-"))
+                self.assertTrue(result.endswith("-TAIL"))
+                self.assertIn("truncated 30 chars", result)
+
+
+class ServerSchemaLimitTests(unittest.TestCase):
+    def test_read_tree_search_schema_limits_use_config(self) -> None:
+        self.assertEqual(_field_metadata_value(server.workspace_read_file, "limit", "le"), config.MAX_READ_CHARS)
+        self.assertEqual(_field_metadata_value(server.workspace_tree, "max_entries", "le"), config.MAX_TREE_ENTRIES)
+        self.assertEqual(
+            _field_metadata_value(server.workspace_project_snapshot, "max_entries", "le"),
+            config.MAX_TREE_ENTRIES,
+        )
+        self.assertEqual(_field_metadata_value(server.workspace_find_files, "max_entries", "le"), config.MAX_FIND_ENTRIES)
+        self.assertEqual(
+            _field_metadata_value(server.workspace_search_text, "max_matches", "le"),
+            config.MAX_SEARCH_MATCHES,
+        )
+        self.assertEqual(
+            _field_metadata_value(server.workspace_search_text, "max_file_bytes", "le"),
+            config.MAX_SEARCH_FILE_BYTES,
+        )
+        self.assertEqual(
+            _field_metadata_value(server.workspace_read_many_files, "limit_per_file", "le"),
+            config.MAX_READ_MANY_FILE_CHARS,
+        )
+        self.assertEqual(
+            _field_metadata_value(server.workspace_read_many_files, "total_limit", "le"),
+            config.MAX_READ_MANY_TOTAL_CHARS,
+        )
+
+    def test_command_payload_and_diff_schema_limits_use_config(self) -> None:
+        self.assertEqual(
+            _field_metadata_value(server.workspace_propose_command_and_wait, "argv", "max_length"),
+            config.MAX_EXEC_ARGV_ITEMS,
+        )
+        self.assertEqual(
+            _field_metadata_value(server.workspace_propose_command_and_wait, "command_timeout_seconds", "le"),
+            config.MAX_COMMAND_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            _field_metadata_value(server.workspace_exec, "timeout_seconds", "le"),
+            config.MAX_COMMAND_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            _field_metadata_value(server.workspace_apply_patch, "diff_max_chars", "le"),
+            config.MAX_DIFF_PREVIEW_CHARS,
+        )
+        self.assertEqual(
+            signature(server.workspace_apply_patch).parameters["diff_max_chars"].default,
+            config.DEFAULT_DIFF_PREVIEW_CHARS,
+        )
+        self.assertEqual(
+            _field_metadata_value(server.workspace_stage_text_payload, "text", "max_length"),
+            config.TEXT_PAYLOAD_CHUNK_MAX_CHARS,
+        )
 
 
 class ConfigWorkspaceRootTests(unittest.TestCase):
@@ -191,6 +312,23 @@ class RefactoredCommandHelperTests(unittest.TestCase):
             commands._validate_exec_argv(["bash", "-lc", body]),
             ["bash", "-lc", body],
         )
+
+    def test_validate_exec_argv_uses_config_limits(self) -> None:
+        commands._validate_exec_argv(["x"] * config.MAX_EXEC_ARGV_ITEMS)
+        with self.assertRaisesRegex(ValueError, "too many items"):
+            commands._validate_exec_argv(["x"] * (config.MAX_EXEC_ARGV_ITEMS + 1))
+
+        max_arg = "x" * config.MAX_EXEC_ARG_CHARS
+        self.assertEqual(commands._validate_exec_argv([max_arg]), [max_arg])
+        with self.assertRaisesRegex(ValueError, "item is too long"):
+            commands._validate_exec_argv(["x" * (config.MAX_EXEC_ARG_CHARS + 1)])
+
+        exact_total = ["x" * config.MAX_EXEC_ARG_CHARS] * (
+            config.MAX_EXEC_ARGV_TOTAL_CHARS // config.MAX_EXEC_ARG_CHARS
+        )
+        self.assertEqual(commands._validate_exec_argv(exact_total), exact_total)
+        with self.assertRaisesRegex(ValueError, "argv is too large"):
+            commands._validate_exec_argv([*exact_total, "x"])
 
     def test_classifies_large_shell_body_without_path_scanning_body(self) -> None:
         risk, reason = commands._classify_exec_command(

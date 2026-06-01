@@ -10,14 +10,14 @@ from terminal_bridge.config import (
     APPROVAL_REQUIRED_PATTERNS,
     BLOCKED_DIR_NAMES,
     BLOCKED_EXECUTABLES,
+    MAX_EXEC_ARG_CHARS,
+    MAX_EXEC_ARGV_ITEMS,
+    MAX_EXEC_ARGV_TOTAL_CHARS,
     PROJECT_ROOT,
     SAFE_ARG_FLAGS,
     WORKSPACE_ROOT,
 )
 from terminal_bridge.safety import _is_blocked_name
-
-MAX_EXEC_ARG_CHARS = 32_768
-MAX_EXEC_ARGV_TOTAL_CHARS = 65_536
 
 
 def _safe_env() -> dict[str, str]:
@@ -120,7 +120,7 @@ def _validate_exec_argv(argv: list[str]) -> list[str]:
     if not argv:
         raise ValueError("argv cannot be empty.")
 
-    if len(argv) > 64:
+    if len(argv) > MAX_EXEC_ARGV_ITEMS:
         raise ValueError("argv has too many items.")
 
     shell_body_index = _shell_command_body_index(argv)

@@ -18,8 +18,17 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from terminal_bridge.commands import _classify_exec_command, _validate_exec_argv
-from terminal_bridge.config import BLOCKED_DIR_NAMES, BLOCKED_FILE_PATTERNS, RUNTIME_ROOT, WORKSPACE_ROOT
+from terminal_bridge.config import (
+    BLOCKED_DIR_NAMES,
+    BLOCKED_FILE_PATTERNS,
+    MAX_STDERR_CHARS,
+    MAX_STDOUT_CHARS,
+    RUNTIME_ROOT,
+    TEXT_PAYLOAD_MAX_TOTAL_CHARS,
+    WORKSPACE_ROOT,
+)
 from terminal_bridge.handoffs import write_handoff_from_bundle
+from terminal_bridge.truncation import truncate_text
 
 COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
 PENDING_DIR = COMMAND_BUNDLES_DIR / "pending"
@@ -29,9 +38,6 @@ FAILED_DIR = COMMAND_BUNDLES_DIR / "failed"
 BACKUP_DIR = RUNTIME_ROOT / "command_bundle_file_backups"
 TEXT_PAYLOAD_DIR = RUNTIME_ROOT / "text_payloads"
 
-MAX_STDOUT_CHARS = 20_000
-MAX_STDERR_CHARS = 8_000
-TEXT_PAYLOAD_MAX_TOTAL_CHARS = 1_000_000
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -132,9 +138,7 @@ def find_bundle(bundle_id: str) -> tuple[Path, dict[str, Any]]:
 
 
 def truncate(value: str, limit: int) -> tuple[str, bool]:
-    if len(value) <= limit:
-        return value, False
-    return value[:limit] + "\n...[truncated]...", True
+    return truncate_text(value, limit)
 
 
 def is_blocked_name(name: str) -> bool:

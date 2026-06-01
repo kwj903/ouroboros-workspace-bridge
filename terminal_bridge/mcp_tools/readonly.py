@@ -8,6 +8,13 @@ from terminal_bridge.browsing import (
     _iter_visible_paths,
     _tree_workspace,
 )
+from terminal_bridge.config import (
+    MAX_FIND_ENTRIES,
+    MAX_READ_MANY_FILE_CHARS,
+    MAX_READ_MANY_TOTAL_CHARS,
+    MAX_SEARCH_FILE_BYTES,
+    MAX_SEARCH_MATCHES,
+)
 from terminal_bridge.models import (
     CommandResult,
     FileMatchEntry,
@@ -44,6 +51,7 @@ def find_files(
     if pattern.strip() == "":
         raise ValueError("pattern cannot be empty.")
 
+    max_entries = min(max_entries, MAX_FIND_ENTRIES)
     scan_limit = min(max(max_entries * 20, 500), 3000)
     paths, scan_truncated = _iter_visible_paths(target, scan_limit)
 
@@ -95,6 +103,8 @@ def search_text(
     if query == "":
         raise ValueError("query cannot be empty.")
 
+    max_matches = min(max_matches, MAX_SEARCH_MATCHES)
+    max_file_bytes = min(max_file_bytes, MAX_SEARCH_FILE_BYTES)
     target = _resolve_workspace_path(path)
 
     if not target.exists():
@@ -177,6 +187,8 @@ def read_many_files(
     if not paths:
         raise ValueError("paths cannot be empty.")
 
+    limit_per_file = min(limit_per_file, MAX_READ_MANY_FILE_CHARS)
+    total_limit = min(total_limit, MAX_READ_MANY_TOTAL_CHARS)
     entries: list[ReadManyFileEntry] = []
     remaining = total_limit
     truncated = False

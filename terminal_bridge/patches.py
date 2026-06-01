@@ -7,12 +7,11 @@ from terminal_bridge.commands import _safe_env
 from terminal_bridge.config import BLOCKED_DIR_NAMES, MAX_STDERR_CHARS, MAX_STDOUT_CHARS, WORKSPACE_ROOT
 from terminal_bridge.models import CommandResult
 from terminal_bridge.safety import _is_blocked_name, _relative, _resolve_workspace_path
+from terminal_bridge.truncation import truncate_text
 
 
 def _truncate(text: str, limit: int) -> tuple[str, bool]:
-    if len(text) <= limit:
-        return text, False
-    return text[:limit], True
+    return truncate_text(text, limit)
 
 
 def _clean_patch_path(raw_path: str) -> str | None:
