@@ -110,7 +110,6 @@ BLOCKED_DIR_NAMES = {
 
 BLOCKED_FILE_PATTERNS = [
     ".env",
-    ".env.*",
     "*.pem",
     "*.key",
     "id_rsa",
