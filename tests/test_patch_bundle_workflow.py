@@ -235,7 +235,7 @@ class PatchBundleStagingTests(unittest.TestCase):
             server._workspace_wait_command_bundle_status_impl = original_wait_impl
 
         self.bundle_ids.append(result.bundle_id)
-        record = server._read_json(server._command_bundle_path(result.bundle_id, "pending"))
+        _, record = server._find_command_bundle(result.bundle_id)
         metadata = record.get("metadata")
 
         self.assertIsInstance(metadata, dict)
@@ -280,8 +280,8 @@ class PatchBundleStagingTests(unittest.TestCase):
             server._workspace_wait_command_bundle_status_impl = original_wait_impl
 
         self.bundle_ids.extend([first.bundle_id, second.bundle_id])
-        first_record = server._read_json(server._command_bundle_path(first.bundle_id, "pending"))
-        second_record = server._read_json(server._command_bundle_path(second.bundle_id, "pending"))
+        _, first_record = server._find_command_bundle(first.bundle_id)
+        _, second_record = server._find_command_bundle(second.bundle_id)
         metadata = second_record.get("metadata")
 
         self.assertNotEqual(first.bundle_id, second.bundle_id)

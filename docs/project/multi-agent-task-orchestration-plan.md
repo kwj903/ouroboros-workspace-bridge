@@ -415,6 +415,14 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 4. Global YOLO에 강한 경고 표시.
 5. task/project scope의 YOLO를 기본 권장 방식으로 문서화.
 
+구현 상태:
+
+- Scoped approval mode 저장과 effective lookup 기반은 추가되었다.
+- 자동 승인 watcher는 pending bundle metadata의 `task_id`, `client_id`, `project_id`를 기준으로 `task > client > project > global` 우선순위를 적용한다.
+- 기존 global approval mode 저장과 기본값 `normal`은 fallback으로 유지된다.
+- Review UI는 bundle별 effective approval mode와 scope를 표시한다.
+- 이 단계에서는 `task-workspace` mode를 활성화하지 않는다.
+
 성공 기준:
 
 - task-level YOLO가 다른 task bundle을 자동 승인하지 않는다.

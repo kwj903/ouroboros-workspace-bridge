@@ -8,7 +8,12 @@ import time
 from pathlib import Path
 from typing import Callable, Protocol
 
-from terminal_bridge.approval_modes import load_approval_mode, should_auto_approve
+from terminal_bridge.approval_modes import (
+    ApprovalModeResolution,
+    load_effective_approval_mode,
+    normalize_approval_mode,
+    should_auto_approve,
+)
 
 
 class StopEvent(Protocol):
@@ -20,6 +25,7 @@ class StopEvent(Protocol):
 AutoApplyFunc = Callable[[str, Path, Path, str, str], bool]
 BundleCallback = Callable[[str], None]
 ModeLoader = Callable[[], str]
+EffectiveModeLoader = Callable[[dict[str, object] | None], ApprovalModeResolution]
 
 
 def load_bundle_id(path: Path) -> str | None:
@@ -107,10 +113,12 @@ def handle_pending_bundle(
     open_bundle: BundleCallback | None,
     log_prefix: str = "",
     auto_apply_func: AutoApplyFunc = auto_apply_bundle,
+    approval_resolution: ApprovalModeResolution | None = None,
 ) -> str:
-    if record is not None and should_auto_approve(record, approval_mode):
-        source = f"mode={approval_mode}"
-        print(f"{log_prefix}approval mode {approval_mode}: 자동 승인 시도: {bundle_id}")
+    effective_mode = approval_resolution.mode if approval_resolution is not None else approval_mode
+    if record is not None and should_auto_approve(record, effective_mode):
+        source = approval_resolution.source_label if approval_resolution is not None else f"mode={approval_mode}"
+        print(f"{log_prefix}approval mode {effective_mode}: 자동 승인 시도: {bundle_id}")
         if auto_apply_func(bundle_id, runner, project_root, source, log_prefix):
             return "auto-applied"
 
@@ -137,7 +145,8 @@ def watch_pending_bundles(
     open_mode: str,
     open_bundle: BundleCallback | None,
     stop_event: StopEvent | None = None,
-    load_mode: ModeLoader = load_approval_mode,
+    load_mode: ModeLoader | None = None,
+    load_effective_mode: EffectiveModeLoader = load_effective_approval_mode,
     log_prefix: str = "",
     auto_apply_func: AutoApplyFunc = auto_apply_bundle,
 ) -> None:
@@ -150,11 +159,20 @@ def watch_pending_bundles(
                 continue
 
             print(f"{log_prefix}새 승인 대기 번들: {bundle_id}")
-            approval_mode = load_mode()
+            if load_mode is not None:
+                approval_resolution = ApprovalModeResolution(
+                    mode=normalize_approval_mode(load_mode()),
+                    scope_type="global",
+                    scope_id=None,
+                    path=None,
+                    reason="legacy_loader",
+                )
+            else:
+                approval_resolution = load_effective_mode(record)
             handle_pending_bundle(
                 bundle_id,
                 record,
-                approval_mode=approval_mode,
+                approval_mode=approval_resolution.mode,
                 runner=runner,
                 project_root=project_root,
                 notify_enabled=notify_enabled,
@@ -163,6 +181,7 @@ def watch_pending_bundles(
                 open_bundle=open_bundle,
                 log_prefix=log_prefix,
                 auto_apply_func=auto_apply_func,
+                approval_resolution=approval_resolution,
             )
             seen_bundle_ids.add(bundle_id)
 

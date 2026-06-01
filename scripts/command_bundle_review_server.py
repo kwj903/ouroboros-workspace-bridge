@@ -35,9 +35,11 @@ from terminal_bridge.review_notifications import (
 from terminal_bridge import bundle_watcher
 from terminal_bridge.approval_modes import (
     VALID_APPROVAL_MODES,
+    load_effective_approval_mode,
     load_approval_mode,
     normalize_approval_mode,
     save_approval_mode,
+    save_scoped_approval_mode,
 )
 from terminal_bridge.bundles import _normalize_command_bundle_metadata
 from terminal_bridge.handoffs import handoff_json, list_handoffs, next_handoff
@@ -895,6 +897,33 @@ def bundle_metadata_badges_html(record: dict[str, object]) -> str:
     return metadata_badges_html(_normalize_command_bundle_metadata(record))
 
 
+def bundle_effective_approval_mode_html(
+    record: dict[str, object],
+    *,
+    scope_root: Path | None = None,
+    global_path: Path | None = None,
+) -> str:
+    kwargs: dict[str, Path] = {}
+    if scope_root is not None:
+        kwargs["scope_root"] = scope_root
+    if global_path is not None:
+        kwargs["global_path"] = global_path
+
+    resolution = load_effective_approval_mode(_normalize_command_bundle_metadata(record), **kwargs)
+    mode_tone = {
+        "normal": "neutral",
+        "safe-auto": "ok",
+        "yolo": "danger",
+    }.get(normalize_approval_mode(resolution.mode), "neutral")
+    scope_label = "global" if not resolution.scope_id else f"{resolution.scope_type}: {resolution.scope_id}"
+    return (
+        '<div class="subnav">'
+        + status_badge(f"Effective approval: {approval_mode_label(resolution.mode)}", mode_tone)
+        + status_badge(scope_label, "neutral")
+        + "</div>"
+    )
+
+
 def handoff_metadata_badges_html(record: dict[str, object]) -> str:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     return metadata_badges_html(metadata)
@@ -1028,6 +1057,49 @@ def approval_mode_card_html(current_mode: str | None = None) -> str:
       <div class="mode-grid">
         {''.join(items)}
       </div>
+    </div>
+    """
+
+
+def scoped_approval_mode_card_html() -> str:
+    mode_options = "".join(
+        f'<option value="{escape(mode)}">{escape(approval_mode_label(mode))}</option>'
+        for mode in VALID_APPROVAL_MODES
+    )
+    return f"""
+    <div class="card">
+      <h2>Scoped approval override</h2>
+      <p class="meta">
+        특정 project/client/task에만 approval mode를 적용합니다. 우선순위는 task &gt; client &gt; project &gt; global입니다.
+      </p>
+      <form method="post" action="/settings/approval-mode">
+        <input type="hidden" name="scoped" value="1">
+        <div class="card-grid">
+          <label class="meta" style="display: grid; gap: 6px;">
+            <span class="meta-label">scope</span>
+            <select name="scope_type" style="padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-strong); color: inherit;">
+              <option value="project">project</option>
+              <option value="client">client</option>
+              <option value="task">task</option>
+            </select>
+          </label>
+          <label class="meta" style="display: grid; gap: 6px;">
+            <span class="meta-label">scope id</span>
+            <input name="scope_id" autocomplete="off" placeholder="project_id, client_id, or task_id" style="padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-strong); color: inherit;">
+          </label>
+          <label class="meta" style="display: grid; gap: 6px;">
+            <span class="meta-label">mode</span>
+            <select name="mode" style="padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-strong); color: inherit;">
+              {mode_options}
+            </select>
+          </label>
+        </div>
+        <p class="meta">YOLO는 global보다 좁은 scope에서만 권장합니다. YOLO 설정 시 아래 입력칸에 YOLO를 입력해야 합니다.</p>
+        <input name="confirm" autocomplete="off" placeholder="YOLO confirmation" style="padding: 9px 10px; width: min(260px, 100%); border-radius: 10px; border: 1px solid var(--border); background: var(--surface-strong); color: inherit;">
+        <div class="button-row">
+          <button class="secondary" type="submit">Scoped mode 저장</button>
+        </div>
+      </form>
     </div>
     """
 
@@ -1549,6 +1621,7 @@ def bundle_card_html(record: dict[str, object]) -> str:
     <div class="card{failed_class}">
       <h2><a href="/bundles/{escape(bundle_id)}">{escape(record.get("title", ""))}</a></h2>
       {bundle_metadata_badges_html(record)}
+      {bundle_effective_approval_mode_html(record)}
       <p class="meta">
         ID: <code>{escape(bundle_id)}</code><br>
         작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
@@ -1669,6 +1742,7 @@ def bundle_detail_html(path: Path, record: dict[str, object]) -> str:
     <div class="card">
       <h2>{escape(record.get("title", bundle_id))}</h2>
       {bundle_metadata_badges_html(record)}
+      {bundle_effective_approval_mode_html(record)}
       <p class="meta">
         ID: <code>{escape(bundle_id)}</code><br>
         작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
@@ -2119,6 +2193,7 @@ class Handler(BaseHTTPRequestHandler):
                     <div class="card">
                       <h2><a href="/bundles/{escape(bundle_id)}">{escape(record.get("title", ""))}</a></h2>
                       {bundle_metadata_badges_html(record)}
+                      {bundle_effective_approval_mode_html(record)}
                       <p class="meta">
                         ID: <code>{escape(bundle_id)}</code><br>
                         작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
@@ -2140,6 +2215,7 @@ class Handler(BaseHTTPRequestHandler):
             body = (
                 approval_mode_banner_html(approval_mode)
                 + approval_mode_card_html(approval_mode)
+                + scoped_approval_mode_card_html()
                 + "<p><a href='/history'>전체 이력 보기</a></p>"
                 + metadata_filter_form_html("/pending", metadata_filters)
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
@@ -2325,7 +2401,23 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
 
-            save_approval_mode(raw_mode)
+            raw_scope_type = str(form.get("scope_type", [""])[0]).strip().lower()
+            raw_scope_id = str(form.get("scope_id", [""])[0]).strip()
+            scoped = str(form.get("scoped", [""])[0]).strip() == "1" or bool(raw_scope_type or raw_scope_id)
+            try:
+                if scoped:
+                    save_scoped_approval_mode(raw_scope_type, raw_mode, raw_scope_id)
+                else:
+                    save_approval_mode(raw_mode)
+            except ValueError as exc:
+                self.send_html(
+                    "Invalid approval scope",
+                    f'<p><a href="/pending">← 승인 대기로 돌아가기</a></p><p>{escape(str(exc))}</p>',
+                    status=400,
+                    active_nav="pending",
+                )
+                return
+
             self.redirect("/pending")
             return
 

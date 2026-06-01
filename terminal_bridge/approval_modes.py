@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,14 @@ from terminal_bridge.config import BLOCKED_DIR_NAMES, BLOCKED_FILE_PATTERNS, COM
 VALID_APPROVAL_MODES = {"normal", "safe-auto", "yolo"}
 DEFAULT_APPROVAL_MODE = "normal"
 APPROVAL_MODE_PATH = COMMAND_BUNDLES_DIR / "approval_mode.json"
+APPROVAL_SCOPE_DIR = COMMAND_BUNDLES_DIR.parent / "approval_modes"
+VALID_APPROVAL_SCOPES = {"global", "project", "client", "task"}
+_SCOPED_APPROVAL_DIRS = {
+    "project": "projects",
+    "client": "clients",
+    "task": "tasks",
+}
+_SCOPE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,191}$")
 
 _DANGEROUS_ARG_TOKENS = {
     "rm",
@@ -30,6 +40,21 @@ _GIT_MUTATING_SUBCOMMANDS = {"add", "commit", "push"}
 _SHELL_EXECUTABLES = {"bash", "sh", "zsh", "fish", "python", "python3", "node", "ruby", "perl"}
 _SHELL_COMMAND_FLAGS = {"-c", "-lc", "-cl"}
 _SENSITIVE_RUNTIME_PARTS = {".mcp_terminal_bridge"}
+
+
+@dataclass(frozen=True)
+class ApprovalModeResolution:
+    mode: str
+    scope_type: str
+    scope_id: str | None = None
+    path: str | None = None
+    reason: str = "global_default"
+
+    @property
+    def source_label(self) -> str:
+        if self.scope_id:
+            return f"mode={self.mode} scope={self.scope_type}:{self.scope_id}"
+        return f"mode={self.mode} scope={self.scope_type}"
 
 
 def _now_iso() -> str:
@@ -64,6 +89,163 @@ def save_approval_mode(mode: str, path: Path = APPROVAL_MODE_PATH) -> dict[str, 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return record
+
+
+def _normalize_scope_id(scope_id: object) -> str:
+    normalized = str(scope_id or "").strip()
+    if not normalized or normalized in {".", ".."}:
+        raise ValueError("scope_id cannot be empty or relative path syntax.")
+    if "/" in normalized or "\\" in normalized:
+        raise ValueError("scope_id cannot contain path separators.")
+    if not _SCOPE_ID_RE.fullmatch(normalized):
+        raise ValueError("scope_id contains unsupported characters.")
+    return normalized
+
+
+def scoped_approval_mode_path(
+    scope_type: str,
+    scope_id: object | None = None,
+    *,
+    scope_root: Path = APPROVAL_SCOPE_DIR,
+    global_path: Path = APPROVAL_MODE_PATH,
+) -> Path:
+    normalized_scope = str(scope_type or "").strip().lower()
+    if normalized_scope == "global":
+        return global_path
+    if normalized_scope not in _SCOPED_APPROVAL_DIRS:
+        raise ValueError(f"Unsupported approval mode scope: {scope_type}")
+
+    normalized_id = _normalize_scope_id(scope_id)
+    root = scope_root.expanduser().resolve(strict=False)
+    path = (root / _SCOPED_APPROVAL_DIRS[normalized_scope] / f"{normalized_id}.json").resolve(strict=False)
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("scope_id resolves outside approval mode scope root.") from exc
+    return path
+
+
+def _load_optional_approval_mode(path: Path) -> str | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    raw_mode = data.get("mode")
+    mode = normalize_approval_mode(raw_mode)
+    if mode != str(raw_mode or "").strip().lower():
+        return None
+    return mode
+
+
+def load_scoped_approval_mode(
+    scope_type: str,
+    scope_id: object | None = None,
+    *,
+    scope_root: Path = APPROVAL_SCOPE_DIR,
+    global_path: Path = APPROVAL_MODE_PATH,
+) -> str | None:
+    if str(scope_type or "").strip().lower() == "global":
+        return load_approval_mode(global_path)
+    path = scoped_approval_mode_path(scope_type, scope_id, scope_root=scope_root, global_path=global_path)
+    return _load_optional_approval_mode(path)
+
+
+def save_scoped_approval_mode(
+    scope_type: str,
+    mode: str,
+    scope_id: object | None = None,
+    *,
+    scope_root: Path = APPROVAL_SCOPE_DIR,
+    global_path: Path = APPROVAL_MODE_PATH,
+) -> dict[str, str]:
+    normalized_scope = str(scope_type or "").strip().lower()
+    if normalized_scope == "global":
+        return save_approval_mode(mode, global_path)
+
+    normalized = normalize_approval_mode(mode)
+    if normalized != mode:
+        raise ValueError(f"Invalid approval mode: {mode}")
+
+    path = scoped_approval_mode_path(normalized_scope, scope_id, scope_root=scope_root, global_path=global_path)
+    record = {
+        "mode": normalized,
+        "scope_type": normalized_scope,
+        "scope_id": _normalize_scope_id(scope_id),
+        "updated_at": _now_iso(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return record
+
+
+def _metadata_from_bundle_or_metadata(value: dict[str, object] | None) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    raw_metadata = value.get("metadata")
+    if isinstance(raw_metadata, dict):
+        return raw_metadata
+    return value
+
+
+def _metadata_text(metadata: dict[str, object], key: str) -> str | None:
+    value = metadata.get(key)
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _approval_scope_candidates(metadata: dict[str, object]) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+    task_id = _metadata_text(metadata, "task_id")
+    if task_id is not None:
+        candidates.append(("task", task_id))
+
+    client_id = _metadata_text(metadata, "client_id")
+    if client_id is not None and client_id != "default":
+        candidates.append(("client", client_id))
+
+    project_id = _metadata_text(metadata, "project_id")
+    if project_id is not None:
+        candidates.append(("project", project_id))
+
+    return candidates
+
+
+def load_effective_approval_mode(
+    bundle_or_metadata: dict[str, object] | None,
+    *,
+    scope_root: Path = APPROVAL_SCOPE_DIR,
+    global_path: Path = APPROVAL_MODE_PATH,
+) -> ApprovalModeResolution:
+    metadata = _metadata_from_bundle_or_metadata(bundle_or_metadata)
+    for scope_type, scope_id in _approval_scope_candidates(metadata):
+        try:
+            path = scoped_approval_mode_path(scope_type, scope_id, scope_root=scope_root, global_path=global_path)
+        except ValueError:
+            continue
+
+        mode = _load_optional_approval_mode(path)
+        if mode is not None:
+            return ApprovalModeResolution(
+                mode=mode,
+                scope_type=scope_type,
+                scope_id=scope_id,
+                path=str(path),
+                reason="scoped",
+            )
+
+    global_exists = global_path.exists()
+    return ApprovalModeResolution(
+        mode=load_approval_mode(global_path),
+        scope_type="global",
+        scope_id=None,
+        path=str(global_path) if global_exists else None,
+        reason="global" if global_exists else "global_default",
+    )
 
 
 def _steps(record: dict[str, object]) -> list[dict[str, Any]]:

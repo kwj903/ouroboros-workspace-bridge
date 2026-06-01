@@ -45,6 +45,91 @@ class ApprovalModePersistenceTests(unittest.TestCase):
             self.assertEqual(saved["mode"], "safe-auto")
             self.assertEqual(approval_modes.load_approval_mode(path), "safe-auto")
 
+    def test_scoped_mode_falls_back_to_global_and_normal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "approval_modes"
+            global_path = Path(tmp) / "command_bundles" / "approval_mode.json"
+
+            missing = approval_modes.load_effective_approval_mode(
+                {"project_id": "project-a"},
+                scope_root=root,
+                global_path=global_path,
+            )
+            self.assertEqual(missing.mode, "normal")
+            self.assertEqual(missing.scope_type, "global")
+            self.assertEqual(missing.reason, "global_default")
+
+            approval_modes.save_approval_mode("safe-auto", global_path)
+            global_result = approval_modes.load_effective_approval_mode(
+                {"project_id": "project-a"},
+                scope_root=root,
+                global_path=global_path,
+            )
+
+            self.assertEqual(global_result.mode, "safe-auto")
+            self.assertEqual(global_result.scope_type, "global")
+            self.assertEqual(global_result.path, str(global_path))
+
+    def test_scoped_mode_priority_is_task_client_project_global(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "approval_modes"
+            global_path = Path(tmp) / "command_bundles" / "approval_mode.json"
+            metadata = {
+                "project_id": "project-a",
+                "client_id": "client-a",
+                "task_id": "task-a",
+            }
+
+            approval_modes.save_approval_mode("normal", global_path)
+            approval_modes.save_scoped_approval_mode("project", "safe-auto", "project-a", scope_root=root)
+            project_result = approval_modes.load_effective_approval_mode(metadata, scope_root=root, global_path=global_path)
+            self.assertEqual((project_result.mode, project_result.scope_type, project_result.scope_id), ("safe-auto", "project", "project-a"))
+
+            approval_modes.save_scoped_approval_mode("client", "yolo", "client-a", scope_root=root)
+            client_result = approval_modes.load_effective_approval_mode(metadata, scope_root=root, global_path=global_path)
+            self.assertEqual((client_result.mode, client_result.scope_type, client_result.scope_id), ("yolo", "client", "client-a"))
+
+            approval_modes.save_scoped_approval_mode("task", "normal", "task-a", scope_root=root)
+            task_result = approval_modes.load_effective_approval_mode(metadata, scope_root=root, global_path=global_path)
+            self.assertEqual((task_result.mode, task_result.scope_type, task_result.scope_id), ("normal", "task", "task-a"))
+
+    def test_default_or_missing_metadata_uses_global_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "approval_modes"
+            global_path = Path(tmp) / "command_bundles" / "approval_mode.json"
+            approval_modes.save_approval_mode("safe-auto", global_path)
+            approval_modes.save_scoped_approval_mode("client", "yolo", "default", scope_root=root)
+
+            for metadata in ({}, {"client_id": "default"}, {"task_id": None, "client_id": "", "project_id": ""}):
+                with self.subTest(metadata=metadata):
+                    result = approval_modes.load_effective_approval_mode(
+                        metadata,
+                        scope_root=root,
+                        global_path=global_path,
+                    )
+
+                    self.assertEqual(result.mode, "safe-auto")
+                    self.assertEqual(result.scope_type, "global")
+
+    def test_invalid_scope_id_cannot_escape_scope_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "approval_modes"
+            global_path = Path(tmp) / "command_bundles" / "approval_mode.json"
+            approval_modes.save_approval_mode("safe-auto", global_path)
+
+            for scope_id in ("../outside", "nested/path", "", ".", ".."):
+                with self.subTest(scope_id=scope_id):
+                    with self.assertRaises(ValueError):
+                        approval_modes.scoped_approval_mode_path("task", scope_id, scope_root=root)
+
+                    result = approval_modes.load_effective_approval_mode(
+                        {"task_id": scope_id},
+                        scope_root=root,
+                        global_path=global_path,
+                    )
+                    self.assertEqual(result.mode, "safe-auto")
+                    self.assertEqual(result.scope_type, "global")
+
 
 class ApprovalModeDecisionTests(unittest.TestCase):
     def test_safe_auto_allows_low_risk_command_only_checks(self) -> None:
@@ -169,3 +254,26 @@ class ApprovalModeReviewUiTests(unittest.TestCase):
 
         self.assertIn("YOLO mode is ON", html)
         self.assertIn("warning", html)
+
+    def test_bundle_effective_approval_mode_renders_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "approval_modes"
+            approval_modes.save_scoped_approval_mode("task", "safe-auto", "task-a", scope_root=root)
+
+            html = review.bundle_effective_approval_mode_html(
+                {
+                    "bundle_id": "cmd-test",
+                    "cwd": ".",
+                    "metadata": {
+                        "task_id": "task-a",
+                        "client_id": "client-a",
+                        "project_id": "project-a",
+                    },
+                },
+                scope_root=root,
+                global_path=Path(tmp) / "command_bundles" / "approval_mode.json",
+            )
+
+        self.assertIn("Effective approval", html)
+        self.assertIn("Safe Auto", html)
+        self.assertIn("task: task-a", html)

@@ -1197,5 +1197,15 @@ class WatcherHelperTests(unittest.TestCase):
             self.assertIsNone(notifications.build_open_url_command("http://127.0.0.1:8790/pending", platform="linux"))
 
 
+    def test_scoped_approval_mode_card_has_scope_fields(self) -> None:
+        html = review.scoped_approval_mode_card_html()
+
+        self.assertIn("Scoped approval override", html)
+        self.assertIn('name="scoped"', html)
+        self.assertIn('name="scope_type"', html)
+        self.assertIn('name="scope_id"', html)
+        self.assertIn('name="mode"', html)
+
+
 if __name__ == "__main__":
     unittest.main()

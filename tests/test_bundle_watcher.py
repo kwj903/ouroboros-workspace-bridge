@@ -10,7 +10,7 @@ from pathlib import Path
 
 from scripts import command_bundle_review_server as review
 from scripts import command_bundle_watcher as standalone_watcher
-from terminal_bridge import bundle_watcher
+from terminal_bridge import approval_modes, bundle_watcher
 
 
 def low_risk_command_bundle() -> dict[str, object]:
@@ -196,6 +196,64 @@ class BundleWatcherHelperTests(unittest.TestCase):
 
             self.assertEqual(seen, {"cmd-test"})
             self.assertEqual(notifications, ["cmd-test"])
+
+    def test_watch_pending_bundles_uses_effective_mode_from_bundle_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pending_dir = Path(tmp)
+            record = {
+                **low_risk_command_bundle(),
+                "metadata": {
+                    "task_id": "task-a",
+                    "client_id": "client-a",
+                    "project_id": "project-a",
+                    "workspace_mode": "direct",
+                },
+            }
+            (pending_dir / "cmd-test.json").write_text(json.dumps(record), encoding="utf-8")
+            seen: set[str] = set()
+            loaded_records: list[dict[str, object] | None] = []
+            auto_applied: list[tuple[str, str]] = []
+
+            class OneWaitStop:
+                def is_set(self) -> bool:
+                    return False
+
+                def wait(self, _timeout: float) -> bool:
+                    return True
+
+            def fake_load_effective_mode(bundle_record: dict[str, object] | None) -> approval_modes.ApprovalModeResolution:
+                loaded_records.append(bundle_record)
+                return approval_modes.ApprovalModeResolution(
+                    mode="safe-auto",
+                    scope_type="task",
+                    scope_id="task-a",
+                    path="/tmp/approval_modes/tasks/task-a.json",
+                    reason="scoped",
+                )
+
+            def fake_auto_apply(bundle_id: str, _runner: Path, _project_root: Path, source: str, _prefix: str) -> bool:
+                auto_applied.append((bundle_id, source))
+                return True
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                bundle_watcher.watch_pending_bundles(
+                    pending_dir=pending_dir,
+                    runner=Path("runner.py"),
+                    project_root=Path("."),
+                    seen_bundle_ids=seen,
+                    poll_seconds=0.01,
+                    notify_enabled=True,
+                    notify_bundle=None,
+                    open_mode="dashboard_once",
+                    open_bundle=None,
+                    stop_event=OneWaitStop(),
+                    load_effective_mode=fake_load_effective_mode,
+                    auto_apply_func=fake_auto_apply,
+                )
+
+            self.assertEqual(seen, {"cmd-test"})
+            self.assertEqual(loaded_records, [record])
+            self.assertEqual(auto_applied, [("cmd-test", "mode=safe-auto scope=task:task-a")])
 
     def test_standalone_watcher_imports_shared_module(self) -> None:
         self.assertIs(standalone_watcher.bundle_watcher, bundle_watcher)
