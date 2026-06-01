@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import tempfile
 from pathlib import Path
@@ -88,7 +89,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         expected = self.status_result("cmd-test-command")
         steps = [CommandBundleStep(name="status", argv=["git", "status"])]
 
-        def fake_submit(title: str, cwd: str, steps: list[CommandBundleStep]) -> CommandBundleStageResult:
+        def fake_submit(title: str, cwd: str, steps: list[CommandBundleStep], *_extra: object) -> CommandBundleStageResult:
             calls["submit"] = {"title": title, "cwd": cwd, "steps": steps}
             return self.stage_result("cmd-test-command")
 
@@ -122,7 +123,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-patch")
 
-        def fake_submit(title: str, cwd: str, patch: str | None, patch_ref: str | None) -> CommandBundleStageResult:
+        def fake_submit(title: str, cwd: str, patch: str | None, patch_ref: str | None, *_extra: object) -> CommandBundleStageResult:
             calls["submit"] = {"title": title, "cwd": cwd, "patch": patch, "patch_ref": patch_ref}
             return self.stage_result("cmd-test-patch")
 
@@ -161,7 +162,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         expected = self.status_result("cmd-test-action")
         actions = [CommandBundleAction(name="write", type="write_file", path="file.txt", content="hello")]
 
-        def fake_submit(title: str, cwd: str, actions: list[CommandBundleAction]) -> CommandBundleStageResult:
+        def fake_submit(title: str, cwd: str, actions: list[CommandBundleAction], *_extra: object) -> CommandBundleStageResult:
             calls["submit"] = {"title": title, "cwd": cwd, "actions": actions}
             return self.stage_result("cmd-test-action")
 
@@ -195,7 +196,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-commit")
 
-        def fake_submit(cwd: str, paths: list[str], message: str) -> CommandBundleStageResult:
+        def fake_submit(cwd: str, paths: list[str], message: str, *_extra: object) -> CommandBundleStageResult:
             calls["submit"] = {"cwd": cwd, "paths": paths, "message": message}
             return self.stage_result("cmd-test-commit")
 
@@ -253,11 +254,29 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertNotIn("workspace_stage_patch_bundle", tools)
         self.assertNotIn("workspace_stage_commit_bundle", tools)
 
+    def test_public_proposal_wrappers_accept_metadata_inputs(self) -> None:
+        wrappers = [
+            server.workspace_propose_command_and_wait,
+            server.workspace_propose_file_write_and_wait,
+            server.workspace_propose_file_replace_and_wait,
+            server.workspace_propose_patch_and_wait,
+            server.workspace_propose_git_commit_and_wait,
+            server.workspace_propose_git_push_and_wait,
+        ]
+        metadata_fields = {"task_id", "client_id", "session_id", "project_id", "workspace_mode"}
+
+        for wrapper in wrappers:
+            with self.subTest(wrapper=wrapper.__name__):
+                parameters = inspect.signature(wrapper).parameters
+                self.assertTrue(metadata_fields.issubset(parameters))
+                for field in metadata_fields:
+                    self.assertIsNone(parameters[field].default)
+
     def test_propose_command_wraps_one_command_step(self) -> None:
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-propose-command")
 
-        def fake_stage(title: str, cwd: str, steps: list[CommandBundleStep], timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+        def fake_stage(title: str, cwd: str, steps: list[CommandBundleStep], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
             calls["stage"] = {
                 "title": title,
                 "cwd": cwd,
@@ -290,7 +309,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-propose-replace")
 
-        def fake_stage(title: str, cwd: str, actions: list[CommandBundleAction], timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+        def fake_stage(title: str, cwd: str, actions: list[CommandBundleAction], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
             calls["stage"] = {"title": title, "cwd": cwd, "actions": actions}
             return expected
 
@@ -316,7 +335,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-propose-write")
 
-        def fake_stage(title: str, cwd: str, actions: list[CommandBundleAction], timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+        def fake_stage(title: str, cwd: str, actions: list[CommandBundleAction], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
             calls["stage"] = {"title": title, "cwd": cwd, "actions": actions}
             return expected
 
@@ -342,7 +361,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-propose-push")
 
-        def fake_stage(title: str, cwd: str, steps: list[CommandBundleStep], timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+        def fake_stage(title: str, cwd: str, steps: list[CommandBundleStep], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
             calls["stage"] = {"title": title, "cwd": cwd, "steps": steps}
             return expected
 
@@ -355,6 +374,161 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertEqual(len(steps), 1)
         self.assertEqual(calls["stage"]["title"], "Push origin main")
         self.assertEqual(steps[0].argv, ["git", "push", "origin", "main"])
+
+    def test_proposal_wrappers_forward_metadata_to_stage_callbacks(self) -> None:
+        captured: list[tuple[str, dict[str, object] | None]] = []
+        expected = self.status_result("cmd-test-metadata")
+        metadata_args = {
+            "task_id": " task-1 ",
+            "client_id": " client-a ",
+            "session_id": " session-a ",
+            "project_id": " project-alpha ",
+            "workspace_mode": " direct ",
+        }
+        expected_metadata = {
+            "task_id": "task-1",
+            "client_id": "client-a",
+            "session_id": "session-a",
+            "project_id": "project-alpha",
+            "workspace_mode": "direct",
+        }
+
+        def fake_command_stage(
+            title: str,
+            cwd: str,
+            steps: list[CommandBundleStep],
+            timeout_seconds: int,
+            poll_interval_seconds: float,
+            metadata: dict[str, object] | None = None,
+        ) -> CommandBundleStatusResult:
+            captured.append((title, metadata))
+            return expected
+
+        def fake_action_stage(
+            title: str,
+            cwd: str,
+            actions: list[CommandBundleAction],
+            timeout_seconds: int,
+            poll_interval_seconds: float,
+            metadata: dict[str, object] | None = None,
+        ) -> CommandBundleStatusResult:
+            captured.append((title, metadata))
+            return expected
+
+        def fake_patch_stage(
+            title: str,
+            cwd: str,
+            patch: str | None,
+            patch_ref: str | None,
+            timeout_seconds: int,
+            poll_interval_seconds: float,
+            metadata: dict[str, object] | None = None,
+        ) -> CommandBundleStatusResult:
+            captured.append((title, metadata))
+            return expected
+
+        def fake_commit_stage(
+            cwd: str,
+            paths: list[str],
+            message: str,
+            timeout_seconds: int,
+            poll_interval_seconds: float,
+            metadata: dict[str, object] | None = None,
+        ) -> CommandBundleStatusResult:
+            captured.append(("commit", metadata))
+            return expected
+
+        server._workspace_stage_command_bundle_and_wait_impl = fake_command_stage
+        server._workspace_stage_action_bundle_and_wait_impl = fake_action_stage
+        server._workspace_stage_patch_bundle_and_wait_impl = fake_patch_stage
+        server._workspace_stage_commit_bundle_and_wait_impl = fake_commit_stage
+
+        calls = [
+            server.workspace_propose_command_and_wait(
+                title="Run status",
+                cwd=".",
+                argv=["git", "status"],
+                **metadata_args,
+            ),
+            server.workspace_propose_file_write_and_wait(
+                title="Write file",
+                cwd=".",
+                path="notes.txt",
+                content="hello",
+                overwrite=True,
+                **metadata_args,
+            ),
+            server.workspace_propose_file_replace_and_wait(
+                title="Replace text",
+                cwd=".",
+                path="README.md",
+                old_text="old",
+                new_text="new",
+                **metadata_args,
+            ),
+            server.workspace_propose_patch_and_wait(
+                title="Apply patch",
+                cwd=".",
+                patch="diff --git a/file.txt b/file.txt",
+                **metadata_args,
+            ),
+            server.workspace_propose_git_commit_and_wait(
+                cwd=".",
+                paths=["README.md"],
+                message="Test metadata",
+                **metadata_args,
+            ),
+            server.workspace_propose_git_push_and_wait(
+                cwd=".",
+                remote="origin",
+                branch="main",
+                **metadata_args,
+            ),
+        ]
+
+        self.assertEqual(calls, [expected] * 6)
+        self.assertEqual(len(captured), 6)
+        self.assertEqual([metadata for _, metadata in captured], [expected_metadata] * 6)
+
+    def test_proposal_metadata_input_ignores_blank_strings(self) -> None:
+        self.assertIsNone(
+            server._proposal_metadata_input(
+                task_id=" ",
+                client_id="\t",
+                session_id="\n",
+                project_id="  ",
+                workspace_mode=" ",
+            )
+        )
+
+    def test_proposal_metadata_input_accepts_direct_workspace_mode(self) -> None:
+        self.assertEqual(
+            server._proposal_metadata_input(workspace_mode=" direct "),
+            {"workspace_mode": "direct"},
+        )
+
+    def test_proposal_metadata_input_normalizes_scope_fields(self) -> None:
+        self.assertEqual(
+            server._proposal_metadata_input(
+                task_id=" task-1 ",
+                client_id=" client-a ",
+                session_id=" ",
+                project_id="project-alpha",
+                workspace_mode="direct",
+            ),
+            {
+                "task_id": "task-1",
+                "client_id": "client-a",
+                "project_id": "project-alpha",
+                "workspace_mode": "direct",
+            },
+        )
+
+    def test_proposal_metadata_input_rejects_non_direct_mode(self) -> None:
+        for mode in ("task-workspace", "isolated"):
+            with self.subTest(mode=mode):
+                with self.assertRaisesRegex(ValueError, "only supports 'direct'"):
+                    server._proposal_metadata_input(workspace_mode=mode)
 
     def test_propose_git_push_rejects_flag_like_remote(self) -> None:
         with self.assertRaises(ValueError):

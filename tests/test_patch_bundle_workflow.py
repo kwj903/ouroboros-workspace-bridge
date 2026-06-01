@@ -248,6 +248,52 @@ class PatchBundleStagingTests(unittest.TestCase):
         self.assertEqual(metadata["effective_cwd"], self.project_cwd())
         self.assertEqual(result.metadata, metadata)
 
+    def test_propose_command_bundle_records_explicit_metadata_and_keys_by_it(self) -> None:
+        original_wait_impl = server._workspace_wait_command_bundle_status_impl
+
+        def immediate_wait(bundle_id: str, timeout_seconds: int, poll_interval_seconds: float) -> server.CommandBundleStatusResult:
+            return server._workspace_command_bundle_status_impl(bundle_id)
+
+        server._workspace_wait_command_bundle_status_impl = immediate_wait
+        try:
+            title = f"Metadata keyed command {uuid4().hex[:8]}"
+            first = server.workspace_propose_command_and_wait(
+                title=title,
+                cwd=self.project_cwd(),
+                argv=["git", "status", "--short"],
+                timeout_seconds=1,
+                poll_interval_seconds=0.2,
+            )
+            second = server.workspace_propose_command_and_wait(
+                title=title,
+                cwd=self.project_cwd(),
+                argv=["git", "status", "--short"],
+                timeout_seconds=1,
+                poll_interval_seconds=0.2,
+                task_id="task-123",
+                client_id="client-a",
+                session_id="session-a",
+                project_id="project-alpha",
+                workspace_mode="direct",
+            )
+        finally:
+            server._workspace_wait_command_bundle_status_impl = original_wait_impl
+
+        self.bundle_ids.extend([first.bundle_id, second.bundle_id])
+        first_record = server._read_json(server._command_bundle_path(first.bundle_id, "pending"))
+        second_record = server._read_json(server._command_bundle_path(second.bundle_id, "pending"))
+        metadata = second_record.get("metadata")
+
+        self.assertNotEqual(first.bundle_id, second.bundle_id)
+        self.assertNotEqual(first_record["request_key"], second_record["request_key"])
+        self.assertIsInstance(metadata, dict)
+        self.assertEqual(metadata["task_id"], "task-123")
+        self.assertEqual(metadata["client_id"], "client-a")
+        self.assertEqual(metadata["session_id"], "session-a")
+        self.assertEqual(metadata["project_id"], "project-alpha")
+        self.assertEqual(metadata["workspace_mode"], "direct")
+        self.assertEqual(second.metadata, metadata)
+
     def test_rejects_invalid_patch_path(self) -> None:
         patch = new_file_patch("../outside.md")
 

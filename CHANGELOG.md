@@ -12,6 +12,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Project-specific `woojae help` command with English and Korean command descriptions.
 - Setup-time `Help language` preference stored in runtime session settings.
 - Purpose-specific public proposal tools: `workspace_propose_command_and_wait`, `workspace_propose_file_write_and_wait`, `workspace_propose_file_replace_and_wait`, `workspace_propose_patch_and_wait`, `workspace_propose_git_commit_and_wait`, and `workspace_propose_git_push_and_wait`.
+- Optional proposal metadata inputs (`task_id`, `client_id`, `session_id`, `project_id`, `workspace_mode`) for direct-mode proposal routing and filtering.
 
 ### Changed
 

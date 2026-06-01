@@ -9,20 +9,22 @@ from terminal_bridge.models import (
 )
 
 
+MetadataInput = dict[str, object] | None
+
 StageCommandAndWait = Callable[
-    [str, str, list[CommandBundleStep], int, float],
+    [str, str, list[CommandBundleStep], int, float, MetadataInput],
     CommandBundleStatusResult,
 ]
 StageActionAndWait = Callable[
-    [str, str, list[CommandBundleAction], int, float],
+    [str, str, list[CommandBundleAction], int, float, MetadataInput],
     CommandBundleStatusResult,
 ]
 StagePatchAndWait = Callable[
-    [str, str, str | None, str | None, int, float],
+    [str, str, str | None, str | None, int, float, MetadataInput],
     CommandBundleStatusResult,
 ]
 StageCommitAndWait = Callable[
-    [str, list[str], str, int, float],
+    [str, list[str], str, int, float, MetadataInput],
     CommandBundleStatusResult,
 ]
 
@@ -107,6 +109,7 @@ def command_proposal_and_wait(
     step: CommandBundleStep,
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
     return stage_command_and_wait(
         title,
@@ -114,6 +117,7 @@ def command_proposal_and_wait(
         [step],
         timeout_seconds,
         poll_interval_seconds,
+        metadata,
     )
 
 
@@ -124,6 +128,7 @@ def action_proposal_and_wait(
     action: CommandBundleAction,
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
     return stage_action_and_wait(
         title,
@@ -131,6 +136,7 @@ def action_proposal_and_wait(
         [action],
         timeout_seconds,
         poll_interval_seconds,
+        metadata,
     )
 
 
@@ -142,6 +148,7 @@ def patch_proposal_and_wait(
     patch_ref: str | None,
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
     return stage_patch_and_wait(
         title,
@@ -150,6 +157,7 @@ def patch_proposal_and_wait(
         patch_ref,
         timeout_seconds,
         poll_interval_seconds,
+        metadata,
     )
 
 
@@ -160,6 +168,7 @@ def commit_proposal_and_wait(
     message: str,
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
     return stage_commit_and_wait(
         cwd,
@@ -167,4 +176,5 @@ def commit_proposal_and_wait(
         message,
         timeout_seconds,
         poll_interval_seconds,
+        metadata,
     )

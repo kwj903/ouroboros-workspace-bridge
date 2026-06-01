@@ -373,7 +373,7 @@ Task workspace mode는 한 서버 안에서 여러 작업을 관리하는 방식
 작업:
 
 1. bundle record에 `task_id`, `client_id`, `session_id`, `project_id`, `workspace_mode` 추가.
-2. proposal tools에 optional `task_id`, `client_id`, `session_id` 추가.
+2. direct public proposal wrappers에 optional `task_id`, `client_id`, `session_id`, `project_id`, `workspace_mode` 입력 추가.
 3. `workspace_get_handoff_for_bundle(bundle_id)` 추가.
 4. `workspace_list_handoffs`와 `workspace_list_command_bundles`에 필터 추가.
 5. review UI에 project/task/client badge와 필터 추가.
@@ -385,7 +385,17 @@ Task workspace mode는 한 서버 안에서 여러 작업을 관리하는 방식
 - `workspace_get_handoff_for_bundle(bundle_id)`와 handoff metadata 보존은 완료되었다. `workspace_next_handoff`는 backwards-compatible global latest handoff로 남아 있다.
 - `workspace_list_command_bundles`와 `workspace_list_handoffs`는 task/client/session/project/workspace mode metadata filter를 지원한다.
 - Review UI는 pending/history/detail/latest handoff 카드에 metadata badge를 표시하고 `/pending`, `/history`, `/bundles`에서 query-parameter metadata filter를 지원한다.
-- Proposal wrapper metadata 입력 인자는 public MCP schema churn을 줄이기 위해 이번 Phase 1에서는 추가하지 않았다.
+- Phase 2-A에서 direct-mode public proposal wrappers의 optional metadata 입력이 완료되었다.
+- 현재 `workspace_mode` 입력은 `direct`만 허용한다. `task-workspace` mode는 아직 활성화하지 않고 다음 큰 단계에서 다룬다.
+
+Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
+
+- `workspace_propose_command_and_wait`
+- `workspace_propose_file_write_and_wait`
+- `workspace_propose_file_replace_and_wait`
+- `workspace_propose_patch_and_wait`
+- `workspace_propose_git_commit_and_wait`
+- `workspace_propose_git_push_and_wait`
 
 성공 기준:
 

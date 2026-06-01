@@ -106,9 +106,25 @@ def _default_command_bundle_metadata(cwd: object) -> dict[str, object]:
     }
 
 
-def _normalize_command_bundle_metadata(record: dict[str, object]) -> dict[str, object]:
-    defaults = _default_command_bundle_metadata(record.get("cwd", "."))
-    raw_metadata = record.get("metadata")
+def _clean_command_bundle_metadata_text(value: object, field_name: str, *, strict: bool) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        if strict:
+            raise ValueError(f"{field_name} must be a string when provided.")
+        return None
+
+    normalized = value.strip()
+    return normalized or None
+
+
+def _merge_command_bundle_metadata(
+    cwd: object,
+    raw_metadata: dict[str, object] | None = None,
+    *,
+    validate_workspace_mode: bool = False,
+) -> dict[str, object]:
+    defaults = _default_command_bundle_metadata(cwd)
     if not isinstance(raw_metadata, dict):
         return defaults
 
@@ -117,16 +133,34 @@ def _normalize_command_bundle_metadata(record: dict[str, object]) -> dict[str, o
         if isinstance(key, str) and key not in defaults:
             normalized[key] = value
 
-    task_id = raw_metadata.get("task_id")
-    if task_id is None or isinstance(task_id, str):
-        normalized["task_id"] = task_id
+    task_id = _clean_command_bundle_metadata_text(
+        raw_metadata.get("task_id"),
+        "task_id",
+        strict=validate_workspace_mode,
+    )
+    normalized["task_id"] = task_id
 
-    for key in ("client_id", "session_id", "project_id", "workspace_mode", "source_cwd", "effective_cwd"):
-        value = raw_metadata.get(key)
-        if isinstance(value, str) and value:
+    for key in ("client_id", "session_id", "project_id", "source_cwd", "effective_cwd"):
+        value = _clean_command_bundle_metadata_text(raw_metadata.get(key), key, strict=validate_workspace_mode)
+        if value is not None:
             normalized[key] = value
 
+    workspace_mode = _clean_command_bundle_metadata_text(
+        raw_metadata.get("workspace_mode"),
+        "workspace_mode",
+        strict=validate_workspace_mode,
+    )
+    if workspace_mode is not None:
+        if validate_workspace_mode and workspace_mode != "direct":
+            raise ValueError("workspace_mode currently only supports 'direct'. task-workspace will be introduced in a later phase.")
+        normalized["workspace_mode"] = workspace_mode
+
     return normalized
+
+
+def _normalize_command_bundle_metadata(record: dict[str, object]) -> dict[str, object]:
+    raw_metadata = record.get("metadata")
+    return _merge_command_bundle_metadata(record.get("cwd", "."), raw_metadata if isinstance(raw_metadata, dict) else None)
 
 
 def _find_command_bundle_by_request_key(request_key: str) -> tuple[Path, dict[str, object]] | None:

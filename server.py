@@ -31,6 +31,7 @@ from terminal_bridge.bundles import (
     _command_bundle_path,
     _default_command_bundle_metadata,
     _find_command_bundle,
+    _merge_command_bundle_metadata,
     _move_command_bundle,
     _new_command_bundle_id,
     _request_key,
@@ -2377,6 +2378,44 @@ def _resolve_stage_bundle_cwd(cwd: str) -> tuple[Path, str]:
     return target, _relative(target)
 
 
+def _proposal_metadata_input(
+    *,
+    task_id: str | None = None,
+    client_id: str | None = None,
+    session_id: str | None = None,
+    project_id: str | None = None,
+    workspace_mode: str | None = None,
+) -> dict[str, object] | None:
+    metadata: dict[str, object] = {}
+    for key, value in {
+        "task_id": task_id,
+        "client_id": client_id,
+        "session_id": session_id,
+        "project_id": project_id,
+        "workspace_mode": workspace_mode,
+    }.items():
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"{key} must be a string when provided.")
+        normalized = value.strip()
+        if not normalized:
+            continue
+        metadata[key] = normalized
+
+    mode = metadata.get("workspace_mode")
+    if mode is not None and mode != "direct":
+        raise ValueError("workspace_mode currently only supports 'direct'. task-workspace will be introduced in a later phase.")
+
+    return metadata or None
+
+
+def _request_payload_with_metadata(payload: dict[str, object], metadata: dict[str, object] | None) -> dict[str, object]:
+    if metadata is None:
+        return payload
+    return {**payload, "metadata": metadata}
+
+
 def _write_pending_stage_bundle(
     *,
     version: int,
@@ -2385,6 +2424,7 @@ def _write_pending_stage_bundle(
     risk: str,
     steps: list[dict[str, object]],
     request_key: str,
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
     bundle_id = _new_command_bundle_id()
     now = _now_iso()
@@ -2399,7 +2439,7 @@ def _write_pending_stage_bundle(
         "created_at": now,
         "updated_at": now,
         "steps": steps,
-        "metadata": _default_command_bundle_metadata(cwd),
+        "metadata": _merge_command_bundle_metadata(cwd, metadata, validate_workspace_mode=True),
         "result": None,
         "error": None,
         "request_key": request_key,
@@ -2425,6 +2465,7 @@ def workspace_stage_patch_bundle(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     patch: Annotated[str | None, Field(description="Unified diff patch text. Prefer patch_ref for large patches.")] = None,
     patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
     """Stage a unified diff patch for local approval without modifying project files."""
     if patch is not None and patch_ref is not None:
@@ -2434,6 +2475,7 @@ def workspace_stage_patch_bundle(
         raise ValueError("patch or patch_ref is required.")
 
     target, relative_cwd = _resolve_stage_bundle_cwd(cwd)
+    bundle_metadata = _merge_command_bundle_metadata(relative_cwd, metadata, validate_workspace_mode=True) if metadata is not None else None
 
     step_source: dict[str, object]
     if patch_ref is not None:
@@ -2462,13 +2504,16 @@ def workspace_stage_patch_bundle(
 
     patch_sha256 = _sha256_bytes(patch_text.encode("utf-8"))
     request_key = _request_key(
-        {
-            "kind": "patch_bundle",
-            "title": title,
-            "cwd": relative_cwd,
-            "patch_sha256": patch_sha256,
-            "patch_paths": patch_paths,
-        }
+        _request_payload_with_metadata(
+            {
+                "kind": "patch_bundle",
+                "title": title,
+                "cwd": relative_cwd,
+                "patch_sha256": patch_sha256,
+                "patch_paths": patch_paths,
+            },
+            bundle_metadata,
+        )
     )
     deduped = _dedupe_command_bundle(request_key, kind="patch_bundle", title=title)
     if deduped is not None:
@@ -2493,6 +2538,7 @@ def workspace_stage_patch_bundle(
         risk="medium",
         steps=serialized_steps,
         request_key=request_key,
+        metadata=bundle_metadata,
     )
     _audit(
         "stage_patch_bundle",
@@ -2519,6 +2565,7 @@ def workspace_stage_action_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     actions: Annotated[list[CommandBundleAction], Field(min_length=1, max_length=30)],
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
     """Stage file and command actions for local approval.
 
@@ -2527,16 +2574,20 @@ def workspace_stage_action_bundle(
     the staged bundle.
     """
     target, relative_cwd = _resolve_stage_bundle_cwd(cwd)
+    bundle_metadata = _merge_command_bundle_metadata(relative_cwd, metadata, validate_workspace_mode=True) if metadata is not None else None
 
     serialized_steps, risk, _ = _serialize_action_steps(target, actions)
     request_key = _request_key(
-        {
-            "kind": "action_bundle",
-            "title": title,
-            "cwd": relative_cwd,
-            "actions": actions,
-            "steps": serialized_steps,
-        }
+        _request_payload_with_metadata(
+            {
+                "kind": "action_bundle",
+                "title": title,
+                "cwd": relative_cwd,
+                "actions": actions,
+                "steps": serialized_steps,
+            },
+            bundle_metadata,
+        )
     )
     deduped = _dedupe_command_bundle(request_key, kind="action_bundle", title=title)
     if deduped is not None:
@@ -2549,6 +2600,7 @@ def workspace_stage_action_bundle(
         risk=risk,
         steps=serialized_steps,
         request_key=request_key,
+        metadata=bundle_metadata,
     )
     _audit(
         "stage_action_bundle",
@@ -2582,9 +2634,11 @@ def workspace_stage_commit_bundle(
         list[CommandBundleStep] | None,
         Field(description="Optional low-risk commands to run before git add/commit."),
     ] = None,
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
     """Stage a git add/commit workflow for local approval without executing it in ChatGPT."""
     target, relative_cwd = _resolve_stage_bundle_cwd(cwd)
+    bundle_metadata = _merge_command_bundle_metadata(relative_cwd, metadata, validate_workspace_mode=True) if metadata is not None else None
 
     serialized_steps, risk, safe_paths, commit_message = _serialize_commit_steps(
         target,
@@ -2593,13 +2647,16 @@ def workspace_stage_commit_bundle(
         precheck_commands,
     )
     request_key = _request_key(
-        {
-            "kind": "commit_bundle",
-            "cwd": relative_cwd,
-            "paths": safe_paths,
-            "message": commit_message,
-            "precheck_commands": precheck_commands,
-        }
+        _request_payload_with_metadata(
+            {
+                "kind": "commit_bundle",
+                "cwd": relative_cwd,
+                "paths": safe_paths,
+                "message": commit_message,
+                "precheck_commands": precheck_commands,
+            },
+            bundle_metadata,
+        )
     )
     deduped = _dedupe_command_bundle(request_key, kind="commit_bundle", title=f"Commit: {commit_message[:120]}")
     if deduped is not None:
@@ -2613,6 +2670,7 @@ def workspace_stage_commit_bundle(
         risk=risk,
         steps=serialized_steps,
         request_key=request_key,
+        metadata=bundle_metadata,
     )
     _audit(
         "stage_commit_bundle",
@@ -2639,6 +2697,7 @@ def workspace_stage_command_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     steps: Annotated[list[CommandBundleStep], Field(min_length=1, max_length=20)],
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
     """Stage a command bundle for local approval instead of executing it in ChatGPT.
 
@@ -2646,15 +2705,19 @@ def workspace_stage_command_bundle(
     the MCP runtime directory. A local runner can preview/apply/reject it.
     """
     target, relative_cwd = _resolve_stage_bundle_cwd(cwd)
+    bundle_metadata = _merge_command_bundle_metadata(relative_cwd, metadata, validate_workspace_mode=True) if metadata is not None else None
 
     serialized_steps, risk, _ = _serialize_command_steps(target, steps)
     request_key = _request_key(
-        {
-            "kind": "command_bundle",
-            "title": title,
-            "cwd": relative_cwd,
-            "steps": serialized_steps,
-        }
+        _request_payload_with_metadata(
+            {
+                "kind": "command_bundle",
+                "title": title,
+                "cwd": relative_cwd,
+                "steps": serialized_steps,
+            },
+            bundle_metadata,
+        )
     )
     deduped = _dedupe_command_bundle(request_key, kind="command_bundle", title=title)
     if deduped is not None:
@@ -2667,6 +2730,7 @@ def workspace_stage_command_bundle(
         risk=risk,
         steps=serialized_steps,
         request_key=request_key,
+        metadata=bundle_metadata,
     )
     _audit(
         "stage_command_bundle",
@@ -2758,12 +2822,13 @@ def workspace_submit_command_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     steps: Annotated[list[CommandBundleStep], Field(min_length=1, max_length=20)],
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
     """Submit a command bundle for local approval and return immediately."""
     return _record_tool_call(
         "workspace_submit_command_bundle",
-        {"title": title, "cwd": cwd, "steps": steps},
-        lambda: _workspace_submit_command_bundle_impl(title, cwd, steps),
+        {"title": title, "cwd": cwd, "steps": steps, "metadata": metadata},
+        lambda: _workspace_submit_command_bundle_impl(title, cwd, steps, metadata),
     )
 
 
@@ -2771,8 +2836,9 @@ def _workspace_submit_command_bundle_impl(
     title: str,
     cwd: str,
     steps: list[CommandBundleStep],
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
-    return workspace_stage_command_bundle(title=title, cwd=cwd, steps=steps)
+    return workspace_stage_command_bundle(title=title, cwd=cwd, steps=steps, metadata=metadata)
 
 
 @_internal_tool(
@@ -2788,12 +2854,13 @@ def workspace_submit_patch_bundle(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     patch: Annotated[str | None, Field(description="Unified diff patch text. Prefer patch_ref for large patches.")] = None,
     patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
     """Submit a patch bundle for local approval and return immediately."""
     return _record_tool_call(
         "workspace_submit_patch_bundle",
-        {"title": title, "cwd": cwd, "patch": patch, "patch_ref": patch_ref},
-        lambda: _workspace_submit_patch_bundle_impl(title, cwd, patch, patch_ref),
+        {"title": title, "cwd": cwd, "patch": patch, "patch_ref": patch_ref, "metadata": metadata},
+        lambda: _workspace_submit_patch_bundle_impl(title, cwd, patch, patch_ref, metadata),
     )
 
 
@@ -2802,8 +2869,9 @@ def _workspace_submit_patch_bundle_impl(
     cwd: str,
     patch: str | None,
     patch_ref: str | None,
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
-    return workspace_stage_patch_bundle(title=title, cwd=cwd, patch=patch, patch_ref=patch_ref)
+    return workspace_stage_patch_bundle(title=title, cwd=cwd, patch=patch, patch_ref=patch_ref, metadata=metadata)
 
 
 @_internal_tool(
@@ -2818,12 +2886,13 @@ def workspace_submit_action_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     actions: Annotated[list[CommandBundleAction], Field(min_length=1, max_length=30)],
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
     """Submit an action bundle for local approval and return immediately."""
     return _record_tool_call(
         "workspace_submit_action_bundle",
-        {"title": title, "cwd": cwd, "actions": actions},
-        lambda: _workspace_submit_action_bundle_impl(title, cwd, actions),
+        {"title": title, "cwd": cwd, "actions": actions, "metadata": metadata},
+        lambda: _workspace_submit_action_bundle_impl(title, cwd, actions, metadata),
     )
 
 
@@ -2831,8 +2900,9 @@ def _workspace_submit_action_bundle_impl(
     title: str,
     cwd: str,
     actions: list[CommandBundleAction],
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
-    return workspace_stage_action_bundle(title=title, cwd=cwd, actions=actions)
+    return workspace_stage_action_bundle(title=title, cwd=cwd, actions=actions, metadata=metadata)
 
 
 @_internal_tool(
@@ -2850,12 +2920,13 @@ def workspace_submit_commit_bundle(
         Field(min_length=1, max_length=100, description="Relative paths to stage and commit. Use ['.'] with care."),
     ],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
     """Submit a git add/commit bundle for local approval and return immediately."""
     return _record_tool_call(
         "workspace_submit_commit_bundle",
-        {"cwd": cwd, "paths": paths, "message": message},
-        lambda: _workspace_submit_commit_bundle_impl(cwd, paths, message),
+        {"cwd": cwd, "paths": paths, "message": message, "metadata": metadata},
+        lambda: _workspace_submit_commit_bundle_impl(cwd, paths, message, metadata),
     )
 
 
@@ -2863,12 +2934,14 @@ def _workspace_submit_commit_bundle_impl(
     cwd: str,
     paths: list[str],
     message: str,
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStageResult:
     return workspace_stage_commit_bundle(
         cwd=cwd,
         paths=paths,
         message=message,
         precheck_commands=None,
+        metadata=metadata,
     )
 
 
@@ -2929,6 +3002,7 @@ def _workspace_stage_command_bundle_and_wait_impl(
     steps: list[CommandBundleStep],
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStatusResult:
     return _bundle_stage_command_bundle_and_wait(
         _workspace_submit_command_bundle_impl,
@@ -2938,6 +3012,7 @@ def _workspace_stage_command_bundle_and_wait_impl(
         steps,
         timeout_seconds,
         poll_interval_seconds,
+        metadata,
     )
 
 
@@ -3001,6 +3076,7 @@ def _workspace_stage_patch_bundle_and_wait_impl(
     patch_ref: str | None,
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStatusResult:
     return _bundle_stage_patch_bundle_and_wait(
         _workspace_submit_patch_bundle_impl,
@@ -3011,6 +3087,7 @@ def _workspace_stage_patch_bundle_and_wait_impl(
         patch_ref,
         timeout_seconds,
         poll_interval_seconds,
+        metadata,
     )
 
 
@@ -3071,6 +3148,7 @@ def _workspace_stage_action_bundle_and_wait_impl(
     actions: list[CommandBundleAction],
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStatusResult:
     return _bundle_stage_action_bundle_and_wait(
         _workspace_submit_action_bundle_impl,
@@ -3080,6 +3158,7 @@ def _workspace_stage_action_bundle_and_wait_impl(
         actions,
         timeout_seconds,
         poll_interval_seconds,
+        metadata,
     )
 
 
@@ -3140,6 +3219,7 @@ def _workspace_stage_commit_bundle_and_wait_impl(
     message: str,
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: dict[str, object] | None = None,
 ) -> CommandBundleStatusResult:
     return _bundle_stage_commit_bundle_and_wait(
         _workspace_submit_commit_bundle_impl,
@@ -3149,6 +3229,7 @@ def _workspace_stage_commit_bundle_and_wait_impl(
         message,
         timeout_seconds,
         poll_interval_seconds,
+        metadata,
     )
 
 
@@ -3183,6 +3264,11 @@ def workspace_propose_command_and_wait(
         Field(description="Optional display name for the command step. Defaults to title."),
     ] = None,
     command_timeout_seconds: Annotated[int, Field(ge=1, le=MAX_COMMAND_TIMEOUT_SECONDS)] = 60,
+    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
@@ -3192,6 +3278,13 @@ def workspace_propose_command_and_wait(
     in ChatGPT. The command runs only after the user approves the bundle at
     http://127.0.0.1:8790/pending.
     """
+    metadata = _proposal_metadata_input(
+        task_id=task_id,
+        client_id=client_id,
+        session_id=session_id,
+        project_id=project_id,
+        workspace_mode=workspace_mode,
+    )
     step = _proposal_command_step(title, argv, command_name, command_timeout_seconds)
     return _record_tool_call(
         "workspace_propose_command_and_wait",
@@ -3211,6 +3304,7 @@ def workspace_propose_command_and_wait(
             step,
             timeout_seconds,
             poll_interval_seconds,
+            metadata,
         ),
     )
 
@@ -3239,6 +3333,11 @@ def workspace_propose_file_write_and_wait(
     ],
     overwrite: Annotated[bool, Field(description="Whether the proposal may overwrite an existing file.")] = False,
     create_parent_dirs: Annotated[bool, Field(description="Whether the proposal may create missing parent directories.")] = True,
+    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
@@ -3248,6 +3347,13 @@ def workspace_propose_file_write_and_wait(
     ChatGPT. Files change only after the user approves the bundle at
     http://127.0.0.1:8790/pending.
     """
+    metadata = _proposal_metadata_input(
+        task_id=task_id,
+        client_id=client_id,
+        session_id=session_id,
+        project_id=project_id,
+        workspace_mode=workspace_mode,
+    )
     action = _proposal_file_write_action(
         title,
         path,
@@ -3274,6 +3380,7 @@ def workspace_propose_file_write_and_wait(
             action,
             timeout_seconds,
             poll_interval_seconds,
+            metadata,
         ),
     )
 
@@ -3304,6 +3411,11 @@ def workspace_propose_file_replace_and_wait(
     replace_all: Annotated[bool, Field(description="Replace all occurrences instead of only the first.")] = False,
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
 ) -> CommandBundleStatusResult:
     """Create exactly one file replacement proposal in the local pending UI and briefly wait.
 
@@ -3311,6 +3423,13 @@ def workspace_propose_file_replace_and_wait(
     ChatGPT. Files change only after the user approves the bundle at
     http://127.0.0.1:8790/pending.
     """
+    metadata = _proposal_metadata_input(
+        task_id=task_id,
+        client_id=client_id,
+        session_id=session_id,
+        project_id=project_id,
+        workspace_mode=workspace_mode,
+    )
     action = _proposal_file_replace_action(
         title,
         path,
@@ -3337,6 +3456,7 @@ def workspace_propose_file_replace_and_wait(
             action,
             timeout_seconds,
             poll_interval_seconds,
+            metadata,
         ),
     )
 
@@ -3356,6 +3476,11 @@ def workspace_propose_patch_and_wait(
     patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
 ) -> CommandBundleStatusResult:
     """Create one patch proposal in the local pending UI and briefly wait.
 
@@ -3363,6 +3488,13 @@ def workspace_propose_patch_and_wait(
     ChatGPT. The patch applies only after the user approves the bundle at
     http://127.0.0.1:8790/pending.
     """
+    metadata = _proposal_metadata_input(
+        task_id=task_id,
+        client_id=client_id,
+        session_id=session_id,
+        project_id=project_id,
+        workspace_mode=workspace_mode,
+    )
     return _record_tool_call(
         "workspace_propose_patch_and_wait",
         {
@@ -3381,6 +3513,7 @@ def workspace_propose_patch_and_wait(
             patch_ref,
             timeout_seconds,
             poll_interval_seconds,
+            metadata,
         ),
     )
 
@@ -3399,6 +3532,11 @@ def workspace_propose_git_commit_and_wait(
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
 ) -> CommandBundleStatusResult:
     """Create one git commit proposal in the local pending UI and briefly wait.
 
@@ -3406,6 +3544,13 @@ def workspace_propose_git_commit_and_wait(
     commit in ChatGPT. Git runs only after the user approves the bundle at
     http://127.0.0.1:8790/pending.
     """
+    metadata = _proposal_metadata_input(
+        task_id=task_id,
+        client_id=client_id,
+        session_id=session_id,
+        project_id=project_id,
+        workspace_mode=workspace_mode,
+    )
     return _record_tool_call(
         "workspace_propose_git_commit_and_wait",
         {
@@ -3422,6 +3567,7 @@ def workspace_propose_git_commit_and_wait(
             message,
             timeout_seconds,
             poll_interval_seconds,
+            metadata,
         ),
     )
 
@@ -3438,6 +3584,11 @@ def workspace_propose_git_push_and_wait(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     remote: Annotated[str, Field(min_length=1, max_length=80, description="Git remote name, usually origin.")] = "origin",
     branch: Annotated[str, Field(min_length=1, max_length=120, description="Git branch name, usually main.")] = "main",
+    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Phase 2-A accepts only direct.")] = None,
     timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
     poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
 ) -> CommandBundleStatusResult:
@@ -3447,6 +3598,13 @@ def workspace_propose_git_push_and_wait(
     Git push runs only after the user approves the bundle at
     http://127.0.0.1:8790/pending.
     """
+    metadata = _proposal_metadata_input(
+        task_id=task_id,
+        client_id=client_id,
+        session_id=session_id,
+        project_id=project_id,
+        workspace_mode=workspace_mode,
+    )
     safe_remote, safe_branch, title, step = _proposal_git_push(remote, branch)
     return _record_tool_call(
         "workspace_propose_git_push_and_wait",
@@ -3464,6 +3622,7 @@ def workspace_propose_git_push_and_wait(
             step,
             timeout_seconds,
             poll_interval_seconds,
+            metadata,
         ),
     )
 

@@ -21,10 +21,11 @@ MoveCommandBundle = Callable[[str, str, dict[str, object]], dict[str, object]]
 Audit = Callable[..., None]
 ReadJson = Callable[[Path], dict[str, object]]
 CommandBundleDirs = Callable[[], list[Path]]
-SubmitCommandBundle = Callable[[str, str, list[CommandBundleStep]], CommandBundleStageResult]
-SubmitPatchBundle = Callable[[str, str, str | None, str | None], CommandBundleStageResult]
-SubmitActionBundle = Callable[[str, str, list[CommandBundleAction]], CommandBundleStageResult]
-SubmitCommitBundle = Callable[[str, list[str], str], CommandBundleStageResult]
+MetadataInput = dict[str, object] | None
+SubmitCommandBundle = Callable[[str, str, list[CommandBundleStep], MetadataInput], CommandBundleStageResult]
+SubmitPatchBundle = Callable[[str, str, str | None, str | None, MetadataInput], CommandBundleStageResult]
+SubmitActionBundle = Callable[[str, str, list[CommandBundleAction], MetadataInput], CommandBundleStageResult]
+SubmitCommitBundle = Callable[[str, list[str], str, MetadataInput], CommandBundleStageResult]
 WaitCommandBundleStatus = Callable[..., CommandBundleStatusResult]
 
 
@@ -84,6 +85,7 @@ def stage_command_bundle_and_wait(
     steps: list[CommandBundleStep],
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
     if len(steps) != 1:
         raise ValueError(
@@ -91,7 +93,7 @@ def stage_command_bundle_and_wait(
             "Use repeated calls for multiple checks or commands."
         )
 
-    staged = submit_command_bundle(title, cwd, steps)
+    staged = submit_command_bundle(title, cwd, steps, metadata)
     return wait_command_bundle_status(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
@@ -108,8 +110,9 @@ def stage_patch_bundle_and_wait(
     patch_ref: str | None,
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
-    staged = submit_patch_bundle(title, cwd, patch, patch_ref)
+    staged = submit_patch_bundle(title, cwd, patch, patch_ref, metadata)
     return wait_command_bundle_status(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
@@ -125,6 +128,7 @@ def stage_action_bundle_and_wait(
     actions: list[CommandBundleAction],
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
     if len(actions) != 1:
         raise ValueError(
@@ -132,7 +136,7 @@ def stage_action_bundle_and_wait(
             "Use repeated calls for multi-step edits."
         )
 
-    staged = submit_action_bundle(title, cwd, actions)
+    staged = submit_action_bundle(title, cwd, actions, metadata)
     return wait_command_bundle_status(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
@@ -148,8 +152,9 @@ def stage_commit_bundle_and_wait(
     message: str,
     timeout_seconds: int,
     poll_interval_seconds: float,
+    metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
-    staged = submit_commit_bundle(cwd, paths, message)
+    staged = submit_commit_bundle(cwd, paths, message, metadata)
     return wait_command_bundle_status(
         staged.bundle_id,
         timeout_seconds=timeout_seconds,
