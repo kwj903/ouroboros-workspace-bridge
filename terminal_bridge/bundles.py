@@ -88,6 +88,47 @@ def _request_key(value: dict[str, object]) -> str:
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
+def _normalize_bundle_cwd(cwd: object) -> str:
+    normalized = "" if cwd is None else str(cwd)
+    return normalized or "."
+
+
+def _default_command_bundle_metadata(cwd: object) -> dict[str, object]:
+    normalized_cwd = _normalize_bundle_cwd(cwd)
+    return {
+        "task_id": None,
+        "client_id": "default",
+        "session_id": "default",
+        "project_id": _request_key({"kind": "project", "cwd": normalized_cwd}),
+        "workspace_mode": "direct",
+        "source_cwd": normalized_cwd,
+        "effective_cwd": normalized_cwd,
+    }
+
+
+def _normalize_command_bundle_metadata(record: dict[str, object]) -> dict[str, object]:
+    defaults = _default_command_bundle_metadata(record.get("cwd", "."))
+    raw_metadata = record.get("metadata")
+    if not isinstance(raw_metadata, dict):
+        return defaults
+
+    normalized = dict(defaults)
+    for key, value in raw_metadata.items():
+        if isinstance(key, str) and key not in defaults:
+            normalized[key] = value
+
+    task_id = raw_metadata.get("task_id")
+    if task_id is None or isinstance(task_id, str):
+        normalized["task_id"] = task_id
+
+    for key in ("client_id", "session_id", "project_id", "workspace_mode", "source_cwd", "effective_cwd"):
+        value = raw_metadata.get(key)
+        if isinstance(value, str) and value:
+            normalized[key] = value
+
+    return normalized
+
+
 def _find_command_bundle_by_request_key(request_key: str) -> tuple[Path, dict[str, object]] | None:
     for directory in _command_bundle_dirs():
         if not directory.exists():

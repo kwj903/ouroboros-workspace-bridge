@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import parse_qs
 from uuid import uuid4
 
 import server
@@ -91,6 +92,156 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertEqual([item["bundle_id"] for item in review.list_bundles("pending")], ["cmd-pending"])
         self.assertEqual([item["bundle_id"] for item in review.list_bundles("applied")], ["cmd-applied"])
         self.assertEqual(len(review.list_bundles("all")), 2)
+
+    def test_bundle_metadata_badges_render_defaults_for_old_bundle(self) -> None:
+        html = review.bundle_metadata_badges_html({"bundle_id": "cmd-old", "cwd": "."})
+
+        self.assertIn("mode: direct", html)
+        self.assertIn("project: sha256:", html)
+        self.assertIn("task: default", html)
+        self.assertIn("client: default", html)
+        self.assertIn("session: default", html)
+
+    def test_metadata_badges_compact_project_id(self) -> None:
+        html = review.metadata_badges_html(
+            {
+                "workspace_mode": "direct",
+                "project_id": "sha256:1234567890abcdef",
+                "task_id": "task-a",
+                "client_id": "client-a",
+                "session_id": "session-a",
+            }
+        )
+
+        self.assertIn("project: sha256:12345678", html)
+        self.assertNotIn("1234567890abcdef", html)
+
+    def test_bundle_metadata_filter_uses_and_conditions(self) -> None:
+        rows = [
+            {
+                "bundle_id": "cmd-a",
+                "cwd": ".",
+                "metadata": {
+                    "workspace_mode": "direct",
+                    "project_id": "project-a",
+                    "task_id": "task-a",
+                    "client_id": "client-a",
+                    "session_id": "session-a",
+                },
+            },
+            {
+                "bundle_id": "cmd-b",
+                "cwd": ".",
+                "metadata": {
+                    "workspace_mode": "direct",
+                    "project_id": "project-a",
+                    "task_id": "task-a",
+                    "client_id": "client-a",
+                    "session_id": "session-b",
+                },
+            },
+        ]
+
+        filtered = review.filter_bundle_records_by_metadata(
+            rows,
+            {
+                "workspace_mode": "direct",
+                "project_id": "project-a",
+                "task_id": "task-a",
+                "client_id": "client-a",
+                "session_id": "session-a",
+            },
+        )
+
+        self.assertEqual([item["bundle_id"] for item in filtered], ["cmd-a"])
+
+    def test_bundle_metadata_filter_preserves_unfiltered_rows_and_old_defaults(self) -> None:
+        rows = [
+            {"bundle_id": "cmd-new", "cwd": ".", "metadata": {"workspace_mode": "direct", "client_id": "client-a"}},
+            {"bundle_id": "cmd-old", "cwd": "."},
+        ]
+
+        self.assertIs(review.filter_bundle_records_by_metadata(rows, {}), rows)
+        filtered = review.filter_bundle_records_by_metadata(
+            rows,
+            {
+                "workspace_mode": "direct",
+                "client_id": "default",
+                "session_id": "",
+                "project_id": None,
+                "task_id": None,
+            },
+        )
+
+        self.assertEqual([item["bundle_id"] for item in filtered], ["cmd-old"])
+
+    def test_bundle_metadata_query_filters_pending_and_history_rows(self) -> None:
+        self.write_bundle_record(
+            "pending",
+            {
+                "bundle_id": "cmd-pending-a",
+                "title": "Pending A",
+                "cwd": ".",
+                "status": "pending",
+                "risk": "low",
+                "updated_at": "2026-01-02T00:00:00+00:00",
+                "steps": [],
+                "metadata": {"client_id": "client-a", "session_id": "session-a", "workspace_mode": "direct"},
+            },
+        )
+        self.write_bundle_record(
+            "pending",
+            {
+                "bundle_id": "cmd-pending-b",
+                "title": "Pending B",
+                "cwd": ".",
+                "status": "pending",
+                "risk": "low",
+                "updated_at": "2026-01-03T00:00:00+00:00",
+                "steps": [],
+                "metadata": {"client_id": "client-a", "session_id": "session-b", "workspace_mode": "direct"},
+            },
+        )
+        self.write_bundle_record(
+            "applied",
+            {
+                "bundle_id": "cmd-applied-a",
+                "title": "Applied A",
+                "cwd": ".",
+                "status": "applied",
+                "risk": "low",
+                "updated_at": "2026-01-04T00:00:00+00:00",
+                "steps": [],
+                "metadata": {"client_id": "client-a", "session_id": "session-a", "workspace_mode": "direct"},
+            },
+        )
+        filters = review.metadata_filter_params(parse_qs("client_id=client-a&session_id=session-a"))
+
+        self.assertEqual([item["bundle_id"] for item in review.pending_bundles()], ["cmd-pending-b", "cmd-pending-a"])
+        self.assertEqual(
+            [item["bundle_id"] for item in review.filter_bundle_records_by_metadata(review.pending_bundles(), filters)],
+            ["cmd-pending-a"],
+        )
+        self.assertEqual(
+            [
+                item["bundle_id"]
+                for item in review.filter_bundle_records_by_metadata(review.list_bundles("all"), filters)
+            ],
+            ["cmd-applied-a", "cmd-pending-a"],
+        )
+
+    def test_metadata_filter_params_support_query_strings_and_status_links(self) -> None:
+        filters = review.metadata_filter_params(
+            parse_qs("client_id=client-a&session_id=%20&workspace_mode=direct")
+        )
+
+        self.assertEqual(filters["client_id"], "client-a")
+        self.assertEqual(filters["workspace_mode"], "direct")
+        html = review.status_filter_links_html("pending", filters)
+
+        self.assertIn("client_id=client-a", html)
+        self.assertIn("workspace_mode=direct", html)
+        self.assertNotIn("session_id=", html)
 
     def test_latest_pending_bundle_id_uses_newest_pending(self) -> None:
         self.write_bundle("pending", "cmd-old", "2026-01-01T00:00:00+00:00")
@@ -353,6 +504,31 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("/pending?bundle_id=cmd-latest", html)
         self.assertIn("&quot;bundle_id&quot;: &quot;cmd-latest&quot;", html)
 
+    def test_latest_handoff_html_handles_old_handoff_and_metadata_filters(self) -> None:
+        handoffs.HANDOFF_DIR.mkdir(parents=True, exist_ok=True)
+        (handoffs.HANDOFF_DIR / "handoff-cmd-old.json").write_text(
+            json.dumps(
+                {
+                    "handoff_id": "handoff-cmd-old",
+                    "bundle_id": "cmd-old",
+                    "status": "applied",
+                    "ok": True,
+                    "risk": "low",
+                    "title": "Old handoff",
+                    "cwd": ".",
+                    "next": "continue",
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertIn("cmd-old", review.latest_handoff_html())
+        self.assertEqual(review.latest_handoff_html({"client_id": "client-a"}), "")
+
     def test_latest_handoff_payload_returns_latest_handoff_json(self) -> None:
         handoffs.write_handoff_from_bundle(
             {
@@ -382,6 +558,8 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("browser companion", english.lower())
         self.assertIn("is discontinued", english)
         self.assertIn("workspace_recover_last_activity", english)
+        self.assertIn("workspace_get_handoff_for_bundle", english)
+        self.assertIn("global latest", english)
         self.assertIn("workspace_propose_command_and_wait", korean)
         self.assertIn("workspace_propose_file_replace_and_wait", korean)
         self.assertIn("workspace_propose_git_push_and_wait", korean)
@@ -389,6 +567,8 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("browser companion", korean.lower())
         self.assertIn("중단", korean)
         self.assertIn("workspace_recover_last_activity", korean)
+        self.assertIn("workspace_get_handoff_for_bundle", korean)
+        self.assertIn("global latest", korean)
 
     def test_short_error_truncates_long_strings(self) -> None:
         error = review.short_error("x" * 200, max_chars=20)

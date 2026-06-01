@@ -216,6 +216,38 @@ class PatchBundleStagingTests(unittest.TestCase):
         self.assertNotIn("patch", step)
         self.assertEqual(step["files"], [patch_path])
 
+    def test_propose_command_bundle_records_default_metadata(self) -> None:
+        original_wait_impl = server._workspace_wait_command_bundle_status_impl
+
+        def immediate_wait(bundle_id: str, timeout_seconds: int, poll_interval_seconds: float) -> server.CommandBundleStatusResult:
+            return server._workspace_command_bundle_status_impl(bundle_id)
+
+        server._workspace_wait_command_bundle_status_impl = immediate_wait
+        try:
+            result = server.workspace_propose_command_and_wait(
+                title=f"Metadata command {uuid4().hex[:8]}",
+                cwd=self.project_cwd(),
+                argv=["git", "status", "--short"],
+                timeout_seconds=1,
+                poll_interval_seconds=0.2,
+            )
+        finally:
+            server._workspace_wait_command_bundle_status_impl = original_wait_impl
+
+        self.bundle_ids.append(result.bundle_id)
+        record = server._read_json(server._command_bundle_path(result.bundle_id, "pending"))
+        metadata = record.get("metadata")
+
+        self.assertIsInstance(metadata, dict)
+        self.assertIsNone(metadata["task_id"])
+        self.assertEqual(metadata["client_id"], "default")
+        self.assertEqual(metadata["session_id"], "default")
+        self.assertTrue(str(metadata["project_id"]).startswith("sha256:"))
+        self.assertEqual(metadata["workspace_mode"], "direct")
+        self.assertEqual(metadata["source_cwd"], self.project_cwd())
+        self.assertEqual(metadata["effective_cwd"], self.project_cwd())
+        self.assertEqual(result.metadata, metadata)
+
     def test_rejects_invalid_patch_path(self) -> None:
         patch = new_file_patch("../outside.md")
 

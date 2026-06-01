@@ -43,21 +43,28 @@ The current default is the bundle-first MCP flow: ChatGPT submits a durable bund
    ```text
    /pending
    /pending?bundle_id=<bundle_id>
+   /pending?project_id=<project_id>
+   /history?client_id=<client_id>&workspace_mode=direct
    ```
 
    The bundle-focused page shows `pending`, `applied`, `failed`, and `rejected` records. It includes a compact `Copy for ChatGPT` JSON block.
+
+   Pending and history cards show compact metadata badges for workspace mode, project, task, client, and session when available. Query filters are ANDed. Empty filter values are ignored.
 
 4. Continue from the result.
 
    Preferred continuation order:
 
    ```text
+   workspace_get_handoff_for_bundle
    workspace_next_handoff
    workspace_list_handoffs
    Copy for ChatGPT JSON
    workspace_command_bundle_status
    workspace_recover_last_activity
    ```
+
+   `workspace_next_handoff` is a backwards-compatible global latest handoff stream. In concurrent sessions, prefer `workspace_get_handoff_for_bundle(bundle_id)` or filtered `workspace_list_handoffs(...)` to avoid reading another session's latest result.
 
    Use `workspace_recover_last_activity` for debugging or interrupted calls, not as the normal continuation path.
 
@@ -66,14 +73,14 @@ The current default is the bundle-first MCP flow: ChatGPT submits a durable bund
 Preferred order:
 
 1. Read-only inspection tools
-2. `workspace_stage_*_and_wait` proposal tools
+2. `workspace_propose_*_and_wait` proposal tools
 3. Local pending review UI approval
 4. Bundle status / recovery tools
 5. Handoff tools for advanced continuation or debugging
 6. Payload / patch helper tools only when large documents or patches are needed
 7. Submit-first, signed intent, and direct operation/trash tools stay hidden from the default public MCP schema
 
-`workspace_stage_*_and_wait` tools are the default public mutation path. They create `/pending` proposals and briefly wait for status. If a proposal remains pending, continue with `workspace_command_bundle_status`, `workspace_wait_command_bundle_status`, or `workspace_recover_last_activity`.
+`workspace_propose_*_and_wait` tools are the default public mutation path. They create `/pending` proposals and briefly wait for status. If a proposal remains pending, continue with `workspace_command_bundle_status`, `workspace_wait_command_bundle_status`, or `workspace_recover_last_activity`.
 
 ## Signed Intent / Direct Operation Tools
 
@@ -88,7 +95,7 @@ workspace_list_operations
 workspace_list_trash
 ```
 
-Their implementations may remain available internally, but they are not exposed in the default ChatGPT connector to reduce tool-selection confusion. The default flow uses `workspace_stage_*_and_wait` proposal tools and the local `/pending` review UI.
+Their implementations may remain available internally, but they are not exposed in the default ChatGPT connector to reduce tool-selection confusion. The default flow uses `workspace_propose_*_and_wait` proposal tools and the local `/pending` review UI.
 
 The advanced Intent Inbox on `/pending` and the `/intents/import` route may remain available for internal or advanced workflows.
 
@@ -113,6 +120,8 @@ Useful local routes:
 ```text
 /pending
 /pending?bundle_id=<bundle_id>
+/pending?project_id=<project_id>
+/history?client_id=<client_id>&workspace_mode=direct
 /review-intent?token=...
 /review-intent/preview?token=...
 /intents/import
@@ -142,6 +151,7 @@ stdout_tail
 stderr_tail
 created_at
 updated_at
+metadata
 ```
 
 The tails are compact and token-like values are redacted.
@@ -164,11 +174,12 @@ Manual checks before considering this workflow healthy:
 
 - `/pending` has no page-level horizontal scroll.
 - Intent Inbox is collapsed under the advanced section.
-- `workspace_stage_*_and_wait` proposal tools create pending proposal bundles without directly applying changes.
+- `workspace_propose_*_and_wait` proposal tools create pending proposal bundles without directly applying changes.
 - Pending bundles can be approved or rejected in the local pending review UI.
 - A YOLO-applied bundle is still visible at `/pending?bundle_id=<bundle_id>`.
 - The bundle-focused page shows `Copy for ChatGPT` JSON.
-- `workspace_next_handoff` returns the latest handoff after local execution.
+- `workspace_next_handoff` returns the global latest handoff after local execution.
+- `workspace_get_handoff_for_bundle(bundle_id)` returns the handoff for the specific bundle.
 - Primitive stage tools are absent from `workspace_info().tools`.
 - JSON companion imports to `/intents/import` are rejected.
 - `bash scripts/check_all.sh` exits `0` when local checks pass and `npx` is missing.

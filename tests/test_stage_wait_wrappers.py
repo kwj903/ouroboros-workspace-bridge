@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
 import server
+from terminal_bridge.bundles import _default_command_bundle_metadata
 from terminal_bridge import tool_calls
+from terminal_bridge.mcp_tools.bundles import command_bundle_status_from_record, list_command_bundles
 from terminal_bridge.models import (
     CommandBundleAction,
+    CommandBundleListResult,
     CommandBundleStageResult,
     CommandBundleStatusResult,
     CommandBundleStep,
@@ -25,6 +29,10 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.original_submit_patch_impl = server._workspace_submit_patch_bundle_impl
         self.original_submit_action_impl = server._workspace_submit_action_bundle_impl
         self.original_submit_commit_impl = server._workspace_submit_commit_bundle_impl
+        self.original_stage_command_wait_impl = server._workspace_stage_command_bundle_and_wait_impl
+        self.original_stage_patch_wait_impl = server._workspace_stage_patch_bundle_and_wait_impl
+        self.original_stage_action_wait_impl = server._workspace_stage_action_bundle_and_wait_impl
+        self.original_stage_commit_wait_impl = server._workspace_stage_commit_bundle_and_wait_impl
         self.original_wait = server.workspace_wait_command_bundle_status
         self.original_wait_impl = server._workspace_wait_command_bundle_status_impl
         self.original_tool_call_dir = tool_calls.TOOL_CALL_DIR
@@ -40,6 +48,10 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         server._workspace_submit_patch_bundle_impl = self.original_submit_patch_impl
         server._workspace_submit_action_bundle_impl = self.original_submit_action_impl
         server._workspace_submit_commit_bundle_impl = self.original_submit_commit_impl
+        server._workspace_stage_command_bundle_and_wait_impl = self.original_stage_command_wait_impl
+        server._workspace_stage_patch_bundle_and_wait_impl = self.original_stage_patch_wait_impl
+        server._workspace_stage_action_bundle_and_wait_impl = self.original_stage_action_wait_impl
+        server._workspace_stage_commit_bundle_and_wait_impl = self.original_stage_commit_wait_impl
         server.workspace_wait_command_bundle_status = self.original_wait
         server._workspace_wait_command_bundle_status_impl = self.original_wait_impl
         tool_calls.TOOL_CALL_DIR = self.original_tool_call_dir
@@ -443,3 +455,204 @@ class ToolCallJournalTests(unittest.TestCase):
         self.assertEqual([record["call_id"] for record in listed], [call_id])
         with self.assertRaises(ValueError):
             tool_calls.read_tool_call("call-99999999-999999-bad")
+
+
+class CommandBundleMetadataTests(unittest.TestCase):
+    def test_status_from_old_record_without_metadata_uses_defaults(self) -> None:
+        record: dict[str, object] = {
+            "bundle_id": "cmd-old",
+            "title": "Old bundle",
+            "cwd": "project",
+            "status": "applied",
+            "risk": "low",
+            "approval_required": True,
+            "created_at": "2026-06-02T00:00:00+00:00",
+            "updated_at": "2026-06-02T00:00:01+00:00",
+            "steps": [{"type": "command"}],
+        }
+
+        result = command_bundle_status_from_record(record, "cmd-old")
+
+        self.assertEqual(result.metadata, _default_command_bundle_metadata("project"))
+        self.assertEqual(result.metadata["client_id"], "default")
+        self.assertEqual(result.metadata["workspace_mode"], "direct")
+
+    def test_list_command_bundles_exposes_metadata_and_handles_old_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            old_record: dict[str, object] = {
+                "bundle_id": "cmd-old",
+                "title": "Old bundle",
+                "cwd": "legacy",
+                "status": "pending",
+                "risk": "low",
+                "updated_at": "2026-06-02T00:00:01+00:00",
+                "steps": [],
+            }
+            new_record: dict[str, object] = {
+                "bundle_id": "cmd-new",
+                "title": "New bundle",
+                "cwd": "project",
+                "status": "pending",
+                "risk": "medium",
+                "updated_at": "2026-06-02T00:00:02+00:00",
+                "steps": [{"type": "command"}],
+                "metadata": {
+                    **_default_command_bundle_metadata("project"),
+                    "task_id": "task-123",
+                    "client_id": "client-a",
+                },
+            }
+            (directory / "cmd-old.json").write_text(json.dumps(old_record), encoding="utf-8")
+            (directory / "cmd-new.json").write_text(json.dumps(new_record), encoding="utf-8")
+
+            result = list_command_bundles(
+                lambda: [directory],
+                lambda path: json.loads(path.read_text(encoding="utf-8")),
+                limit=10,
+            )
+
+        entries = {entry.bundle_id: entry for entry in result.entries}
+        self.assertEqual(result.count, 2)
+        self.assertEqual(entries["cmd-old"].metadata, _default_command_bundle_metadata("legacy"))
+        self.assertEqual(entries["cmd-new"].metadata["task_id"], "task-123")
+        self.assertEqual(entries["cmd-new"].metadata["client_id"], "client-a")
+
+    def test_list_command_bundles_filters_metadata_with_and_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            records = [
+                {
+                    "bundle_id": "cmd-old",
+                    "title": "Old bundle",
+                    "cwd": "legacy",
+                    "status": "pending",
+                    "risk": "low",
+                    "updated_at": "2026-06-02T00:00:04+00:00",
+                    "steps": [],
+                },
+                {
+                    "bundle_id": "cmd-a",
+                    "title": "A",
+                    "cwd": "project",
+                    "status": "pending",
+                    "risk": "low",
+                    "updated_at": "2026-06-02T00:00:03+00:00",
+                    "steps": [],
+                    "metadata": {
+                        "task_id": "task-1",
+                        "client_id": "client-a",
+                        "session_id": "session-a",
+                        "project_id": "project-alpha",
+                        "workspace_mode": "direct",
+                    },
+                },
+                {
+                    "bundle_id": "cmd-b",
+                    "title": "B",
+                    "cwd": "project",
+                    "status": "pending",
+                    "risk": "low",
+                    "updated_at": "2026-06-02T00:00:02+00:00",
+                    "steps": [],
+                    "metadata": {
+                        "task_id": "task-1",
+                        "client_id": "client-a",
+                        "session_id": "session-b",
+                        "project_id": "project-alpha",
+                        "workspace_mode": "task-workspace",
+                    },
+                },
+                {
+                    "bundle_id": "cmd-c",
+                    "title": "C",
+                    "cwd": "project",
+                    "status": "pending",
+                    "risk": "low",
+                    "updated_at": "2026-06-02T00:00:01+00:00",
+                    "steps": [],
+                    "metadata": {
+                        "task_id": "task-2",
+                        "client_id": "client-b",
+                        "session_id": "session-a",
+                        "project_id": "project-beta",
+                        "workspace_mode": "direct",
+                    },
+                },
+            ]
+            for record in records:
+                (directory / f"{record['bundle_id']}.json").write_text(json.dumps(record), encoding="utf-8")
+
+            def run_list(**filters: str | None) -> list[str]:
+                result = list_command_bundles(
+                    lambda: [directory],
+                    lambda path: json.loads(path.read_text(encoding="utf-8")),
+                    limit=10,
+                    **filters,
+                )
+                return [entry.bundle_id for entry in result.entries]
+
+            legacy_project_id = str(_default_command_bundle_metadata("legacy")["project_id"])
+
+            self.assertEqual(run_list(), ["cmd-old", "cmd-a", "cmd-b", "cmd-c"])
+            self.assertEqual(run_list(client_id="client-a"), ["cmd-a", "cmd-b"])
+            self.assertEqual(run_list(session_id="session-a"), ["cmd-a", "cmd-c"])
+            self.assertEqual(run_list(project_id="project-alpha"), ["cmd-a", "cmd-b"])
+            self.assertEqual(run_list(workspace_mode="task-workspace"), ["cmd-b"])
+            self.assertEqual(run_list(task_id="task-1"), ["cmd-a", "cmd-b"])
+            self.assertEqual(run_list(task_id="task-1", session_id="session-b", workspace_mode="task-workspace"), ["cmd-b"])
+            self.assertEqual(run_list(client_id="default", project_id=legacy_project_id), ["cmd-old"])
+            self.assertEqual(run_list(client_id=""), ["cmd-old", "cmd-a", "cmd-b", "cmd-c"])
+
+    def test_workspace_list_command_bundles_forwards_metadata_filters(self) -> None:
+        original_list_command_bundles = server._bundle_list_command_bundles
+        captured: dict[str, object] = {}
+
+        def fake_list_command_bundles(
+            command_bundle_dirs: object,
+            read_json: object,
+            limit: int,
+            *,
+            task_id: str | None = None,
+            client_id: str | None = None,
+            session_id: str | None = None,
+            project_id: str | None = None,
+            workspace_mode: str | None = None,
+        ) -> CommandBundleListResult:
+            captured.update(
+                {
+                    "limit": limit,
+                    "task_id": task_id,
+                    "client_id": client_id,
+                    "session_id": session_id,
+                    "project_id": project_id,
+                    "workspace_mode": workspace_mode,
+                }
+            )
+            return CommandBundleListResult(entries=[], count=0)
+
+        server._bundle_list_command_bundles = fake_list_command_bundles
+        try:
+            result = server.workspace_list_command_bundles(
+                limit=3,
+                task_id="task-1",
+                client_id="client-a",
+                session_id="session-a",
+                project_id="project-alpha",
+                workspace_mode="direct",
+            )
+        finally:
+            server._bundle_list_command_bundles = original_list_command_bundles
+
+        self.assertEqual(result.count, 0)
+        self.assertEqual(
+            captured,
+            {
+                "limit": 3,
+                "task_id": "task-1",
+                "client_id": "client-a",
+                "session_id": "session-a",
+                "project_id": "project-alpha",
+                "workspace_mode": "direct",
+            },
+        )

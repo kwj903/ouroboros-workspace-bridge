@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class WorkspaceInfo(BaseModel):
@@ -139,6 +139,7 @@ class CommandBundleStatusResult(BaseModel):
     updated_at: str
     result: dict[str, object] | None = None
     error: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class CommandBundleListEntry(BaseModel):
@@ -149,6 +150,7 @@ class CommandBundleListEntry(BaseModel):
     risk: str
     command_count: int
     updated_at: str
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class CommandBundleListResult(BaseModel):
@@ -262,6 +264,7 @@ class HandoffEntry(BaseModel):
     stderr_tail: str
     created_at: str
     updated_at: str
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class HandoffListResult(BaseModel):

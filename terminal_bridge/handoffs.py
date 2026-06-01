@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from terminal_bridge.config import HANDOFF_DIR
+from terminal_bridge.mcp_tools.metadata_filters import metadata_matches_filters
 from terminal_bridge.storage import _now_iso, _read_json, _write_json
 
 
@@ -20,6 +21,12 @@ def _handoff_path(handoff_id: str) -> Path:
     if not handoff_id.startswith("handoff-") or "/" in handoff_id or "\\" in handoff_id:
         raise ValueError("Invalid handoff id.")
     return HANDOFF_DIR / f"{handoff_id}.json"
+
+
+def _validate_bundle_id(bundle_id: str) -> str:
+    if not bundle_id.startswith("cmd-") or "/" in bundle_id or "\\" in bundle_id:
+        raise ValueError("Invalid command bundle id.")
+    return bundle_id
 
 
 def _mask_sensitive_text(value: object) -> str:
@@ -87,6 +94,7 @@ def handoff_from_bundle_record(record: dict[str, object]) -> dict[str, object]:
     now = _now_iso()
     created_at = str(existing.get("created_at", now))
     ok: bool | None = True if status == "applied" and not error else False
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
 
     return {
         "handoff_id": handoff_id,
@@ -101,6 +109,7 @@ def handoff_from_bundle_record(record: dict[str, object]) -> dict[str, object]:
         "stderr_tail": stderr_tail or _compact_tail(error),
         "created_at": created_at,
         "updated_at": now,
+        "metadata": metadata,
     }
 
 
@@ -122,7 +131,13 @@ def read_handoff(handoff_id: str) -> dict[str, object] | None:
     return _compact_handoff_record(record)
 
 
+def handoff_for_bundle(bundle_id: str) -> dict[str, object] | None:
+    normalized_bundle_id = _validate_bundle_id(bundle_id)
+    return read_handoff(f"handoff-{normalized_bundle_id}")
+
+
 def _compact_handoff_record(record: dict[str, object]) -> dict[str, object]:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     return {
         "handoff_id": str(record.get("handoff_id", "")),
         "bundle_id": str(record.get("bundle_id", "")),
@@ -136,20 +151,40 @@ def _compact_handoff_record(record: dict[str, object]) -> dict[str, object]:
         "stderr_tail": _compact_tail(record.get("stderr_tail")),
         "created_at": str(record.get("created_at", "")),
         "updated_at": str(record.get("updated_at", "")),
+        "metadata": metadata,
     }
 
 
-def list_handoffs(limit: int = 20) -> list[dict[str, object]]:
+def list_handoffs(
+    limit: int = 20,
+    *,
+    task_id: str | None = None,
+    client_id: str | None = None,
+    session_id: str | None = None,
+    project_id: str | None = None,
+    workspace_mode: str | None = None,
+) -> list[dict[str, object]]:
     if limit < 1 or not HANDOFF_DIR.exists():
         return []
 
     records: list[dict[str, object]] = []
+    filters = {
+        "task_id": task_id,
+        "client_id": client_id,
+        "session_id": session_id,
+        "project_id": project_id,
+        "workspace_mode": workspace_mode,
+    }
     for path in HANDOFF_DIR.glob("handoff-*.json"):
         try:
             record = _read_json(path)
         except Exception:
             continue
-        records.append(_compact_handoff_record(record))
+        compact = _compact_handoff_record(record)
+        metadata = compact.get("metadata") if isinstance(compact.get("metadata"), dict) else {}
+        if not metadata_matches_filters(metadata, filters):
+            continue
+        records.append(compact)
 
     records.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
     return records[:limit]

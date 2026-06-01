@@ -11,11 +11,12 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TypedDict
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -38,7 +39,13 @@ from terminal_bridge.approval_modes import (
     normalize_approval_mode,
     save_approval_mode,
 )
+from terminal_bridge.bundles import _normalize_command_bundle_metadata
 from terminal_bridge.handoffs import handoff_json, list_handoffs, next_handoff
+from terminal_bridge.mcp_tools.metadata_filters import (
+    METADATA_FILTER_KEYS,
+    active_metadata_filters,
+    metadata_matches_filters,
+)
 from terminal_bridge.review_intents import intent_import_redirect_location
 from terminal_bridge.review_layout import (
     SERVER_TAB_LABELS,
@@ -162,6 +169,40 @@ def _bundle_rows_state(rows: list[dict[str, object]]) -> BundleRowsState:
 
 def list_bundles(status_filter: str = "all") -> list[dict[str, object]]:
     return _load_bundle_records(status_filter)
+
+
+def metadata_filter_params(params: Mapping[str, list[str]]) -> dict[str, str | None]:
+    filters: dict[str, str | None] = {}
+    for key in METADATA_FILTER_KEYS:
+        filters[key] = params.get(key, [""])[0]
+    return filters
+
+
+def metadata_filter_url(
+    path: str,
+    filters: Mapping[str, str | None],
+    *,
+    status_filter: str | None = None,
+) -> str:
+    query_values: dict[str, str] = {}
+    if status_filter is not None:
+        query_values["status"] = normalize_status_filter(status_filter)
+    query_values.update(active_metadata_filters(filters))
+    query = urlencode(query_values)
+    return f"{path}?{query}" if query else path
+
+
+def filter_bundle_records_by_metadata(
+    rows: list[dict[str, object]],
+    filters: Mapping[str, str | None],
+) -> list[dict[str, object]]:
+    if not active_metadata_filters(filters):
+        return rows
+    return [
+        record
+        for record in rows
+        if metadata_matches_filters(_normalize_command_bundle_metadata(record), filters)
+    ]
 
 
 def pending_bundles() -> list[dict[str, object]]:
@@ -382,8 +423,9 @@ def intent_inbox_html() -> str:
     """
 
 
-def latest_handoff_html() -> str:
-    records = list_handoffs(1)
+def latest_handoff_html(metadata_filters: Mapping[str, str | None] | None = None) -> str:
+    active_filters = active_metadata_filters(metadata_filters or {})
+    records = list_handoffs(1, **active_filters)
     if not records:
         return ""
 
@@ -393,6 +435,7 @@ def latest_handoff_html() -> str:
     return f"""
     <section class="card">
       <h2>Latest handoff / Copy for ChatGPT</h2>
+      {handoff_metadata_badges_html(record)}
       <p class="meta">
         최근 완료된 bundle: <a href="/pending?bundle_id={escape(bundle_id)}"><code>{escape(bundle_id)}</code></a>
       </p>
@@ -777,8 +820,12 @@ def bool_label(value: object) -> str:
     return "예" if bool(value) else "아니오"
 
 
-def status_filter_links_html(current: str) -> str:
+def status_filter_links_html(
+    current: str,
+    metadata_filters: Mapping[str, str | None] | None = None,
+) -> str:
     current = normalize_status_filter(current)
+    filters = metadata_filters or {}
     labels = {
         "all": "전체",
         "pending": "승인 대기",
@@ -794,8 +841,9 @@ def status_filter_links_html(current: str) -> str:
                 f'<span class="subnav-link is-active" aria-current="page">{escape(label)}</span>'
             )
         else:
+            href = metadata_filter_url("/bundles", filters, status_filter=status)
             links.append(
-                f'<a class="subnav-link" href="/bundles?status={escape(status)}">{escape(label)}</a>'
+                f'<a class="subnav-link" href="{escape(href)}">{escape(label)}</a>'
             )
     return '<div class="subnav"><span class="meta-label">필터</span>' + "".join(links) + "</div>"
 
@@ -808,6 +856,97 @@ def status_badge(label: str, tone: str) -> str:
 
 def status_chip(label: str, tone: str) -> str:
     return status_badge(label, tone)
+
+
+def compact_metadata_display(key: str, value: object) -> str:
+    text = str(value or "").strip()
+    if key == "project_id" and text.startswith("sha256:"):
+        digest = text.removeprefix("sha256:")
+        return f"sha256:{digest[:8]}" if len(digest) > 8 else text
+    if key == "project_id" and len(text) > 18:
+        return text[:18]
+    return text
+
+
+def metadata_badges_html(metadata: Mapping[str, object]) -> str:
+    badges: list[str] = []
+    labels = {
+        "workspace_mode": "mode",
+        "project_id": "project",
+        "task_id": "task",
+        "client_id": "client",
+        "session_id": "session",
+    }
+    for key in ("workspace_mode", "project_id", "task_id", "client_id", "session_id"):
+        value = metadata.get(key)
+        if key == "task_id":
+            display = compact_metadata_display(key, value) or "default"
+        else:
+            display = compact_metadata_display(key, value)
+        if not display:
+            continue
+        badges.append(status_badge(f"{labels[key]}: {display}", "neutral"))
+    if not badges:
+        return ""
+    return '<div class="subnav">' + "".join(badges) + "</div>"
+
+
+def bundle_metadata_badges_html(record: dict[str, object]) -> str:
+    return metadata_badges_html(_normalize_command_bundle_metadata(record))
+
+
+def handoff_metadata_badges_html(record: dict[str, object]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    return metadata_badges_html(metadata)
+
+
+def metadata_filter_input_html(name: str, filters: Mapping[str, str | None]) -> str:
+    value = filters.get(name) or ""
+    return f"""
+      <label class="meta" style="display: grid; gap: 6px; min-width: 0;">
+        <span class="meta-label">{escape(name)}</span>
+        <input
+          type="text"
+          name="{escape(name)}"
+          value="{escape(value)}"
+          autocomplete="off"
+          style="width: 100%; box-sizing: border-box; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-strong); color: inherit;"
+        >
+      </label>
+    """
+
+
+def metadata_filter_form_html(
+    action_path: str,
+    filters: Mapping[str, str | None],
+    *,
+    status_filter: str | None = None,
+) -> str:
+    active_filters = active_metadata_filters(filters)
+    status_input = ""
+    if status_filter is not None:
+        status_input = f'<input type="hidden" name="status" value="{escape(normalize_status_filter(status_filter))}">'
+    inputs = "\n".join(metadata_filter_input_html(key, filters) for key in METADATA_FILTER_KEYS)
+    clear_href = metadata_filter_url(action_path, {}, status_filter=status_filter)
+    active_badge = (
+        status_badge(f"{len(active_filters)} active", "ok")
+        if active_filters
+        else status_badge("no metadata filter", "neutral")
+    )
+    return f"""
+    <form class="card" method="get" action="{escape(action_path)}">
+      <h2>Metadata filters</h2>
+      {status_input}
+      <div class="card-grid">
+        {inputs}
+      </div>
+      <div class="button-row">
+        <button class="secondary" type="submit">필터 적용</button>
+        <a class="subnav-link" href="{escape(clear_href)}">초기화</a>
+        {active_badge}
+      </div>
+    </form>
+    """
 
 
 def approval_mode_label(mode: str) -> str:
@@ -1409,6 +1548,7 @@ def bundle_card_html(record: dict[str, object]) -> str:
     return f"""
     <div class="card{failed_class}">
       <h2><a href="/bundles/{escape(bundle_id)}">{escape(record.get("title", ""))}</a></h2>
+      {bundle_metadata_badges_html(record)}
       <p class="meta">
         ID: <code>{escape(bundle_id)}</code><br>
         작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
@@ -1528,6 +1668,7 @@ def bundle_detail_html(path: Path, record: dict[str, object]) -> str:
     {bundle_error_block}
     <div class="card">
       <h2>{escape(record.get("title", bundle_id))}</h2>
+      {bundle_metadata_badges_html(record)}
       <p class="meta">
         ID: <code>{escape(bundle_id)}</code><br>
         작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
@@ -1951,6 +2092,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/pending":
             params = parse_qs(parsed.query)
+            metadata_filters = metadata_filter_params(params)
             focused_bundle_id = params.get("bundle_id", [""])[0]
             if focused_bundle_id:
                 try:
@@ -1967,7 +2109,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
 
-            rows = pending_bundles()
+            rows = filter_bundle_records_by_metadata(pending_bundles(), metadata_filters)
             approval_mode = load_approval_mode()
             cards = []
             for record in rows:
@@ -1976,6 +2118,7 @@ class Handler(BaseHTTPRequestHandler):
                     f"""
                     <div class="card">
                       <h2><a href="/bundles/{escape(bundle_id)}">{escape(record.get("title", ""))}</a></h2>
+                      {bundle_metadata_badges_html(record)}
                       <p class="meta">
                         ID: <code>{escape(bundle_id)}</code><br>
                         작업 위치: <code>{escape(record.get("cwd", ""))}</code><br>
@@ -1998,8 +2141,9 @@ class Handler(BaseHTTPRequestHandler):
                 approval_mode_banner_html(approval_mode)
                 + approval_mode_card_html(approval_mode)
                 + "<p><a href='/history'>전체 이력 보기</a></p>"
+                + metadata_filter_form_html("/pending", metadata_filters)
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
-                + latest_handoff_html()
+                + latest_handoff_html(metadata_filters)
                 + intent_inbox_html()
                 + command_bundle_poll_script()
             )
@@ -2053,7 +2197,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path in {"/", "/bundles", "/history"}:
             params = parse_qs(parsed.query)
             status_filter = normalize_status_filter(params.get("status", ["all"])[0])
-            rows = list_bundles(status_filter)
+            metadata_filters = metadata_filter_params(params)
+            rows = filter_bundle_records_by_metadata(list_bundles(status_filter), metadata_filters)
             cards = [bundle_card_html(record) for record in rows]
 
             self.send_html(
@@ -2062,7 +2207,8 @@ class Handler(BaseHTTPRequestHandler):
                     history_summary_html(history_state())
                     + "<p><a href='/pending'>승인 대기 보기</a> · "
                     "<a href='/history'>새로고침</a></p>"
-                    + status_filter_links_html(status_filter)
+                    + status_filter_links_html(status_filter, metadata_filters)
+                    + metadata_filter_form_html("/history", metadata_filters, status_filter=status_filter)
                     + ("\n".join(cards) if cards else "<p>번들이 없습니다.</p>")
                 ),
                 active_nav="history",

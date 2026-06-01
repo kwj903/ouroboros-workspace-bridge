@@ -33,7 +33,9 @@ CommandBundleDirs = Callable[[], list[Path]]
 ReadJson = Callable[[Path], dict[str, object]]
 ReadAuditLog = Callable[[int], AuditLogResult]
 ListRecords = Callable[[int], list[dict[str, object]]]
+ListHandoffRecords = Callable[..., list[dict[str, object]]]
 NextRecord = Callable[[], dict[str, object] | None]
+GetRecordById = Callable[[str], dict[str, object] | None]
 ReadRecord = Callable[[str], dict[str, object]]
 StatusResult = Callable[[dict[str, object]], ToolCallStatusResult]
 NormalizeId = Callable[[str], str]
@@ -256,7 +258,13 @@ def handoff_entry(record: dict[str, object]) -> HandoffEntry:
         stderr_tail=str(record.get("stderr_tail", "")),
         created_at=str(record.get("created_at", "")),
         updated_at=str(record.get("updated_at", "")),
+        metadata=record.get("metadata") if isinstance(record.get("metadata"), dict) else {},
     )
+
+
+def handoff_for_bundle(handoff_for_bundle_record: GetRecordById, bundle_id: str) -> HandoffEntry | None:
+    record = handoff_for_bundle_record(bundle_id)
+    return handoff_entry(record) if record is not None else None
 
 
 def next_handoff(next_handoff_record: NextRecord) -> HandoffEntry | None:
@@ -264,8 +272,27 @@ def next_handoff(next_handoff_record: NextRecord) -> HandoffEntry | None:
     return handoff_entry(record) if record is not None else None
 
 
-def list_handoffs(list_handoff_records: ListRecords, limit: int) -> HandoffListResult:
-    entries = [handoff_entry(record) for record in list_handoff_records(limit)]
+def list_handoffs(
+    list_handoff_records: ListHandoffRecords,
+    limit: int,
+    *,
+    task_id: str | None = None,
+    client_id: str | None = None,
+    session_id: str | None = None,
+    project_id: str | None = None,
+    workspace_mode: str | None = None,
+) -> HandoffListResult:
+    entries = [
+        handoff_entry(record)
+        for record in list_handoff_records(
+            limit,
+            task_id=task_id,
+            client_id=client_id,
+            session_id=session_id,
+            project_id=project_id,
+            workspace_mode=workspace_mode,
+        )
+    ]
     return HandoffListResult(entries=entries, count=len(entries))
 
 

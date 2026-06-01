@@ -4,6 +4,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from terminal_bridge.bundles import _normalize_command_bundle_metadata
+from terminal_bridge.mcp_tools.metadata_filters import metadata_matches_filters
 from terminal_bridge.models import (
     CommandBundleAction,
     CommandBundleListEntry,
@@ -31,6 +33,7 @@ def command_bundle_status_from_record(
     bundle_id: str,
 ) -> CommandBundleStatusResult:
     steps = record.get("steps") if isinstance(record.get("steps"), list) else []
+    metadata = _normalize_command_bundle_metadata(record)
 
     return CommandBundleStatusResult(
         bundle_id=str(record.get("bundle_id", bundle_id)),
@@ -44,6 +47,7 @@ def command_bundle_status_from_record(
         updated_at=str(record.get("updated_at", "")),
         result=record.get("result") if isinstance(record.get("result"), dict) else None,
         error=record.get("error") if isinstance(record.get("error"), str) else None,
+        metadata=metadata,
     )
 
 
@@ -157,8 +161,21 @@ def list_command_bundles(
     command_bundle_dirs: CommandBundleDirs,
     read_json: ReadJson,
     limit: int,
+    *,
+    task_id: str | None = None,
+    client_id: str | None = None,
+    session_id: str | None = None,
+    project_id: str | None = None,
+    workspace_mode: str | None = None,
 ) -> CommandBundleListResult:
     entries: list[CommandBundleListEntry] = []
+    filters = {
+        "task_id": task_id,
+        "client_id": client_id,
+        "session_id": session_id,
+        "project_id": project_id,
+        "workspace_mode": workspace_mode,
+    }
 
     for directory in command_bundle_dirs():
         if not directory.exists():
@@ -171,6 +188,10 @@ def list_command_bundles(
                 continue
 
             steps = record.get("steps") if isinstance(record.get("steps"), list) else []
+            metadata = _normalize_command_bundle_metadata(record)
+            if not metadata_matches_filters(metadata, filters):
+                continue
+
             entries.append(
                 CommandBundleListEntry(
                     bundle_id=str(record.get("bundle_id", path.stem)),
@@ -180,6 +201,7 @@ def list_command_bundles(
                     risk=str(record.get("risk", "unknown")),
                     command_count=len(steps),
                     updated_at=str(record.get("updated_at", "")),
+                    metadata=metadata,
                 )
             )
 

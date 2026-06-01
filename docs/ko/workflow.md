@@ -43,21 +43,28 @@
    ```text
    /pending
    /pending?bundle_id=<bundle_id>
+   /pending?project_id=<project_id>
+   /history?client_id=<client_id>&workspace_mode=direct
    ```
 
    bundle-focused page는 `pending`, `applied`, `failed`, `rejected` 상태의 bundle을 모두 보여줍니다. 이 화면에는 compact한 `Copy for ChatGPT` JSON 블록이 있습니다.
+
+   Pending/history 카드는 workspace mode, project, task, client, session metadata badge를 가능한 경우 표시합니다. Query filter는 AND 조건이며 빈 filter 값은 무시합니다.
 
 4. 결과를 이어갑니다.
 
    권장 continuation 순서:
 
    ```text
+   workspace_get_handoff_for_bundle
    workspace_next_handoff
    workspace_list_handoffs
    Copy for ChatGPT JSON
    workspace_command_bundle_status
    workspace_recover_last_activity
    ```
+
+   `workspace_next_handoff`는 backwards-compatible global latest handoff stream입니다. 동시 세션에서는 다른 세션의 최신 결과를 읽지 않도록 `workspace_get_handoff_for_bundle(bundle_id)` 또는 filter가 적용된 `workspace_list_handoffs(...)`를 우선 사용하세요.
 
    `workspace_recover_last_activity`는 일반 continuation이 아니라 debug 또는 interrupted call 조사에 사용합니다.
 
@@ -66,14 +73,14 @@
 권장 순서:
 
 1. Read-only inspection tools
-2. `workspace_stage_*_and_wait` proposal tools
+2. `workspace_propose_*_and_wait` proposal tools
 3. Local pending review UI approval
 4. Bundle status / recovery tools
 5. Handoff tools는 고급 continuation 또는 debug 용도
 6. Payload / patch helper tools는 큰 문서나 patch가 필요할 때만 사용
 7. Submit-first, signed intent, direct operation/trash tools는 기본 public MCP schema에 노출하지 않음
 
-`workspace_stage_*_and_wait` tools는 현재 기본 public mutation path입니다. 이 wrapper들은 `/pending` proposal을 만들고 잠깐 status를 기다립니다. 사용자가 승인하지 않아 pending으로 남으면 `workspace_command_bundle_status`, `workspace_wait_command_bundle_status`, `workspace_recover_last_activity`로 이어서 확인합니다.
+`workspace_propose_*_and_wait` tools는 현재 기본 public mutation path입니다. 이 wrapper들은 `/pending` proposal을 만들고 잠깐 status를 기다립니다. 사용자가 승인하지 않아 pending으로 남으면 `workspace_command_bundle_status`, `workspace_wait_command_bundle_status`, `workspace_recover_last_activity`로 이어서 확인합니다.
 
 ## Signed Intent / Direct Operation Tools
 
@@ -88,7 +95,7 @@ workspace_list_operations
 workspace_list_trash
 ```
 
-구현은 내부에 남겨둘 수 있지만 ChatGPT 기본 연결 앱에서는 혼선을 줄이기 위해 노출하지 않습니다. 기본 흐름은 `workspace_stage_*_and_wait` proposal tools와 local `/pending` review UI를 사용합니다.
+구현은 내부에 남겨둘 수 있지만 ChatGPT 기본 연결 앱에서는 혼선을 줄이기 위해 노출하지 않습니다. 기본 흐름은 `workspace_propose_*_and_wait` proposal tools와 local `/pending` review UI를 사용합니다.
 
 `/pending`의 advanced Intent Inbox와 `/intents/import` route는 내부/고급 흐름을 위해 유지될 수 있습니다.
 
@@ -113,6 +120,8 @@ JSON POST imports to /intents/import
 ```text
 /pending
 /pending?bundle_id=<bundle_id>
+/pending?project_id=<project_id>
+/history?client_id=<client_id>&workspace_mode=direct
 /review-intent?token=...
 /review-intent/preview?token=...
 /intents/import
@@ -142,6 +151,7 @@ stdout_tail
 stderr_tail
 created_at
 updated_at
+metadata
 ```
 
 stdout/stderr tail은 compact하게 저장되며 token처럼 보이는 값은 redaction됩니다.
@@ -164,11 +174,12 @@ local checks가 통과했다면 이 skip은 성공으로 처리됩니다. remote
 
 - `/pending`에 page-level horizontal scroll이 없다.
 - Intent Inbox가 고급 section 아래에 접힌 상태로 있다.
-- `workspace_stage_*_and_wait` proposal tools가 직접 변경을 적용하지 않고 pending proposal bundle을 만든다.
+- `workspace_propose_*_and_wait` proposal tools가 직접 변경을 적용하지 않고 pending proposal bundle을 만든다.
 - Pending bundle을 local pending review UI에서 승인하거나 거절할 수 있다.
 - YOLO가 즉시 적용한 bundle도 `/pending?bundle_id=<bundle_id>`에서 보인다.
 - Bundle-focused page에 `Copy for ChatGPT` JSON이 보인다.
-- 로컬 실행 뒤 `workspace_next_handoff`가 최신 handoff를 반환한다.
+- 로컬 실행 뒤 `workspace_next_handoff`가 global latest handoff를 반환한다.
+- `workspace_get_handoff_for_bundle(bundle_id)`가 특정 bundle의 handoff를 반환한다.
 - Primitive stage tools가 `workspace_info().tools`에 없다.
 - `/intents/import`로 들어오는 JSON companion import는 거부된다.
 - local checks가 통과하고 `npx`가 없을 때 `bash scripts/check_all.sh`가 exit `0`으로 끝난다.

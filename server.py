@@ -29,6 +29,7 @@ from terminal_bridge.browsing import (
 from terminal_bridge.bundles import (
     _command_bundle_dirs,
     _command_bundle_path,
+    _default_command_bundle_metadata,
     _find_command_bundle,
     _move_command_bundle,
     _new_command_bundle_id,
@@ -111,6 +112,7 @@ from terminal_bridge.models import (
     WorkspaceInfo,
     WriteFileResult,
 )
+from terminal_bridge.handoffs import handoff_for_bundle as _handoff_for_bundle_record
 from terminal_bridge.handoffs import list_handoffs as _list_handoff_records
 from terminal_bridge.handoffs import next_handoff as _next_handoff_record
 from terminal_bridge.mcp_tools.readonly import (
@@ -145,6 +147,7 @@ from terminal_bridge.mcp_tools.status import (
     git_diff as _status_git_diff,
     git_status as _status_git_status,
     handoff_entry as _status_handoff_entry,
+    handoff_for_bundle as _status_handoff_for_bundle,
     list_backups as _status_list_backups,
     list_handoffs as _status_list_handoffs,
     list_operations as _status_list_operations,
@@ -934,6 +937,7 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_prepare_dev_session_intent",
     "workspace_read_audit_log",
     "workspace_recover_last_activity",
+    "workspace_get_handoff_for_bundle",
     "workspace_next_handoff",
     "workspace_list_handoffs",
     "workspace_list_tool_calls",
@@ -1574,8 +1578,28 @@ def _handoff_entry(record: dict[str, object]) -> HandoffEntry:
         "openWorldHint": False,
     },
 )
+def workspace_get_handoff_for_bundle(
+    bundle_id: Annotated[str, Field(description="Command bundle id returned by a proposal or command bundle status tool.")],
+) -> HandoffEntry | None:
+    """Return the handoff for one command bundle, if that bundle has reached a final state."""
+    return _status_handoff_for_bundle(_handoff_for_bundle_record, bundle_id)
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 def workspace_next_handoff() -> HandoffEntry | None:
-    """Return the latest local bundle handoff, if one exists."""
+    """Return the global latest local bundle handoff, if one exists.
+
+    This is a backwards-compatible global stream. In concurrent sessions, prefer
+    workspace_get_handoff_for_bundle(bundle_id) to avoid reading another session's
+    latest handoff.
+    """
     return _status_next_handoff(_next_handoff_record)
 
 
@@ -1589,9 +1613,26 @@ def workspace_next_handoff() -> HandoffEntry | None:
 )
 def workspace_list_handoffs(
     limit: Annotated[int, Field(ge=1, le=100, description="Maximum handoff records to return.")] = 20,
+    task_id: Annotated[str | None, Field(description="Optional metadata task_id filter. Empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional metadata client_id filter. Empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional metadata session_id filter. Empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional metadata project_id filter. Empty strings are ignored.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional metadata workspace_mode filter. Empty strings are ignored.")] = None,
 ) -> HandoffListResult:
-    """List recent local bundle handoffs, newest first."""
-    return _status_list_handoffs(_list_handoff_records, limit)
+    """List recent local bundle handoffs, newest first.
+
+    When metadata filters are omitted or empty, this keeps the existing unfiltered
+    list behavior. When provided, filters are ANDed against handoff metadata.
+    """
+    return _status_list_handoffs(
+        _list_handoff_records,
+        limit,
+        task_id=task_id,
+        client_id=client_id,
+        session_id=session_id,
+        project_id=project_id,
+        workspace_mode=workspace_mode,
+    )
 
 
 @mcp.tool(
@@ -2358,6 +2399,7 @@ def _write_pending_stage_bundle(
         "created_at": now,
         "updated_at": now,
         "steps": steps,
+        "metadata": _default_command_bundle_metadata(cwd),
         "result": None,
         "error": None,
         "request_key": request_key,
@@ -3436,9 +3478,27 @@ def workspace_propose_git_push_and_wait(
 )
 def workspace_list_command_bundles(
     limit: Annotated[int, Field(ge=1, le=200)] = 50,
+    task_id: Annotated[str | None, Field(description="Optional metadata task_id filter. Empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional metadata client_id filter. Empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional metadata session_id filter. Empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional metadata project_id filter. Empty strings are ignored.")] = None,
+    workspace_mode: Annotated[str | None, Field(description="Optional metadata workspace_mode filter. Empty strings are ignored.")] = None,
 ) -> CommandBundleListResult:
-    """List recent command bundles across pending/applied/rejected/failed states."""
-    return _bundle_list_command_bundles(_command_bundle_dirs, _read_json, limit)
+    """List recent command bundles across pending/applied/rejected/failed states.
+
+    When metadata filters are omitted or empty, this keeps the existing unfiltered
+    list behavior. When provided, filters are ANDed against normalized bundle metadata.
+    """
+    return _bundle_list_command_bundles(
+        _command_bundle_dirs,
+        _read_json,
+        limit,
+        task_id=task_id,
+        client_id=client_id,
+        session_id=session_id,
+        project_id=project_id,
+        workspace_mode=workspace_mode,
+    )
 
 
 @mcp.tool(

@@ -379,6 +379,14 @@ Task workspace mode는 한 서버 안에서 여러 작업을 관리하는 방식
 5. review UI에 project/task/client badge와 필터 추가.
 6. `workspace_next_handoff`는 global latest임을 문서화.
 
+구현 상태:
+
+- Direct mode bundle metadata foundation은 완료되었다. 새 bundle record는 기본 metadata를 갖고, 기존 metadata 없는 bundle record는 읽을 때 direct/default metadata로 normalize된다.
+- `workspace_get_handoff_for_bundle(bundle_id)`와 handoff metadata 보존은 완료되었다. `workspace_next_handoff`는 backwards-compatible global latest handoff로 남아 있다.
+- `workspace_list_command_bundles`와 `workspace_list_handoffs`는 task/client/session/project/workspace mode metadata filter를 지원한다.
+- Review UI는 pending/history/detail/latest handoff 카드에 metadata badge를 표시하고 `/pending`, `/history`, `/bundles`에서 query-parameter metadata filter를 지원한다.
+- Proposal wrapper metadata 입력 인자는 public MCP schema churn을 줄이기 위해 이번 Phase 1에서는 추가하지 않았다.
+
 성공 기준:
 
 - 여러 세션이 동시에 bundle을 만들어도 UI에서 구분된다.
