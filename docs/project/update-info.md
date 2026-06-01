@@ -12,6 +12,11 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
+- 928ea86 docs: add multi-agent task orchestration plan
+- 9aba4f7 Refactor limits for GPT-5.5 context
+- 2c489b0 사용제한 풀기 update
+- d8a3eab .env.* rm
+- b83ff2b docs: record refactor stabilization updates
 - 4a07231 chore: clean up ruff baseline imports
 - a0d6704 refactor: extract review audit helpers
 - b1818fe refactor: extract review server state helpers
@@ -27,11 +32,6 @@ Recent Commits is a generated snapshot. Run `uv run python scripts/update_versio
 - 1138304 chore: update graphify output
 - b4943f1 refactor: extract status MCP tool helpers
 - 82aec40 chore: update graphify output
-- 43c8615 refactor: extract command bundle MCP helpers
-- 54d1457 refactor: extract proposal MCP tool helpers
-- 033f8a0 refactor: extract readonly MCP tool helpers
-- 1ccc968 chore: ignore graphify outputs
-- 5c26c9c Fix update info test expectation
 
 ## How to Update Existing Installation
 
