@@ -436,3 +436,32 @@ class TaskWorktreeMergePreflightResult(TaskWorktreeInspectionResult):
     ready_to_merge: bool
     conflict_risk: str
     recommended_action: str
+
+
+class MergeQueueEntryResult(BaseModel):
+    queue_key: str
+    task_id: str
+    project_id: str
+    source_cwd: str
+    workspace_path: str | None = None
+    worktree_branch: str | None = None
+    base_ref: str | None = None
+    base_sha: str | None = None
+    source_head_sha: str | None = None
+    source_head_changed: bool | None = None
+    source_dirty: bool | None = None
+    changed_file_count: int | None = None
+    changed_files: list[TaskWorktreeChangedFile] = []
+    overlapping_files: list[str] = []
+    conflict_risk: str | None = None
+    recommended_action: str | None = None
+    status: str
+    exists: bool
+    record_path: str
+    created_at: str
+    updated_at: str
+
+
+class MergeQueueListResult(BaseModel):
+    entries: list[MergeQueueEntryResult]
+    count: int

@@ -91,6 +91,8 @@ from terminal_bridge.models import (
     HandoffEntry,
     HandoffListResult,
     ListResult,
+    MergeQueueEntryResult,
+    MergeQueueListResult,
     OperationListResult,
     OperationStatusResult,
     PatchApplyResult,
@@ -120,6 +122,11 @@ from terminal_bridge.models import (
 from terminal_bridge.handoffs import handoff_for_bundle as _handoff_for_bundle_record
 from terminal_bridge.handoffs import list_handoffs as _list_handoff_records
 from terminal_bridge.handoffs import next_handoff as _next_handoff_record
+from terminal_bridge.merge_queue import (
+    enqueue_task_worktree_merge as _enqueue_task_worktree_merge,
+    list_merge_queue as _list_merge_queue,
+    read_merge_queue_entry as _read_merge_queue_entry,
+)
 from terminal_bridge.mcp_tools.readonly import (
     find_files as _readonly_find_files,
     project_snapshot as _readonly_project_snapshot,
@@ -969,6 +976,9 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_create_task_worktree",
     "workspace_inspect_task_worktree",
     "workspace_merge_preflight_task_worktree",
+    "workspace_enqueue_task_worktree_merge",
+    "workspace_merge_queue_status",
+    "workspace_list_merge_queue",
     "workspace_task_workspace_status",
     "workspace_list_task_workspaces",
     "workspace_stage_text_payload",
@@ -2165,6 +2175,68 @@ def workspace_merge_preflight_task_worktree(
         "workspace_merge_preflight_task_worktree",
         {"task_id": task_id, "cwd": cwd, "project_id": project_id},
         lambda: TaskWorktreeMergePreflightResult(**_merge_preflight_task_worktree(task_id, cwd=cwd, project_id=project_id)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_enqueue_task_worktree_merge(
+    task_id: Annotated[str, Field(description="Task id for the ready task worktree to enqueue for a future merge.")],
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+) -> MergeQueueEntryResult:
+    """Create or refresh a merge queue record for a ready task worktree without applying changes."""
+    return _record_tool_call(
+        "workspace_enqueue_task_worktree_merge",
+        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
+        lambda: MergeQueueEntryResult(**_enqueue_task_worktree_merge(task_id, cwd=cwd, project_id=project_id)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_merge_queue_status(
+    task_id: Annotated[str, Field(description="Task id for the merge queue record.")],
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+) -> MergeQueueEntryResult:
+    """Return one merge queue record status without applying changes."""
+    return _record_tool_call(
+        "workspace_merge_queue_status",
+        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
+        lambda: MergeQueueEntryResult(**_read_merge_queue_entry(task_id, cwd=cwd, project_id=project_id)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_list_merge_queue(
+    project_id: Annotated[str | None, Field(description="Optional project id filter. Empty strings are ignored.")] = None,
+) -> MergeQueueListResult:
+    """List merge queue records without applying changes."""
+    entries = [MergeQueueEntryResult(**entry) for entry in _list_merge_queue(project_id=project_id)]
+    return _record_tool_call(
+        "workspace_list_merge_queue",
+        {"project_id": project_id},
+        lambda: MergeQueueListResult(entries=entries, count=len(entries)),
     )
 
 

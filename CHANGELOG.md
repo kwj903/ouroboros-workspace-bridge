@@ -18,6 +18,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Public MCP helper `workspace_create_task_worktree` for explicitly creating a git worktree-backed task workspace under the runtime directory.
 - Public MCP helper `workspace_inspect_task_worktree` for read-only task worktree status and diff inspection before merge queue integration.
 - Public MCP helper `workspace_merge_preflight_task_worktree` for read-only task worktree merge readiness and conflict-risk inspection before merge queue integration.
+- Public MCP helpers `workspace_enqueue_task_worktree_merge`, `workspace_merge_queue_status`, and `workspace_list_merge_queue` for merge queue record foundation without source-project apply.
 
 ### Changed
 

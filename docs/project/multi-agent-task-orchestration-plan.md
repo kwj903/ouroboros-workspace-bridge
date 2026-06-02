@@ -452,7 +452,8 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - Phase 3-D는 승인된 `task-workspace` bundle을 준비된 git worktree에서 apply하도록 runner routing을 추가했다. Direct mode bundle은 기존 source workspace cwd를 계속 사용한다.
 - Phase 3-E는 `workspace_inspect_task_worktree`로 ready task worktree의 status/diff/change summary를 source 변경 없이 read-only로 조회하는 foundation을 추가했다.
 - Phase 3-F는 `workspace_merge_preflight_task_worktree`로 source HEAD drift, source dirty state, overlapping file changes, conflict risk, and merge readiness를 read-only로 점검하는 foundation을 추가했다.
-- 아직 merge queue와 source-project 통합 apply는 구현하지 않았다.
+- Phase 3-G는 `workspace_enqueue_task_worktree_merge`, `workspace_merge_queue_status`, `workspace_list_merge_queue`로 ready task worktree를 source-project apply 없이 queue record로 관리하는 foundation을 추가했다.
+- 아직 source-project 통합 apply는 구현하지 않았다.
 
 성공 기준:
 
