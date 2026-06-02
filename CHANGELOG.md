@@ -17,6 +17,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Task workspace runtime record foundation with public MCP helpers `workspace_prepare_task_workspace`, `workspace_task_workspace_status`, and `workspace_list_task_workspaces`.
 - Public MCP helper `workspace_create_task_worktree` for explicitly creating a git worktree-backed task workspace under the runtime directory.
 - Public MCP helper `workspace_inspect_task_worktree` for read-only task worktree status and diff inspection before merge queue integration.
+- Public MCP helper `workspace_merge_preflight_task_worktree` for read-only task worktree merge readiness and conflict-risk inspection before merge queue integration.
 
 ### Changed
 
@@ -27,6 +28,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Review UI bundle cards now show task workspace status, path, branch, and base ref for `workspace_mode="task-workspace"` bundles when available.
 - Approved `task-workspace` bundles now apply inside their ready git worktree while preserving direct-mode runner behavior and source bundle `cwd` records.
 - Review UI task workspace badges now include clean/dirty state, changed file count, and a compact diff stat summary when inspection is available.
+- Task worktree preflight now reports source HEAD drift, source dirty state, overlapping file changes, conflict risk, and a recommended next action without modifying the source project.
 - User documentation now explains help language selection, `WOOJAE_HELP_LANG`, and Korean help usage.
 - Default public MCP tool guidance now favors small proposal wrapper tools while keeping the generic bundle functions internally available.
 - Refactored MCP tool helper implementations out of `server.py` into `terminal_bridge/mcp_tools/` modules while preserving public MCP tool names, wrappers, signatures, schemas, approval flow, and runner behavior.

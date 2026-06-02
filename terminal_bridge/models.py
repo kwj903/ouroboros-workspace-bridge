@@ -423,3 +423,16 @@ class TaskWorktreeInspectionResult(TaskWorkspaceStatusResult):
     diff_stat: str
     diff_name_status: str
     changed_files: list[TaskWorktreeChangedFile]
+
+
+class TaskWorktreeMergePreflightResult(TaskWorktreeInspectionResult):
+    source_head_sha: str
+    source_head_changed: bool
+    source_dirty: bool
+    source_git_status_short: str
+    source_diff_name_status: str
+    source_changed_files: list[TaskWorktreeChangedFile]
+    overlapping_files: list[str]
+    ready_to_merge: bool
+    conflict_risk: str
+    recommended_action: str

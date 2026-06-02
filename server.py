@@ -105,6 +105,7 @@ from terminal_bridge.models import (
     TaskListResult,
     TaskStatusResult,
     TaskWorkspaceListResult,
+    TaskWorktreeMergePreflightResult,
     TaskWorkspaceStatusResult,
     TaskWorktreeInspectionResult,
     TextPayloadStageResult,
@@ -205,6 +206,7 @@ from terminal_bridge.task_workspaces import (
     create_task_worktree as _create_task_worktree,
     inspect_task_worktree as _inspect_task_worktree,
     list_task_workspaces as _list_task_workspaces,
+    merge_preflight_task_worktree as _merge_preflight_task_worktree,
     prepare_task_workspace as _prepare_task_workspace,
     read_task_workspace as _read_task_workspace,
 )
@@ -966,6 +968,7 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_prepare_task_workspace",
     "workspace_create_task_worktree",
     "workspace_inspect_task_worktree",
+    "workspace_merge_preflight_task_worktree",
     "workspace_task_workspace_status",
     "workspace_list_task_workspaces",
     "workspace_stage_text_payload",
@@ -2141,6 +2144,27 @@ def workspace_inspect_task_worktree(
         "workspace_inspect_task_worktree",
         {"task_id": task_id, "cwd": cwd, "project_id": project_id},
         lambda: TaskWorktreeInspectionResult(**_inspect_task_worktree(task_id, cwd=cwd, project_id=project_id)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_merge_preflight_task_worktree(
+    task_id: Annotated[str, Field(description="Task id for the isolated git worktree.")],
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+) -> TaskWorktreeMergePreflightResult:
+    """Read-only merge preflight for a ready task worktree without modifying the source project."""
+    return _record_tool_call(
+        "workspace_merge_preflight_task_worktree",
+        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
+        lambda: TaskWorktreeMergePreflightResult(**_merge_preflight_task_worktree(task_id, cwd=cwd, project_id=project_id)),
     )
 
 

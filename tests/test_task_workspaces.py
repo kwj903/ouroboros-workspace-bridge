@@ -8,7 +8,12 @@ from pathlib import Path
 
 import server
 from terminal_bridge import task_workspaces
-from terminal_bridge.models import TaskWorkspaceListResult, TaskWorkspaceStatusResult, TaskWorktreeInspectionResult
+from terminal_bridge.models import (
+    TaskWorkspaceListResult,
+    TaskWorkspaceStatusResult,
+    TaskWorktreeInspectionResult,
+    TaskWorktreeMergePreflightResult,
+)
 
 
 class TaskWorkspaceTests(unittest.TestCase):
@@ -366,6 +371,122 @@ class TaskWorkspaceTests(unittest.TestCase):
                 git_runner=failing_git,
             )
 
+    def test_merge_preflight_ready_when_source_unchanged(self) -> None:
+        self.init_git_project()
+        record = task_workspaces.create_task_worktree(
+            "task-preflight-ready",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        workspace_path = Path(str(record["workspace_path"]))
+        (workspace_path / "README.md").write_text("hello\nready\n", encoding="utf-8")
+
+        preflight = task_workspaces.merge_preflight_task_worktree(
+            "task-preflight-ready",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        self.assertTrue(preflight["ready_to_merge"])
+        self.assertEqual(preflight["conflict_risk"], "low")
+        self.assertEqual(preflight["recommended_action"], "merge_queue")
+        self.assertFalse(preflight["source_head_changed"])
+        self.assertFalse(preflight["source_dirty"])
+        self.assertEqual(preflight["overlapping_files"], [])
+
+    def test_merge_preflight_no_changes_is_not_ready(self) -> None:
+        self.init_git_project()
+        task_workspaces.create_task_worktree(
+            "task-preflight-clean",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        preflight = task_workspaces.merge_preflight_task_worktree(
+            "task-preflight-clean",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        self.assertFalse(preflight["ready_to_merge"])
+        self.assertEqual(preflight["conflict_risk"], "none")
+        self.assertEqual(preflight["recommended_action"], "no_changes")
+
+    def test_merge_preflight_detects_overlapping_source_changes(self) -> None:
+        self.init_git_project()
+        record = task_workspaces.create_task_worktree(
+            "task-preflight-overlap",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        workspace_path = Path(str(record["workspace_path"]))
+        (workspace_path / "README.md").write_text("hello\ntask\n", encoding="utf-8")
+        (self.project / "README.md").write_text("hello\nsource\n", encoding="utf-8")
+        self.run_git(self.project, ["add", "README.md"])
+        self.run_git(self.project, ["commit", "-m", "source README change"])
+
+        preflight = task_workspaces.merge_preflight_task_worktree(
+            "task-preflight-overlap",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        self.assertFalse(preflight["ready_to_merge"])
+        self.assertTrue(preflight["source_head_changed"])
+        self.assertEqual(preflight["conflict_risk"], "high")
+        self.assertEqual(preflight["recommended_action"], "manual_conflict_review")
+        self.assertEqual(preflight["overlapping_files"], ["README.md"])
+
+    def test_merge_preflight_detects_source_dirty_state(self) -> None:
+        self.init_git_project()
+        record = task_workspaces.create_task_worktree(
+            "task-preflight-source-dirty",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        workspace_path = Path(str(record["workspace_path"]))
+        (workspace_path / "README.md").write_text("hello\ntask\n", encoding="utf-8")
+        (self.project / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+        preflight = task_workspaces.merge_preflight_task_worktree(
+            "task-preflight-source-dirty",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        self.assertFalse(preflight["ready_to_merge"])
+        self.assertTrue(preflight["source_dirty"])
+        self.assertEqual(preflight["conflict_risk"], "high")
+        self.assertEqual(preflight["recommended_action"], "clean_source_before_merge")
+
+    def test_merge_preflight_reuses_inspection_readiness_checks(self) -> None:
+        self.init_git_project()
+
+        with self.assertRaisesRegex(ValueError, "task workspace worktree is not ready"):
+            task_workspaces.merge_preflight_task_worktree(
+                "task-preflight-missing",
+                cwd="project",
+                project_id="project-alpha",
+                runtime_root=self.runtime_root,
+                workspace_root=self.workspace_root,
+            )
+
     def test_prepare_read_list_and_deterministic_key(self) -> None:
         first = task_workspaces.prepare_task_workspace(
             "task-a",
@@ -493,6 +614,7 @@ class TaskWorkspaceTests(unittest.TestCase):
         original_list = server._list_task_workspaces
         original_create = server._create_task_worktree
         original_inspect = server._inspect_task_worktree
+        original_merge_preflight = server._merge_preflight_task_worktree
         calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
 
         def call_through(tool_name: str, args: dict[str, object], action: object) -> object:
@@ -543,18 +665,43 @@ class TaskWorkspaceTests(unittest.TestCase):
                 "changed_files": [{"status": "M", "path": "README.md"}],
             }
 
+        def fake_merge_preflight(*args: object, **kwargs: object) -> dict[str, object]:
+            calls.append(("merge_preflight", args, kwargs))
+            record = fake_record()
+            return {
+                **record,
+                "dirty": True,
+                "changed_file_count": 1,
+                "git_status_short": " M README.md",
+                "diff_stat": " README.md | 1 +",
+                "diff_name_status": "M\tREADME.md",
+                "changed_files": [{"status": "M", "path": "README.md"}],
+                "source_head_sha": "b" * 40,
+                "source_head_changed": False,
+                "source_dirty": False,
+                "source_git_status_short": "",
+                "source_diff_name_status": "",
+                "source_changed_files": [],
+                "overlapping_files": [],
+                "ready_to_merge": True,
+                "conflict_risk": "low",
+                "recommended_action": "merge_queue",
+            }
+
         server._record_tool_call = call_through
         server._prepare_task_workspace = fake_prepare
         server._read_task_workspace = fake_read
         server._list_task_workspaces = fake_list
         server._create_task_worktree = fake_create
         server._inspect_task_worktree = fake_inspect
+        server._merge_preflight_task_worktree = fake_merge_preflight
         try:
             prepared = server.workspace_prepare_task_workspace("task-a", cwd="project", project_id="project-alpha")
             status = server.workspace_task_workspace_status("task-a", cwd="project", project_id="project-alpha")
             listed = server.workspace_list_task_workspaces(project_id="project-alpha")
             created = server.workspace_create_task_worktree("task-a", cwd="project", project_id="project-alpha")
             inspected = server.workspace_inspect_task_worktree("task-a", cwd="project", project_id="project-alpha")
+            preflight = server.workspace_merge_preflight_task_worktree("task-a", cwd="project", project_id="project-alpha")
         finally:
             server._record_tool_call = original_record
             server._prepare_task_workspace = original_prepare
@@ -562,19 +709,23 @@ class TaskWorkspaceTests(unittest.TestCase):
             server._list_task_workspaces = original_list
             server._create_task_worktree = original_create
             server._inspect_task_worktree = original_inspect
+            server._merge_preflight_task_worktree = original_merge_preflight
 
         self.assertIsInstance(prepared, TaskWorkspaceStatusResult)
         self.assertIsInstance(status, TaskWorkspaceStatusResult)
         self.assertIsInstance(listed, TaskWorkspaceListResult)
         self.assertIsInstance(created, TaskWorkspaceStatusResult)
         self.assertIsInstance(inspected, TaskWorktreeInspectionResult)
-        self.assertEqual([call[0] for call in calls], ["prepare", "read", "list", "create", "inspect"])
+        self.assertIsInstance(preflight, TaskWorktreeMergePreflightResult)
+        self.assertEqual([call[0] for call in calls], ["prepare", "read", "list", "create", "inspect", "merge_preflight"])
         self.assertEqual(calls[0][1], ("task-a",))
         self.assertEqual(calls[0][2], {"cwd": "project", "project_id": "project-alpha"})
         self.assertEqual(calls[4][2], {"cwd": "project", "project_id": "project-alpha"})
+        self.assertEqual(calls[5][2], {"cwd": "project", "project_id": "project-alpha"})
         self.assertEqual(listed.count, 1)
         self.assertTrue(inspected.dirty)
         self.assertEqual(inspected.changed_file_count, 1)
+        self.assertTrue(preflight.ready_to_merge)
 
 
 if __name__ == "__main__":

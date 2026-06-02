@@ -501,6 +501,94 @@ def inspect_task_worktree(
     }
 
 
+def merge_preflight_task_worktree(
+    task_id: str,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+    git_runner: GitRunner = _run_git,
+) -> dict[str, object]:
+    inspection = inspect_task_worktree(
+        task_id,
+        cwd=cwd,
+        project_id=project_id,
+        runtime_root=runtime_root,
+        workspace_root=workspace_root,
+        git_runner=git_runner,
+    )
+
+    source_git_root_text = str(inspection.get("source_git_root") or "").strip()
+    if not source_git_root_text:
+        raise ValueError("task workspace record is missing source_git_root.")
+    source_git_root = Path(source_git_root_text).expanduser().resolve(strict=False)
+    root = workspace_root.expanduser().resolve(strict=False)
+    if source_git_root != root and not source_git_root.is_relative_to(root):
+        raise ValueError(f"source_git_root escapes WORKSPACE_ROOT: {source_git_root}")
+
+    base_sha = str(inspection.get("base_sha") or "").strip()
+    if not base_sha:
+        raise ValueError("task workspace record is missing base_sha.")
+
+    source_head_sha = _git_inspection_stdout(git_runner, source_git_root, ["rev-parse", "HEAD"]).strip()
+    source_git_status_short = _git_inspection_stdout(git_runner, source_git_root, ["status", "--short"])
+    source_head_changed = source_head_sha != base_sha
+    if source_head_changed:
+        source_diff_name_status = _git_inspection_stdout(
+            git_runner,
+            source_git_root,
+            ["diff", "--name-status", base_sha, source_head_sha, "--"],
+        )
+    else:
+        source_diff_name_status = ""
+
+    source_changed_files = _parse_diff_name_status(source_diff_name_status)
+    source_seen = {item["path"] for item in source_changed_files}
+    source_changed_files.extend(_parse_status_short_extra_paths(source_git_status_short, source_seen))
+
+    task_changed_paths = {str(item.get("path") or "") for item in inspection.get("changed_files", []) if item.get("path")}
+    source_changed_paths = {str(item.get("path") or "") for item in source_changed_files if item.get("path")}
+    overlapping_files = sorted(task_changed_paths.intersection(source_changed_paths))
+
+    task_dirty = bool(inspection.get("dirty"))
+    source_dirty = bool(source_git_status_short.strip())
+    if not task_dirty:
+        conflict_risk = "none"
+        ready_to_merge = False
+        recommended_action = "no_changes"
+    elif source_dirty:
+        conflict_risk = "high"
+        ready_to_merge = False
+        recommended_action = "clean_source_before_merge"
+    elif overlapping_files:
+        conflict_risk = "high"
+        ready_to_merge = False
+        recommended_action = "manual_conflict_review"
+    elif source_head_changed:
+        conflict_risk = "medium"
+        ready_to_merge = True
+        recommended_action = "merge_queue_with_source_head_check"
+    else:
+        conflict_risk = "low"
+        ready_to_merge = True
+        recommended_action = "merge_queue"
+
+    return {
+        **inspection,
+        "source_head_sha": source_head_sha,
+        "source_head_changed": source_head_changed,
+        "source_dirty": source_dirty,
+        "source_git_status_short": source_git_status_short,
+        "source_diff_name_status": source_diff_name_status,
+        "source_changed_files": source_changed_files,
+        "overlapping_files": overlapping_files,
+        "ready_to_merge": ready_to_merge,
+        "conflict_risk": conflict_risk,
+        "recommended_action": recommended_action,
+    }
+
+
 def read_task_workspace(
     task_id: str,
     *,
