@@ -18,6 +18,7 @@ Implemented:
 - Approved source integration staging through `workspace_propose_task_worktree_merge_and_wait`.
 - Non-destructive archive helpers for task workspace and merge queue records.
 - Read-only orchestrator summary through `workspace_task_orchestration_summary`.
+- Compact read-only task orchestration summary rendering in the `/pending` review UI.
 
 Not implemented:
 
@@ -210,6 +211,8 @@ Use these rules when multiple chat sessions or multiple webapps are active:
 
 Use `workspace_task_orchestration_summary(project_id)` as the first dashboard-style check during orchestration.
 
+The `/pending` review UI also renders this summary as a compact read-only section. It distinguishes workspace-only, queue-only, and joined workspace+queue entries, and highlights anomalies such as queue records whose task workspace record is missing.
+
 Each entry connects task workspace and merge queue records by `project_id`, `source_cwd`, and `task_id`. It includes:
 
 - task workspace status, worktree status, branch, and path
@@ -313,5 +316,6 @@ After approved source integration:
 - Phase 3-I: non-destructive archive helpers.
 - Phase 3-J: this end-to-end multi-session workflow and operator guide.
 - Phase 3-K: read-only orchestrator dashboard summary across task workspace and merge queue records.
+- Phase 3-L: review UI rendering foundation for the task orchestration summary.
 
-Remaining future work includes automatic task decomposition, richer interactive merge queue UI, explicit conflict resolution workflow, post-merge test/result tracking, commit flow integration, and physical worktree cleanup.
+Remaining future work includes automatic task decomposition, richer interactive merge queue controls, explicit conflict resolution workflow, post-merge test/result tracking, commit flow integration, and physical worktree cleanup.

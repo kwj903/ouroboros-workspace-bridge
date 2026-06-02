@@ -234,6 +234,105 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("files: 2", html)
         self.assertIn("README.md | 1 +", html)
 
+    def test_task_orchestration_summary_html_renders_empty_state(self) -> None:
+        html = review.task_orchestration_summary_html(
+            {
+                "project_id": None,
+                "entries": [],
+                "count": 0,
+                "active_count": 0,
+                "archived_count": 0,
+                "anomaly_count": 0,
+            }
+        )
+
+        self.assertIn("Task orchestration", html)
+        self.assertIn("No task orchestration records", html)
+        self.assertIn("total: 0", html)
+
+    def test_task_orchestration_summary_html_renders_entry_types_and_anomalies(self) -> None:
+        html = review.task_orchestration_summary_html(
+            {
+                "project_id": "project-alpha",
+                "count": 3,
+                "active_count": 2,
+                "archived_count": 1,
+                "anomaly_count": 1,
+                "entries": [
+                    {
+                        "project_id": "project-alpha",
+                        "source_cwd": "project",
+                        "task_id": "task-both",
+                        "task_workspace_status": "worktree",
+                        "worktree_status": "ready",
+                        "worktree_branch": "task/task-both",
+                        "workspace_path": "/tmp/runtime/task_workspaces/task-both/repo",
+                        "merge_queue_status": "queued",
+                        "conflict_risk": "low",
+                        "recommended_action": "merge_queue",
+                        "changed_file_count": 2,
+                        "archived": False,
+                        "has_task_workspace_record": True,
+                        "has_merge_queue_record": True,
+                        "anomaly": False,
+                        "anomaly_reasons": [],
+                    },
+                    {
+                        "project_id": "project-alpha",
+                        "source_cwd": "project",
+                        "task_id": "task-workspace-only",
+                        "task_workspace_status": "created",
+                        "worktree_status": None,
+                        "worktree_branch": None,
+                        "workspace_path": "/tmp/runtime/task_workspaces/task-workspace-only/repo",
+                        "merge_queue_status": None,
+                        "conflict_risk": None,
+                        "recommended_action": None,
+                        "changed_file_count": None,
+                        "archived": True,
+                        "has_task_workspace_record": True,
+                        "has_merge_queue_record": False,
+                        "anomaly": False,
+                        "anomaly_reasons": [],
+                    },
+                    {
+                        "project_id": "project-alpha",
+                        "source_cwd": "project",
+                        "task_id": "task-queue-only",
+                        "task_workspace_status": "missing",
+                        "worktree_status": None,
+                        "worktree_branch": None,
+                        "workspace_path": "/tmp/runtime/task_workspaces/task-queue-only/repo",
+                        "merge_queue_status": "queued",
+                        "conflict_risk": "high",
+                        "recommended_action": "manual_conflict_review",
+                        "changed_file_count": 1,
+                        "archived": False,
+                        "has_task_workspace_record": False,
+                        "has_merge_queue_record": True,
+                        "anomaly": True,
+                        "anomaly_reasons": ["missing_task_workspace_record"],
+                    },
+                ],
+            }
+        )
+
+        self.assertIn("Task orchestration", html)
+        self.assertIn("project: project-alpha", html)
+        self.assertIn("workspace+queue", html)
+        self.assertIn("workspace-only", html)
+        self.assertIn("queue-only", html)
+        self.assertIn("task-both", html)
+        self.assertIn("source: project", html)
+        self.assertIn("workspace: worktree", html)
+        self.assertIn("worktree: ready", html)
+        self.assertIn("queue: queued", html)
+        self.assertIn("risk: low", html)
+        self.assertIn("action: merge_queue", html)
+        self.assertIn("files: 2", html)
+        self.assertIn("archived: yes", html)
+        self.assertIn("anomaly: missing_task_workspace_record", html)
+
     def test_bundle_metadata_filter_uses_and_conditions(self) -> None:
         rows = [
             {

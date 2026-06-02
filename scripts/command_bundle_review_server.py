@@ -57,6 +57,7 @@ from terminal_bridge.review_layout import (
     normalize_server_tab,
     page,
 )
+from terminal_bridge.task_orchestration_summary import task_orchestration_summary
 from terminal_bridge.task_workspaces import inspect_task_worktree, resolve_task_workspace_for_bundle
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -985,6 +986,176 @@ def bundle_task_workspace_html(record: dict[str, object]) -> str:
         except Exception:
             pass
     return '<div class="subnav">' + "".join(badges) + "</div>"
+
+
+def _task_orchestration_relation(entry: Mapping[str, object]) -> tuple[str, str]:
+    has_task = bool(entry.get("has_task_workspace_record"))
+    has_queue = bool(entry.get("has_merge_queue_record"))
+    if has_task and has_queue:
+        return "workspace+queue", "ok"
+    if has_task:
+        return "workspace-only", "neutral"
+    if has_queue:
+        return "queue-only", "warn"
+    return "record-missing", "danger"
+
+
+def _task_status_tone(status: object) -> str:
+    value = str(status or "").strip()
+    if value in {"worktree", "created", "ready"}:
+        return "ok"
+    if value in {"missing", "failed", "conflict"}:
+        return "warn"
+    if value == "archived":
+        return "neutral"
+    return "neutral"
+
+
+def _queue_status_tone(status: object) -> str:
+    value = str(status or "").strip()
+    if value in {"merged", "ready"}:
+        return "ok"
+    if value in {"queued", "pending"}:
+        return "warn"
+    if value in {"failed", "conflict"}:
+        return "danger"
+    return "neutral"
+
+
+def _conflict_risk_tone(risk: object) -> str:
+    value = str(risk or "").strip()
+    if value == "low":
+        return "ok"
+    if value == "medium":
+        return "warn"
+    if value == "high":
+        return "danger"
+    return "neutral"
+
+
+def _task_orchestration_entry_html(entry: Mapping[str, object]) -> str:
+    relation_label, relation_tone = _task_orchestration_relation(entry)
+    task_id = str(entry.get("task_id") or "missing")
+    source_cwd = str(entry.get("source_cwd") or ".")
+    task_status = str(entry.get("task_workspace_status") or "missing")
+    worktree_status = str(entry.get("worktree_status") or "none")
+    queue_status = str(entry.get("merge_queue_status") or "none")
+    conflict_risk = str(entry.get("conflict_risk") or "none")
+    recommended_action = str(entry.get("recommended_action") or "none")
+    changed_file_count = entry.get("changed_file_count")
+    changed_file_label = "none" if changed_file_count is None else str(changed_file_count)
+    archived = bool(entry.get("archived"))
+    anomaly = bool(entry.get("anomaly"))
+    reasons = entry.get("anomaly_reasons") if isinstance(entry.get("anomaly_reasons"), list) else []
+    anomaly_label = ", ".join(str(item) for item in reasons if str(item).strip()) if anomaly else "no"
+
+    return f"""
+    <tr>
+      <td>
+        <code>{escape(task_id)}</code>
+        <div class="subnav">
+          {status_badge(relation_label, relation_tone)}
+        </div>
+      </td>
+      <td>
+        {status_badge(f"source: {source_cwd}", "neutral")}
+      </td>
+      <td>
+        <div class="subnav">
+          {status_badge(f"workspace: {task_status}", _task_status_tone(task_status))}
+          {status_badge(f"worktree: {worktree_status}", _task_status_tone(worktree_status))}
+        </div>
+      </td>
+      <td>
+        <div class="subnav">
+          {status_badge(f"queue: {queue_status}", _queue_status_tone(queue_status))}
+          {status_badge(f"risk: {conflict_risk}", _conflict_risk_tone(conflict_risk))}
+          {status_badge(f"action: {recommended_action}", "neutral")}
+          {status_badge(f"files: {changed_file_label}", "neutral")}
+        </div>
+      </td>
+      <td>
+        <div class="subnav">
+          {status_badge(f"archived: {'yes' if archived else 'no'}", "neutral" if archived else "ok")}
+          {status_badge(f"anomaly: {anomaly_label}", "danger" if anomaly else "ok")}
+        </div>
+      </td>
+    </tr>
+    """
+
+
+def task_orchestration_summary_html(
+    summary: Mapping[str, object] | None = None,
+    *,
+    project_id: str | None = None,
+) -> str:
+    try:
+        resolved_summary = summary or task_orchestration_summary(project_id=project_id, runtime_root=RUNTIME_ROOT)
+    except Exception as exc:
+        return f"""
+        <section class="card">
+          <h2>Task orchestration</h2>
+          <div class="notice">
+            <strong>Summary unavailable</strong><br>
+            {escape(type(exc).__name__)}: {escape(short_error(exc, 300))}
+          </div>
+        </section>
+        """
+
+    entries = resolved_summary.get("entries") if isinstance(resolved_summary.get("entries"), list) else []
+    project_label = str(resolved_summary.get("project_id") or project_id or "").strip()
+    project_badge = status_badge(f"project: {project_label}", "neutral") if project_label else ""
+    count = int(resolved_summary.get("count") or 0)
+    active_count = int(resolved_summary.get("active_count") or 0)
+    archived_count = int(resolved_summary.get("archived_count") or 0)
+    anomaly_count = int(resolved_summary.get("anomaly_count") or 0)
+    summary_badges = "".join(
+        [
+            project_badge,
+            status_badge(f"total: {count}", "neutral"),
+            status_badge(f"active: {active_count}", "ok" if active_count else "neutral"),
+            status_badge(f"archived: {archived_count}", "neutral"),
+            status_badge(f"anomalies: {anomaly_count}", "danger" if anomaly_count else "ok"),
+        ]
+    )
+
+    if not entries:
+        body = '<p class="meta">No task orchestration records.</p>'
+    else:
+        rows = "\n".join(
+            _task_orchestration_entry_html(entry)
+            for entry in entries
+            if isinstance(entry, Mapping)
+        )
+        body = f"""
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Source</th>
+                <th>Workspace</th>
+                <th>Queue</th>
+                <th>State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows}
+            </tbody>
+          </table>
+        </div>
+        """
+
+    return f"""
+    <details class="card" open>
+      <summary><strong>Task orchestration</strong></summary>
+      <p class="meta">
+        Read-only overview of task workspace and merge queue records. It does not merge, apply, enqueue, or archive.
+      </p>
+      <div class="subnav">{summary_badges}</div>
+      {body}
+    </details>
+    """
 
 
 def handoff_metadata_badges_html(record: dict[str, object]) -> str:
@@ -2329,6 +2500,7 @@ class Handler(BaseHTTPRequestHandler):
                 + approval_mode_card_html(approval_mode)
                 + scoped_approval_mode_card_html()
                 + saved_scoped_approval_modes_html()
+                + task_orchestration_summary_html(project_id=metadata_filters.get("project_id") or None)
                 + "<p><a href='/history'>전체 이력 보기</a></p>"
                 + metadata_filter_form_html("/pending", metadata_filters)
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")

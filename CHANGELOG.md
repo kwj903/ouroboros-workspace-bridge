@@ -23,6 +23,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Public MCP helpers `workspace_archive_task_workspace` and `workspace_archive_merge_queue_entry` for non-destructive task workspace and queue record archiving.
 - Operator guide for the end-to-end multi-session task workspace workflow, including worker prompts, merge review flow, and recovery checklists.
 - Public MCP helper `workspace_task_orchestration_summary` for a read-only orchestrator overview of task workspace and merge queue records.
+- Review UI task orchestration dashboard section on `/pending` for a compact read-only view of task workspace and merge queue summary records.
 
 ### Changed
 
