@@ -456,6 +456,7 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - Phase 3-H는 `workspace_propose_task_worktree_merge_and_wait`로 queued task worktree 변경을 source project에 적용하는 command bundle을 local `/pending` 승인 대상으로 생성하는 foundation을 추가했다.
 - Phase 3-I는 `workspace_archive_task_workspace`, `workspace_archive_merge_queue_entry`로 runtime task workspace record와 merge queue record를 archived 상태로 전환하는 non-destructive archive foundation을 추가했다.
 - Phase 3-J는 [multi-agent-task-workflow-operator-guide.md](multi-agent-task-workflow-operator-guide.md)에 orchestrator/worker multi-session runbook과 recovery checklist를 정리했다.
+- Phase 3-K는 `workspace_task_orchestration_summary`로 task workspace record와 merge queue record를 project별 read-only summary로 연결하는 dashboard foundation을 추가했다.
 
 성공 기준:
 

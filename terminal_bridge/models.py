@@ -470,3 +470,31 @@ class MergeQueueEntryResult(BaseModel):
 class MergeQueueListResult(BaseModel):
     entries: list[MergeQueueEntryResult]
     count: int
+
+
+class TaskOrchestrationSummaryEntry(BaseModel):
+    project_id: str
+    source_cwd: str
+    task_id: str
+    task_workspace_status: str
+    worktree_status: str | None = None
+    worktree_branch: str | None = None
+    workspace_path: str | None = None
+    merge_queue_status: str | None = None
+    conflict_risk: str | None = None
+    recommended_action: str | None = None
+    changed_file_count: int | None = None
+    archived: bool
+    has_task_workspace_record: bool
+    has_merge_queue_record: bool
+    anomaly: bool
+    anomaly_reasons: list[str] = []
+
+
+class TaskOrchestrationSummaryResult(BaseModel):
+    project_id: str | None = None
+    entries: list[TaskOrchestrationSummaryEntry]
+    count: int
+    active_count: int
+    archived_count: int
+    anomaly_count: int

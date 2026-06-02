@@ -22,6 +22,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Public MCP helper `workspace_propose_task_worktree_merge_and_wait` for staging a locally approved source apply command from a queued task worktree merge.
 - Public MCP helpers `workspace_archive_task_workspace` and `workspace_archive_merge_queue_entry` for non-destructive task workspace and queue record archiving.
 - Operator guide for the end-to-end multi-session task workspace workflow, including worker prompts, merge review flow, and recovery checklists.
+- Public MCP helper `workspace_task_orchestration_summary` for a read-only orchestrator overview of task workspace and merge queue records.
 
 ### Changed
 

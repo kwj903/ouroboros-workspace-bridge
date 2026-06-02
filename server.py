@@ -105,6 +105,7 @@ from terminal_bridge.models import (
     RestoreResult,
     SearchTextResult,
     TaskListResult,
+    TaskOrchestrationSummaryResult,
     TaskStatusResult,
     TaskWorkspaceListResult,
     TaskWorktreeMergePreflightResult,
@@ -219,6 +220,7 @@ from terminal_bridge.task_workspaces import (
     prepare_task_workspace as _prepare_task_workspace,
     read_task_workspace as _read_task_workspace,
 )
+from terminal_bridge.task_orchestration_summary import task_orchestration_summary as _task_orchestration_summary
 from terminal_bridge.tool_calls import list_tool_calls as _list_tool_call_records
 from terminal_bridge.tool_calls import read_tool_call as _read_tool_call_record
 from terminal_bridge.trash import (
@@ -981,6 +983,7 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_enqueue_task_worktree_merge",
     "workspace_merge_queue_status",
     "workspace_list_merge_queue",
+    "workspace_task_orchestration_summary",
     "workspace_propose_task_worktree_merge_and_wait",
     "workspace_archive_task_workspace",
     "workspace_archive_merge_queue_entry",
@@ -2242,6 +2245,25 @@ def workspace_list_merge_queue(
         "workspace_list_merge_queue",
         {"project_id": project_id},
         lambda: MergeQueueListResult(entries=entries, count=len(entries)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_task_orchestration_summary(
+    project_id: Annotated[str | None, Field(description="Optional project id filter. Empty strings are ignored.")] = None,
+) -> TaskOrchestrationSummaryResult:
+    """Summarize task workspace and merge queue records for orchestrator review without applying changes."""
+    return _record_tool_call(
+        "workspace_task_orchestration_summary",
+        {"project_id": project_id},
+        lambda: TaskOrchestrationSummaryResult(**_task_orchestration_summary(project_id=project_id)),
     )
 
 

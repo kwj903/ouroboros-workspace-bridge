@@ -17,6 +17,7 @@ Implemented:
 - Merge queue record storage.
 - Approved source integration staging through `workspace_propose_task_worktree_merge_and_wait`.
 - Non-destructive archive helpers for task workspace and merge queue records.
+- Read-only orchestrator summary through `workspace_task_orchestration_summary`.
 
 Not implemented:
 
@@ -25,7 +26,7 @@ Not implemented:
 - Automatic source merge without local review.
 - Automatic post-merge tests or commits.
 - Physical deletion of task worktree directories.
-- A full merge queue UI with conflict resolution.
+- A full interactive merge queue UI with conflict resolution.
 
 ## Roles
 
@@ -130,10 +131,11 @@ Workers should verify in the task worktree through task-scoped command proposals
 
 When the worker reports completion:
 
-1. Call `workspace_inspect_task_worktree(task_id, cwd, project_id)`.
-2. Review `dirty`, `changed_file_count`, `git_status_short`, `diff_stat`, and `changed_files`.
-3. If `dirty=false`, archive or reassign the task. There is nothing to merge.
-4. If the changed files are unexpected, ask the worker to explain or revise before preflight.
+1. Call `workspace_task_orchestration_summary(project_id)` to see all task workspace and merge queue records for the project.
+2. Call `workspace_inspect_task_worktree(task_id, cwd, project_id)` for the finished task.
+3. Review `dirty`, `changed_file_count`, `git_status_short`, `diff_stat`, and `changed_files`.
+4. If `dirty=false`, archive or reassign the task. There is nothing to merge.
+5. If the changed files are unexpected, ask the worker to explain or revise before preflight.
 
 Inspection is read-only and does not modify the source project.
 
@@ -158,7 +160,7 @@ If preflight says the task is ready:
 
 1. Call `workspace_enqueue_task_worktree_merge(task_id, cwd, project_id)`.
 2. Confirm queue `status="queued"` and review `changed_files`, `conflict_risk`, and `source_head_sha`.
-3. Optionally call `workspace_merge_queue_status(task_id, cwd, project_id)` or `workspace_list_merge_queue(project_id)`.
+3. Optionally call `workspace_merge_queue_status(task_id, cwd, project_id)`, `workspace_list_merge_queue(project_id)`, or `workspace_task_orchestration_summary(project_id)`.
 
 Queue records are bookkeeping. Enqueueing does not apply changes to the source project.
 
@@ -203,6 +205,20 @@ Use these rules when multiple chat sessions or multiple webapps are active:
 - Merge one task at a time unless the source changes are proven independent.
 - Keep `/pending` review items focused; do not combine task merge, tests, commits, and pushes in one approval.
 - Use metadata filters or task ids when reviewing pending/history lists to avoid approving the wrong task.
+
+## Orchestrator Summary View
+
+Use `workspace_task_orchestration_summary(project_id)` as the first dashboard-style check during orchestration.
+
+Each entry connects task workspace and merge queue records by `project_id`, `source_cwd`, and `task_id`. It includes:
+
+- task workspace status, worktree status, branch, and path
+- merge queue status, conflict risk, and recommended action
+- changed file count when a queue record captured it
+- archived state across task workspace or queue records
+- anomaly flags, including queue records whose task workspace record is missing
+
+The summary is read-only. It does not inspect git diffs live, run preflight, enqueue merges, archive records, or apply source changes. Use detailed tools when an entry needs action.
 
 ## Recovery And Troubleshooting
 
@@ -296,5 +312,6 @@ After approved source integration:
 - Phase 3-H: locally approved source integration staging.
 - Phase 3-I: non-destructive archive helpers.
 - Phase 3-J: this end-to-end multi-session workflow and operator guide.
+- Phase 3-K: read-only orchestrator dashboard summary across task workspace and merge queue records.
 
-Remaining future work includes automatic task decomposition, richer merge queue UI, explicit conflict resolution workflow, post-merge test/result tracking, commit flow integration, and physical worktree cleanup.
+Remaining future work includes automatic task decomposition, richer interactive merge queue UI, explicit conflict resolution workflow, post-merge test/result tracking, commit flow integration, and physical worktree cleanup.
