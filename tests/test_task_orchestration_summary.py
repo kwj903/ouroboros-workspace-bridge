@@ -62,6 +62,11 @@ class TaskOrchestrationSummaryTests(unittest.TestCase):
             "changed_file_count": 3,
             "conflict_risk": "low",
             "recommended_action": "merge_queue",
+            "validation_status": "passed",
+            "validation_commands": ["uv run python -m unittest tests.test_merge_queue"],
+            "validation_summary": "unit tests passed",
+            "validated_at": "2026-06-02T01:00:00+00:00",
+            "validated_by": "operator-a",
             "status": "queued",
             "exists": True,
             "record_path": "",
@@ -85,6 +90,11 @@ class TaskOrchestrationSummaryTests(unittest.TestCase):
         self.assertEqual(entry["conflict_risk"], "low")
         self.assertEqual(entry["recommended_action"], "merge_queue")
         self.assertEqual(entry["changed_file_count"], 3)
+        self.assertEqual(entry["validation_status"], "passed")
+        self.assertEqual(entry["validation_commands"], ["uv run python -m unittest tests.test_merge_queue"])
+        self.assertEqual(entry["validation_summary"], "unit tests passed")
+        self.assertEqual(entry["validated_at"], "2026-06-02T01:00:00+00:00")
+        self.assertEqual(entry["validated_by"], "operator-a")
         self.assertEqual(entry["worktree_branch"], task["worktree_branch"])
         self.assertFalse(entry["anomaly"])
 

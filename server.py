@@ -128,6 +128,8 @@ from terminal_bridge.merge_queue import (
     enqueue_task_worktree_merge as _enqueue_task_worktree_merge,
     list_merge_queue as _list_merge_queue,
     read_merge_queue_entry as _read_merge_queue_entry,
+    record_task_validation as _record_task_validation,
+    task_validation_status as _task_validation_status,
 )
 from terminal_bridge.mcp_tools.readonly import (
     find_files as _readonly_find_files,
@@ -984,6 +986,8 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_merge_queue_status",
     "workspace_list_merge_queue",
     "workspace_task_orchestration_summary",
+    "workspace_record_task_validation",
+    "workspace_task_validation_status",
     "workspace_propose_task_worktree_merge_and_wait",
     "workspace_archive_task_workspace",
     "workspace_archive_merge_queue_entry",
@@ -2225,6 +2229,76 @@ def workspace_merge_queue_status(
         "workspace_merge_queue_status",
         {"task_id": task_id, "cwd": cwd, "project_id": project_id},
         lambda: MergeQueueEntryResult(**_read_merge_queue_entry(task_id, cwd=cwd, project_id=project_id)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_record_task_validation(
+    task_id: Annotated[str, Field(description="Task id for the merge queue record to annotate with validation metadata.")],
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+    validation_status: Annotated[str, Field(description="Validation status: unknown, pending, passed, or failed.")] = "unknown",
+    validation_commands: Annotated[list[str] | None, Field(description="Commands the operator ran or plans to run for validation.")] = None,
+    validation_summary: Annotated[str | None, Field(description="Short human summary of validation result.")] = None,
+    validated_by: Annotated[str | None, Field(description="Optional operator or agent identifier that recorded validation.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional client id associated with the validation record.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional session id associated with the validation record.")] = None,
+) -> MergeQueueEntryResult:
+    """Record post-merge validation metadata on a merge queue record without running commands or modifying source files."""
+    return _record_tool_call(
+        "workspace_record_task_validation",
+        {
+            "task_id": task_id,
+            "cwd": cwd,
+            "project_id": project_id,
+            "validation_status": validation_status,
+            "validation_commands": validation_commands,
+            "validation_summary": validation_summary,
+            "validated_by": validated_by,
+            "client_id": client_id,
+            "session_id": session_id,
+        },
+        lambda: MergeQueueEntryResult(
+            **_record_task_validation(
+                task_id,
+                cwd=cwd,
+                project_id=project_id,
+                validation_status=validation_status,
+                validation_commands=validation_commands,
+                validation_summary=validation_summary,
+                validated_by=validated_by,
+                client_id=client_id,
+                session_id=session_id,
+            )
+        ),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_task_validation_status(
+    task_id: Annotated[str, Field(description="Task id for the merge queue validation record.")],
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+) -> MergeQueueEntryResult:
+    """Return post-merge validation metadata for a merge queue record without running commands or modifying source files."""
+    return _record_tool_call(
+        "workspace_task_validation_status",
+        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
+        lambda: MergeQueueEntryResult(**_task_validation_status(task_id, cwd=cwd, project_id=project_id)),
     )
 
 

@@ -162,6 +162,77 @@ class MergeQueueTests(unittest.TestCase):
         self.assertEqual((self.project / "README.md").read_text(encoding="utf-8"), "hello\n")
         self.assertTrue(Path(str(queued["record_path"])).exists())
 
+    def test_record_task_validation_updates_queue_metadata_without_source_changes(self) -> None:
+        self.init_git_project()
+        self.dirty_task_worktree("task-validation")
+        merge_queue.enqueue_task_worktree_merge(
+            "task-validation",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        merge_queue_apply.apply_queued_task_worktree_merge(
+            "task-validation",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        before_status = self.run_git(self.project, ["status", "--short"]).stdout
+
+        recorded = merge_queue.record_task_validation(
+            "task-validation",
+            cwd="project",
+            project_id="project-alpha",
+            validation_status="passed",
+            validation_commands=["uv run python -m unittest tests.test_merge_queue"],
+            validation_summary="unit tests passed",
+            validated_by="operator-a",
+            client_id="chatgpt-web",
+            session_id="session-1",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        status = merge_queue.task_validation_status(
+            "task-validation",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        self.assertEqual(recorded["validation_status"], "passed")
+        self.assertEqual(recorded["validation_commands"], ["uv run python -m unittest tests.test_merge_queue"])
+        self.assertEqual(recorded["validation_summary"], "unit tests passed")
+        self.assertTrue(recorded["validated_at"])
+        self.assertEqual(recorded["validated_by"], "operator-a")
+        self.assertEqual(recorded["validation_client_id"], "chatgpt-web")
+        self.assertEqual(recorded["validation_session_id"], "session-1")
+        self.assertEqual(status["validation_status"], "passed")
+        self.assertEqual(self.run_git(self.project, ["status", "--short"]).stdout, before_status)
+
+    def test_record_task_validation_rejects_invalid_status(self) -> None:
+        self.init_git_project()
+        self.dirty_task_worktree("task-validation-invalid")
+        merge_queue.enqueue_task_worktree_merge(
+            "task-validation-invalid",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        with self.assertRaisesRegex(ValueError, "validation_status"):
+            merge_queue.record_task_validation(
+                "task-validation-invalid",
+                cwd="project",
+                project_id="project-alpha",
+                validation_status="maybe",
+                runtime_root=self.runtime_root,
+                workspace_root=self.workspace_root,
+            )
+
     def test_queue_status_missing(self) -> None:
         self.init_git_project()
         self.dirty_task_worktree("task-queue-missing")
@@ -243,6 +314,8 @@ class MergeQueueTests(unittest.TestCase):
         original_enqueue = server._enqueue_task_worktree_merge
         original_read = server._read_merge_queue_entry
         original_list = server._list_merge_queue
+        original_record_validation = server._record_task_validation
+        original_validation_status = server._task_validation_status
         calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
 
         def call_through(tool_name: str, args: dict[str, object], action: object) -> object:
@@ -266,6 +339,13 @@ class MergeQueueTests(unittest.TestCase):
                 "overlapping_files": [],
                 "conflict_risk": "low",
                 "recommended_action": "merge_queue",
+                "validation_status": "unknown",
+                "validation_commands": [],
+                "validation_summary": None,
+                "validated_at": None,
+                "validated_by": None,
+                "validation_client_id": None,
+                "validation_session_id": None,
                 "status": "queued",
                 "exists": True,
                 "record_path": "/tmp/merge_queue/queue.json",
@@ -285,28 +365,64 @@ class MergeQueueTests(unittest.TestCase):
             calls.append(("list", args, kwargs))
             return [fake_record()]
 
+        def fake_record_validation(*args: object, **kwargs: object) -> dict[str, object]:
+            calls.append(("record_validation", args, kwargs))
+            record = fake_record()
+            record.update(
+                {
+                    "validation_status": "passed",
+                    "validation_commands": ["uv run python -m unittest"],
+                    "validation_summary": "passed",
+                    "validated_at": "2026-06-02T01:00:00+00:00",
+                    "validated_by": "operator-a",
+                }
+            )
+            return record
+
+        def fake_validation_status(*args: object, **kwargs: object) -> dict[str, object]:
+            calls.append(("validation_status", args, kwargs))
+            return fake_record()
+
         server._record_tool_call = call_through
         server._enqueue_task_worktree_merge = fake_enqueue
         server._read_merge_queue_entry = fake_read
         server._list_merge_queue = fake_list
+        server._record_task_validation = fake_record_validation
+        server._task_validation_status = fake_validation_status
         try:
             queued = server.workspace_enqueue_task_worktree_merge("task-a", cwd="project", project_id="project-alpha")
             status = server.workspace_merge_queue_status("task-a", cwd="project", project_id="project-alpha")
             listed = server.workspace_list_merge_queue(project_id="project-alpha")
+            validation = server.workspace_record_task_validation(
+                "task-a",
+                cwd="project",
+                project_id="project-alpha",
+                validation_status="passed",
+                validation_commands=["uv run python -m unittest"],
+                validation_summary="passed",
+                validated_by="operator-a",
+            )
+            validation_status = server.workspace_task_validation_status("task-a", cwd="project", project_id="project-alpha")
         finally:
             server._record_tool_call = original_record
             server._enqueue_task_worktree_merge = original_enqueue
             server._read_merge_queue_entry = original_read
             server._list_merge_queue = original_list
+            server._record_task_validation = original_record_validation
+            server._task_validation_status = original_validation_status
 
         self.assertIsInstance(queued, MergeQueueEntryResult)
         self.assertIsInstance(status, MergeQueueEntryResult)
         self.assertIsInstance(listed, MergeQueueListResult)
-        self.assertEqual([call[0] for call in calls], ["enqueue", "read", "list"])
+        self.assertIsInstance(validation, MergeQueueEntryResult)
+        self.assertIsInstance(validation_status, MergeQueueEntryResult)
+        self.assertEqual([call[0] for call in calls], ["enqueue", "read", "list", "record_validation", "validation_status"])
         self.assertEqual(calls[0][1], ("task-a",))
         self.assertEqual(calls[0][2], {"cwd": "project", "project_id": "project-alpha"})
+        self.assertEqual(calls[3][2]["validation_status"], "passed")
         self.assertEqual(listed.count, 1)
         self.assertEqual(queued.status, "queued")
+        self.assertEqual(validation.validation_status, "passed")
 
     def test_server_merge_proposal_wrapper_stages_pending_command(self) -> None:
         original_record = server._record_tool_call

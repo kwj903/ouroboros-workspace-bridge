@@ -75,6 +75,13 @@ def _summary_entry(
     overlapping_files = _string_list(queue_record.get("overlapping_files") if queue_record else [])
     conflict_risk = str(queue_record.get("conflict_risk")) if queue_record and queue_record.get("conflict_risk") is not None else None
     recommended_action = str(queue_record.get("recommended_action")) if queue_record and queue_record.get("recommended_action") is not None else None
+    validation_status = str(queue_record.get("validation_status") or "unknown") if queue_record else "unknown"
+    validation_commands = _string_list(queue_record.get("validation_commands") if queue_record else [])
+    validation_summary = str(queue_record.get("validation_summary")) if queue_record and queue_record.get("validation_summary") is not None else None
+    validated_at = str(queue_record.get("validated_at")) if queue_record and queue_record.get("validated_at") is not None else None
+    validated_by = str(queue_record.get("validated_by")) if queue_record and queue_record.get("validated_by") is not None else None
+    validation_client_id = str(queue_record.get("validation_client_id")) if queue_record and queue_record.get("validation_client_id") is not None else None
+    validation_session_id = str(queue_record.get("validation_session_id")) if queue_record and queue_record.get("validation_session_id") is not None else None
 
     operator_attention_reasons: list[str] = []
     if conflict_risk == "high":
@@ -85,6 +92,8 @@ def _summary_entry(
         operator_attention_reasons.append("source_head_changed")
     if overlapping_files:
         operator_attention_reasons.append("overlapping_files")
+    if validation_status == "failed":
+        operator_attention_reasons.append("validation_failed")
     operator_attention_reasons.extend(anomaly_reasons)
 
     return {
@@ -104,6 +113,13 @@ def _summary_entry(
         "overlapping_files": overlapping_files,
         "operator_attention": bool(operator_attention_reasons),
         "operator_attention_reasons": operator_attention_reasons,
+        "validation_status": validation_status,
+        "validation_commands": validation_commands,
+        "validation_summary": validation_summary,
+        "validated_at": validated_at,
+        "validated_by": validated_by,
+        "validation_client_id": validation_client_id,
+        "validation_session_id": validation_session_id,
         "archived": archived,
         "has_task_workspace_record": has_task,
         "has_merge_queue_record": has_queue,

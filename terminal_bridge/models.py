@@ -458,6 +458,13 @@ class MergeQueueEntryResult(BaseModel):
     overlapping_files: list[str] = []
     conflict_risk: str | None = None
     recommended_action: str | None = None
+    validation_status: str = "unknown"
+    validation_commands: list[str] = []
+    validation_summary: str | None = None
+    validated_at: str | None = None
+    validated_by: str | None = None
+    validation_client_id: str | None = None
+    validation_session_id: str | None = None
     status: str
     exists: bool
     record_path: str
@@ -484,6 +491,18 @@ class TaskOrchestrationSummaryEntry(BaseModel):
     conflict_risk: str | None = None
     recommended_action: str | None = None
     changed_file_count: int | None = None
+    source_head_changed: bool | None = None
+    source_dirty: bool | None = None
+    overlapping_files: list[str] = []
+    operator_attention: bool = False
+    operator_attention_reasons: list[str] = []
+    validation_status: str = "unknown"
+    validation_commands: list[str] = []
+    validation_summary: str | None = None
+    validated_at: str | None = None
+    validated_by: str | None = None
+    validation_client_id: str | None = None
+    validation_session_id: str | None = None
     archived: bool
     has_task_workspace_record: bool
     has_merge_queue_record: bool
@@ -498,3 +517,4 @@ class TaskOrchestrationSummaryResult(BaseModel):
     active_count: int
     archived_count: int
     anomaly_count: int
+    attention_count: int = 0

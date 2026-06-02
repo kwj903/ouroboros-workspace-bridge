@@ -25,6 +25,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Public MCP helper `workspace_task_orchestration_summary` for a read-only orchestrator overview of task workspace and merge queue records.
 - Review UI task orchestration dashboard section on `/pending` for a compact read-only view of task workspace and merge queue summary records.
 - Conflict handling operator guidance for source dirty state, source HEAD drift, overlapping files, queue/task record mismatch, requeue, and worker rework flows.
+- Public MCP helpers `workspace_record_task_validation` and `workspace_task_validation_status` for recording and reading post-merge validation metadata on merge queue records.
 
 ### Changed
 
@@ -37,6 +38,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Review UI task workspace badges now include clean/dirty state, changed file count, and a compact diff stat summary when inspection is available.
 - Task worktree preflight now reports source HEAD drift, source dirty state, overlapping file changes, conflict risk, and a recommended next action without modifying the source project.
 - Task orchestration summary and `/pending` dashboard now surface source dirty, source HEAD drift, overlapping files, and operator attention indicators from merge queue records.
+- Task orchestration summary and `/pending` dashboard now show post-merge validation status from merge queue records.
 - User documentation now explains help language selection, `WOOJAE_HELP_LANG`, and Korean help usage.
 - Default public MCP tool guidance now favors small proposal wrapper tools while keeping the generic bundle functions internally available.
 - Refactored MCP tool helper implementations out of `server.py` into `terminal_bridge/mcp_tools/` modules while preserving public MCP tool names, wrappers, signatures, schemas, approval flow, and runner behavior.

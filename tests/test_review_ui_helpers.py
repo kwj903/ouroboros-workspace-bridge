@@ -276,6 +276,11 @@ class ReviewServerHelperTests(unittest.TestCase):
                         "overlapping_files": [],
                         "operator_attention": False,
                         "operator_attention_reasons": [],
+                        "validation_status": "passed",
+                        "validation_commands": ["uv run python -m unittest"],
+                        "validation_summary": "passed",
+                        "validated_at": "2026-06-02T01:00:00+00:00",
+                        "validated_by": "operator-a",
                         "archived": False,
                         "has_task_workspace_record": True,
                         "has_merge_queue_record": True,
@@ -299,6 +304,11 @@ class ReviewServerHelperTests(unittest.TestCase):
                         "overlapping_files": [],
                         "operator_attention": False,
                         "operator_attention_reasons": [],
+                        "validation_status": "unknown",
+                        "validation_commands": [],
+                        "validation_summary": None,
+                        "validated_at": None,
+                        "validated_by": None,
                         "archived": True,
                         "has_task_workspace_record": True,
                         "has_merge_queue_record": False,
@@ -327,6 +337,11 @@ class ReviewServerHelperTests(unittest.TestCase):
                             "source_head_changed",
                             "overlapping_files",
                         ],
+                        "validation_status": "failed",
+                        "validation_commands": ["uv run python scripts/smoke_check.py"],
+                        "validation_summary": "smoke failed",
+                        "validated_at": "2026-06-02T02:00:00+00:00",
+                        "validated_by": "operator-b",
                         "archived": False,
                         "has_task_workspace_record": False,
                         "has_merge_queue_record": True,
@@ -350,6 +365,9 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("risk: low", html)
         self.assertIn("action: merge_queue", html)
         self.assertIn("files: 2", html)
+        self.assertIn("validation: passed", html)
+        self.assertIn("validation: failed", html)
+        self.assertIn("validated by: operator-b", html)
         self.assertIn("archived: yes", html)
         self.assertIn("attention: conflict review", html)
         self.assertIn("source dirty", html)

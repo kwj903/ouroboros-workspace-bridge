@@ -459,6 +459,7 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - Phase 3-K는 `workspace_task_orchestration_summary`로 task workspace record와 merge queue record를 project별 read-only summary로 연결하는 dashboard foundation을 추가했다.
 - Phase 3-L은 `/pending` review UI에 task orchestration summary를 read-only dashboard section으로 렌더링하는 foundation을 추가했다.
 - Phase 3-M은 conflict/high-risk task를 사람이 처리할 수 있도록 summary/dashboard의 source dirty, source HEAD drift, overlapping files, operator attention 표시와 conflict handling guide를 보강했다.
+- Phase 3-N은 `workspace_record_task_validation`, `workspace_task_validation_status`로 merge queue record에 post-merge validation metadata를 기록/조회하고 summary/dashboard에 validation 상태를 표시하는 foundation을 추가했다.
 
 성공 기준:
 

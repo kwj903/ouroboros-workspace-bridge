@@ -20,13 +20,14 @@ Implemented:
 - Read-only orchestrator summary through `workspace_task_orchestration_summary`.
 - Compact read-only task orchestration summary rendering in the `/pending` review UI.
 - Conflict handling dashboard indicators and operator runbook for high-risk task worktree merges.
+- Post-merge validation metadata recording through `workspace_record_task_validation` and `workspace_task_validation_status`.
 
 Not implemented:
 
 - Automatic task splitting.
 - Automatic worker session creation.
 - Automatic source merge without local review.
-- Automatic post-merge tests or commits.
+- Automatic post-merge test execution or commits.
 - Physical deletion of task worktree directories.
 - A full interactive merge queue UI with conflict resolution.
 
@@ -183,7 +184,22 @@ On approved execution, the command validates:
 
 After success, the queue record transitions to `merged`. The source project now has working-tree changes from the task worktree; run source-level tests and decide whether to create a source commit through the normal review-gated workflow.
 
-### 9. Orchestrator Archives Runtime Records
+### 9. Orchestrator Records Post-Merge Validation
+
+After the source integration proposal is approved and applied, run the relevant source-level validation outside the task worktree. This phase does not run validation commands automatically; it records what the operator already ran or plans to run.
+
+Use `workspace_record_task_validation(task_id, cwd, project_id, validation_status, validation_commands, validation_summary, validated_by, client_id, session_id)` to update the merge queue record.
+
+Recommended statuses:
+
+- `unknown`: no validation has been recorded yet.
+- `pending`: validation is planned or running outside the tool.
+- `passed`: validation completed successfully.
+- `failed`: validation completed and found a problem.
+
+Use `workspace_task_validation_status(task_id, cwd, project_id)` to read the latest validation metadata. Recording validation only updates runtime metadata; it does not run commands, edit source files, apply patches, archive records, or create commits.
+
+### 10. Orchestrator Archives Runtime Records
 
 After a task is merged, abandoned, or superseded:
 
@@ -220,6 +236,7 @@ Each entry connects task workspace and merge queue records by `project_id`, `sou
 - merge queue status, conflict risk, and recommended action
 - changed file count when a queue record captured it
 - source dirty, source HEAD drift, overlapping file, and operator attention indicators when a queue record captured merge preflight fields
+- post-merge validation status, commands, summary, timestamp, and operator metadata when recorded
 - archived state across task workspace or queue records
 - anomaly flags, including queue records whose task workspace record is missing
 
@@ -334,6 +351,13 @@ Use this checklist before retrying.
 - Rerun inspect and preflight.
 - If source changed, enqueue a fresh queue record after resolving the condition.
 
+### Post-Merge Validation Fails
+
+- Record the failure with `workspace_record_task_validation(..., validation_status="failed", validation_commands=[...], validation_summary=...)`.
+- Keep the queue and task workspace records unarchived until the operator decides whether to request worker rework, create a follow-up task, or revert manually.
+- Do not record `passed` until the latest source-level validation has actually succeeded.
+- If a worker needs to fix the failure, send the exact validation command and failure summary, and restart the orchestrator flow at inspect after the worker reports completion.
+
 ### Runtime Records Need Cleanup
 
 - Use archive helpers first.
@@ -367,6 +391,7 @@ After approved source integration:
 
 - Queue status is `merged`.
 - Source tests have been proposed and approved or run locally.
+- Validation status is recorded as `passed` or `failed` on the merge queue record.
 - Source commit is created through normal review-gated flow if desired.
 - Queue and task workspace records are archived with a useful reason.
 
@@ -385,5 +410,6 @@ After approved source integration:
 - Phase 3-K: read-only orchestrator dashboard summary across task workspace and merge queue records.
 - Phase 3-L: review UI rendering foundation for the task orchestration summary.
 - Phase 3-M: conflict handling workflow foundation with dashboard indicators and operator runbook.
+- Phase 3-N: post-merge validation tracking foundation on merge queue records and dashboard summaries.
 
-Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, post-merge test/result tracking, commit flow integration, and physical worktree cleanup.
+Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, automatic validation command execution, commit flow integration, and physical worktree cleanup.

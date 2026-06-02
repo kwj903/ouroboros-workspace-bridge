@@ -1033,6 +1033,17 @@ def _conflict_risk_tone(risk: object) -> str:
     return "neutral"
 
 
+def _validation_status_tone(status: object) -> str:
+    value = str(status or "unknown").strip()
+    if value == "passed":
+        return "ok"
+    if value == "failed":
+        return "danger"
+    if value == "pending":
+        return "warn"
+    return "neutral"
+
+
 def _overlapping_files_label(value: object, limit: int = 3) -> str:
     if not isinstance(value, list):
         return ""
@@ -1052,6 +1063,8 @@ def _operator_attention_label(entry: Mapping[str, object]) -> tuple[str, str]:
     anomaly = bool(entry.get("anomaly"))
     if conflict_risk == "high" or source_dirty or has_overlap:
         return "conflict review", "danger"
+    if str(entry.get("validation_status") or "") == "failed":
+        return "validation failed", "danger"
     if source_head_changed:
         return "head drift", "warn"
     if anomaly:
@@ -1085,6 +1098,11 @@ def _task_orchestration_entry_html(entry: Mapping[str, object]) -> str:
     overlap_label = _overlapping_files_label(entry.get("overlapping_files"))
     if overlap_label:
         conflict_badges.append(status_badge(f"overlap: {overlap_label}", "danger"))
+    validation_status = str(entry.get("validation_status") or "unknown").strip() or "unknown"
+    validation_badges = [status_badge(f"validation: {validation_status}", _validation_status_tone(validation_status))]
+    validated_by = str(entry.get("validated_by") or "").strip()
+    if validated_by:
+        validation_badges.append(status_badge(f"validated by: {validated_by}", "neutral"))
 
     return f"""
     <tr>
@@ -1114,6 +1132,7 @@ def _task_orchestration_entry_html(entry: Mapping[str, object]) -> str:
       <td>
         <div class="subnav">
           {"".join(conflict_badges)}
+          {"".join(validation_badges)}
           {status_badge(f"archived: {'yes' if archived else 'no'}", "neutral" if archived else "ok")}
           {status_badge(f"anomaly: {anomaly_label}", "danger" if anomaly else "ok")}
         </div>

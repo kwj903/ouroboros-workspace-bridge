@@ -7,11 +7,13 @@ from typing import Any
 
 from terminal_bridge.config import RUNTIME_ROOT, WORKSPACE_ROOT
 from terminal_bridge.storage import _now_iso, _read_json, _write_json
-from terminal_bridge.task_workspaces import merge_preflight_task_worktree
+from terminal_bridge.task_workspaces import _normalize_project_id, _resolve_source_cwd, merge_preflight_task_worktree
+from terminal_bridge.tasks import _normalize_task_id
 
 
 MERGE_QUEUE_DIR_NAME = "merge_queue"
 MERGE_QUEUE_RECORD_NAME = "queue.json"
+VALIDATION_STATUSES = {"unknown", "pending", "passed", "failed"}
 
 
 def _merge_queue_root(runtime_root: Path | None = None) -> Path:
@@ -60,6 +62,72 @@ def _missing_queue_record(
     }
 
 
+def _queue_lookup_fields(
+    task_id: object,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+) -> dict[str, Any]:
+    normalized_task_id = _normalize_task_id(str(task_id or ""))
+    source_cwd, _source_path = _resolve_source_cwd(cwd, workspace_root=workspace_root)
+    normalized_project_id = _normalize_project_id(project_id, source_cwd)
+    queue_key = _queue_key(normalized_task_id, normalized_project_id, source_cwd)
+    return {
+        "task_id": normalized_task_id,
+        "project_id": normalized_project_id,
+        "source_cwd": source_cwd,
+        "queue_key": queue_key,
+        "record_path": _queue_record_path(queue_key, runtime_root=runtime_root),
+    }
+
+
+def _validation_defaults(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(record)
+    normalized.setdefault("validation_status", "unknown")
+    normalized.setdefault("validation_commands", [])
+    normalized.setdefault("validation_summary", None)
+    normalized.setdefault("validated_at", None)
+    normalized.setdefault("validated_by", None)
+    normalized.setdefault("validation_client_id", None)
+    normalized.setdefault("validation_session_id", None)
+    return normalized
+
+
+def _normalize_validation_status(value: object) -> str:
+    status = str(value or "unknown").strip().lower()
+    if status not in VALIDATION_STATUSES:
+        raise ValueError("validation_status must be one of: unknown, pending, passed, failed.")
+    return status
+
+
+def _normalize_validation_commands(value: object | None) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list):
+        values = value
+    else:
+        raise ValueError("validation_commands must be a list of strings.")
+    commands = [str(item).strip() for item in values if str(item).strip()]
+    if len(commands) > 50:
+        raise ValueError("validation_commands is too long.")
+    if any(len(item) > 1000 for item in commands):
+        raise ValueError("validation command is too long.")
+    return commands
+
+
+def _optional_text(value: object | None, *, max_length: int = 4000) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) > max_length:
+        raise ValueError("validation metadata text is too long.")
+    return text
+
+
 def enqueue_task_worktree_merge(
     task_id: str,
     *,
@@ -90,6 +158,7 @@ def enqueue_task_worktree_merge(
     existing: dict[str, Any] = {}
     if record_path.exists():
         existing = _read_json(record_path)
+    existing = _validation_defaults(existing)
 
     now = _now_iso()
     record = {
@@ -110,6 +179,13 @@ def enqueue_task_worktree_merge(
         "overlapping_files": preflight.get("overlapping_files", []),
         "conflict_risk": preflight.get("conflict_risk"),
         "recommended_action": preflight.get("recommended_action"),
+        "validation_status": existing.get("validation_status"),
+        "validation_commands": existing.get("validation_commands", []),
+        "validation_summary": existing.get("validation_summary"),
+        "validated_at": existing.get("validated_at"),
+        "validated_by": existing.get("validated_by"),
+        "validation_client_id": existing.get("validation_client_id"),
+        "validation_session_id": existing.get("validation_session_id"),
         "status": str(existing.get("status") or "queued"),
         "exists": True,
         "record_path": str(record_path),
@@ -144,14 +220,85 @@ def read_merge_queue_entry(
     if record_path.exists():
         record = _read_json(record_path)
         record["exists"] = True
-        return record
-    return _missing_queue_record(
+        return _validation_defaults(record)
+    return _validation_defaults(_missing_queue_record(
         task_id=task_id_text,
         project_id=project_id_text,
         source_cwd=source_cwd_text,
         queue_key=queue_key,
         record_path=record_path,
+    ))
+
+
+def task_validation_status(
+    task_id: str,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+) -> dict[str, Any]:
+    fields = _queue_lookup_fields(
+        task_id,
+        cwd=cwd,
+        project_id=project_id,
+        runtime_root=runtime_root,
+        workspace_root=workspace_root,
     )
+    record_path = fields["record_path"]
+    if not isinstance(record_path, Path):
+        raise ValueError("Invalid merge queue record path.")
+    if record_path.exists():
+        record = _read_json(record_path)
+        record["exists"] = True
+        return _validation_defaults(record)
+    return _validation_defaults(_missing_queue_record(**fields))
+
+
+def record_task_validation(
+    task_id: str,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    validation_status: object = "unknown",
+    validation_commands: object | None = None,
+    validation_summary: object | None = None,
+    validated_by: object | None = None,
+    client_id: object | None = None,
+    session_id: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+) -> dict[str, Any]:
+    fields = _queue_lookup_fields(
+        task_id,
+        cwd=cwd,
+        project_id=project_id,
+        runtime_root=runtime_root,
+        workspace_root=workspace_root,
+    )
+    record_path = fields["record_path"]
+    if not isinstance(record_path, Path) or not record_path.exists():
+        raise FileNotFoundError("merge queue record not found.")
+
+    status = _normalize_validation_status(validation_status)
+    commands = _normalize_validation_commands(validation_commands)
+    now = _now_iso()
+    record = _validation_defaults(_read_json(record_path))
+    record.update(
+        {
+            "validation_status": status,
+            "validation_commands": commands,
+            "validation_summary": _optional_text(validation_summary),
+            "validated_at": now if status in {"passed", "failed"} else None,
+            "validated_by": _optional_text(validated_by, max_length=256),
+            "validation_client_id": _optional_text(client_id, max_length=256),
+            "validation_session_id": _optional_text(session_id, max_length=256),
+            "updated_at": now,
+            "exists": True,
+        }
+    )
+    _write_json(record_path, record)
+    return record
 
 
 def archive_merge_queue_entry(
@@ -208,6 +355,6 @@ def list_merge_queue(
         if normalized_project_id is not None and record.get("project_id") != normalized_project_id:
             continue
         record["exists"] = True
-        rows.append(record)
+        rows.append(_validation_defaults(record))
     rows.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
     return rows
