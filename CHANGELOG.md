@@ -26,6 +26,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Review UI task orchestration dashboard section on `/pending` for a compact read-only view of task workspace and merge queue summary records.
 - Conflict handling operator guidance for source dirty state, source HEAD drift, overlapping files, queue/task record mismatch, requeue, and worker rework flows.
 - Public MCP helpers `workspace_record_task_validation` and `workspace_task_validation_status` for recording and reading post-merge validation metadata on merge queue records.
+- Public MCP helper `workspace_task_cleanup_preview` for read-only physical task worktree cleanup candidate detection.
 
 ### Changed
 

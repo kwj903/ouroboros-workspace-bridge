@@ -105,6 +105,7 @@ from terminal_bridge.models import (
     RestoreResult,
     SearchTextResult,
     TaskListResult,
+    TaskCleanupPreviewResult,
     TaskOrchestrationSummaryResult,
     TaskStatusResult,
     TaskWorkspaceListResult,
@@ -222,6 +223,7 @@ from terminal_bridge.task_workspaces import (
     prepare_task_workspace as _prepare_task_workspace,
     read_task_workspace as _read_task_workspace,
 )
+from terminal_bridge.task_cleanup_preview import task_cleanup_preview as _task_cleanup_preview
 from terminal_bridge.task_orchestration_summary import task_orchestration_summary as _task_orchestration_summary
 from terminal_bridge.tool_calls import list_tool_calls as _list_tool_call_records
 from terminal_bridge.tool_calls import read_tool_call as _read_tool_call_record
@@ -986,6 +988,7 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_merge_queue_status",
     "workspace_list_merge_queue",
     "workspace_task_orchestration_summary",
+    "workspace_task_cleanup_preview",
     "workspace_record_task_validation",
     "workspace_task_validation_status",
     "workspace_propose_task_worktree_merge_and_wait",
@@ -2338,6 +2341,25 @@ def workspace_task_orchestration_summary(
         "workspace_task_orchestration_summary",
         {"project_id": project_id},
         lambda: TaskOrchestrationSummaryResult(**_task_orchestration_summary(project_id=project_id)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_task_cleanup_preview(
+    project_id: Annotated[str | None, Field(description="Optional project id filter. Empty strings are ignored.")] = None,
+) -> TaskCleanupPreviewResult:
+    """Preview archived task worktree physical cleanup candidates without deleting files or removing worktrees."""
+    return _record_tool_call(
+        "workspace_task_cleanup_preview",
+        {"project_id": project_id},
+        lambda: TaskCleanupPreviewResult(**_task_cleanup_preview(project_id=project_id)),
     )
 
 

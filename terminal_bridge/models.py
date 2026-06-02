@@ -518,3 +518,29 @@ class TaskOrchestrationSummaryResult(BaseModel):
     archived_count: int
     anomaly_count: int
     attention_count: int = 0
+
+
+class TaskCleanupPreviewEntry(BaseModel):
+    task_id: str
+    project_id: str
+    source_cwd: str
+    workspace_path: str | None = None
+    record_path: str | None = None
+    queue_status: str | None = None
+    workspace_status: str
+    validation_status: str = "unknown"
+    cleanup_ready: bool
+    cleanup_risk: str
+    cleanup_blockers: list[str] = []
+    recommended_action: str
+    worktree_dirty: bool | None = None
+    has_task_workspace_record: bool
+    has_merge_queue_record: bool
+
+
+class TaskCleanupPreviewResult(BaseModel):
+    project_id: str | None = None
+    entries: list[TaskCleanupPreviewEntry]
+    count: int
+    ready_count: int
+    blocked_count: int
