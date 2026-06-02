@@ -98,6 +98,7 @@ def enqueue_task_worktree_merge(
         "project_id": project_id_text,
         "source_cwd": source_cwd_text,
         "workspace_path": preflight.get("workspace_path"),
+        "source_git_root": preflight.get("source_git_root"),
         "worktree_branch": preflight.get("worktree_branch"),
         "base_ref": preflight.get("base_ref"),
         "base_sha": preflight.get("base_sha"),

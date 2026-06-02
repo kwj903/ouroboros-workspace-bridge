@@ -444,6 +444,7 @@ class MergeQueueEntryResult(BaseModel):
     project_id: str
     source_cwd: str
     workspace_path: str | None = None
+    source_git_root: str | None = None
     worktree_branch: str | None = None
     base_ref: str | None = None
     base_sha: str | None = None

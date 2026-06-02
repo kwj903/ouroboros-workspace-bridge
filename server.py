@@ -979,6 +979,7 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_enqueue_task_worktree_merge",
     "workspace_merge_queue_status",
     "workspace_list_merge_queue",
+    "workspace_propose_task_worktree_merge_and_wait",
     "workspace_task_workspace_status",
     "workspace_list_task_workspaces",
     "workspace_stage_text_payload",
@@ -2237,6 +2238,72 @@ def workspace_list_merge_queue(
         "workspace_list_merge_queue",
         {"project_id": project_id},
         lambda: MergeQueueListResult(entries=entries, count=len(entries)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_propose_task_worktree_merge_and_wait(
+    task_id: Annotated[str, Field(description="Task id for the queued task worktree merge.")],
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Create one pending command proposal to apply a queued task worktree merge to the source project.
+
+    The merge does not run in ChatGPT. It runs only after local /pending approval.
+    """
+    def action() -> CommandBundleStatusResult:
+        queued = _read_merge_queue_entry(task_id, cwd=cwd, project_id=project_id)
+        if queued.get("status") != "queued":
+            raise ValueError("merge queue entry must be queued before proposing a source merge.")
+        title = f"Merge task worktree: {task_id}"
+        step = CommandBundleStep(
+            name=title,
+            argv=[
+                "python",
+                str(Path(__file__).resolve().parent / "terminal_bridge" / "merge_queue_apply.py"),
+                "--task-id",
+                task_id,
+                "--cwd",
+                cwd,
+                *(["--project-id", project_id] if project_id else []),
+            ],
+            timeout_seconds=120,
+        )
+        metadata = {
+            "task_id": task_id,
+            "project_id": project_id,
+            "workspace_mode": "direct",
+            "source_cwd": cwd,
+            "effective_cwd": cwd,
+        }
+        return _workspace_stage_command_bundle_and_wait_impl(
+            title,
+            cwd,
+            [step],
+            timeout_seconds,
+            poll_interval_seconds,
+            metadata,
+        )
+
+    return _record_tool_call(
+        "workspace_propose_task_worktree_merge_and_wait",
+        {
+            "task_id": task_id,
+            "cwd": cwd,
+            "project_id": project_id,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        action,
     )
 
 

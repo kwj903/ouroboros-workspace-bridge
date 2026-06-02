@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 
 import server
-from terminal_bridge import merge_queue, task_workspaces
-from terminal_bridge.models import MergeQueueEntryResult, MergeQueueListResult
+from terminal_bridge import merge_queue, merge_queue_apply, task_workspaces
+from terminal_bridge.models import CommandBundleStatusResult, MergeQueueEntryResult, MergeQueueListResult
 
 
 class MergeQueueTests(unittest.TestCase):
@@ -153,6 +153,66 @@ class MergeQueueTests(unittest.TestCase):
         self.assertEqual(status["status"], "missing")
         self.assertTrue(str(status["record_path"]).endswith("queue.json"))
 
+    def test_apply_queued_task_worktree_merge_updates_source_and_queue(self) -> None:
+        self.init_git_project()
+        self.dirty_task_worktree("task-apply-ready")
+        queued = merge_queue.enqueue_task_worktree_merge(
+            "task-apply-ready",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        applied = merge_queue_apply.apply_queued_task_worktree_merge(
+            "task-apply-ready",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        self.assertEqual(applied["status"], "merged")
+        self.assertEqual(Path(str(queued["record_path"])).read_text(encoding="utf-8").count('"merged"'), 1)
+        self.assertEqual((self.project / "README.md").read_text(encoding="utf-8"), "hello\nqueued\n")
+        self.assertIn("M README.md", self.run_git(self.project, ["status", "--short"]).stdout)
+
+    def test_apply_queued_task_worktree_merge_rejects_source_head_drift(self) -> None:
+        self.init_git_project()
+        self.dirty_task_worktree("task-apply-drift")
+        merge_queue.enqueue_task_worktree_merge(
+            "task-apply-drift",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        (self.project / "source.txt").write_text("source\n", encoding="utf-8")
+        self.run_git(self.project, ["add", "source.txt"])
+        self.run_git(self.project, ["commit", "-m", "source drift"])
+
+        with self.assertRaisesRegex(ValueError, "source HEAD changed"):
+            merge_queue_apply.apply_queued_task_worktree_merge(
+                "task-apply-drift",
+                cwd="project",
+                project_id="project-alpha",
+                runtime_root=self.runtime_root,
+                workspace_root=self.workspace_root,
+            )
+
+    def test_apply_queued_task_worktree_merge_rejects_unqueued(self) -> None:
+        self.init_git_project()
+        self.dirty_task_worktree("task-apply-unqueued")
+
+        with self.assertRaisesRegex(ValueError, "not queued"):
+            merge_queue_apply.apply_queued_task_worktree_merge(
+                "task-apply-unqueued",
+                cwd="project",
+                project_id="project-alpha",
+                runtime_root=self.runtime_root,
+                workspace_root=self.workspace_root,
+            )
+
     def test_server_public_wrappers_call_merge_queue_helpers(self) -> None:
         original_record = server._record_tool_call
         original_enqueue = server._enqueue_task_worktree_merge
@@ -222,6 +282,72 @@ class MergeQueueTests(unittest.TestCase):
         self.assertEqual(calls[0][2], {"cwd": "project", "project_id": "project-alpha"})
         self.assertEqual(listed.count, 1)
         self.assertEqual(queued.status, "queued")
+
+    def test_server_merge_proposal_wrapper_stages_pending_command(self) -> None:
+        original_record = server._record_tool_call
+        original_read = server._read_merge_queue_entry
+        original_stage = server._workspace_stage_command_bundle_and_wait_impl
+        calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+        def call_through(tool_name: str, args: dict[str, object], action: object) -> object:
+            return action()
+
+        def fake_read(*args: object, **kwargs: object) -> dict[str, object]:
+            calls.append(("read", args, kwargs))
+            return {
+                "queue_key": "task-a-123456789abc",
+                "task_id": "task-a",
+                "project_id": "project-alpha",
+                "source_cwd": "project",
+                "status": "queued",
+                "exists": True,
+                "record_path": "/tmp/merge_queue/queue.json",
+                "created_at": "2026-06-02T00:00:00+00:00",
+                "updated_at": "2026-06-02T00:00:00+00:00",
+            }
+
+        def fake_stage(*args: object, **kwargs: object) -> CommandBundleStatusResult:
+            calls.append(("stage", args, kwargs))
+            return CommandBundleStatusResult(
+                bundle_id="cmd-test",
+                title=str(args[0]),
+                cwd=str(args[1]),
+                status="pending",
+                risk="medium",
+                approval_required=True,
+                command_count=1,
+                created_at="2026-06-02T00:00:00+00:00",
+                updated_at="2026-06-02T00:00:00+00:00",
+                metadata={},
+            )
+
+        server._record_tool_call = call_through
+        server._read_merge_queue_entry = fake_read
+        server._workspace_stage_command_bundle_and_wait_impl = fake_stage
+        try:
+            result = server.workspace_propose_task_worktree_merge_and_wait(
+                "task-a",
+                cwd="project",
+                project_id="project-alpha",
+                timeout_seconds=7,
+                poll_interval_seconds=0.5,
+            )
+        finally:
+            server._record_tool_call = original_record
+            server._read_merge_queue_entry = original_read
+            server._workspace_stage_command_bundle_and_wait_impl = original_stage
+
+        self.assertIsInstance(result, CommandBundleStatusResult)
+        self.assertEqual(result.status, "pending")
+        self.assertEqual([call[0] for call in calls], ["read", "stage"])
+        stage_args = calls[1][1]
+        self.assertEqual(stage_args[1], "project")
+        self.assertEqual(stage_args[3], 7)
+        self.assertEqual(stage_args[4], 0.5)
+        step = stage_args[2][0]
+        self.assertIn("merge_queue_apply.py", step.argv[1])
+        self.assertIn("--task-id", step.argv)
+        self.assertIn("task-a", step.argv)
 
 
 if __name__ == "__main__":
