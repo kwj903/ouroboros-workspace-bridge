@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -7,7 +8,7 @@ from pathlib import Path
 
 import server
 from terminal_bridge import task_workspaces
-from terminal_bridge.models import TaskWorkspaceListResult, TaskWorkspaceStatusResult
+from terminal_bridge.models import TaskWorkspaceListResult, TaskWorkspaceStatusResult, TaskWorktreeInspectionResult
 
 
 class TaskWorkspaceTests(unittest.TestCase):
@@ -209,6 +210,162 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertEqual(created["status"], "worktree")
         self.assertTrue((Path(str(created["workspace_path"])) / ".git").exists())
 
+    def test_inspect_task_worktree_clean_ready_worktree(self) -> None:
+        self.init_git_project()
+        task_workspaces.create_task_worktree(
+            "task-inspect-clean",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        inspected = task_workspaces.inspect_task_worktree(
+            "task-inspect-clean",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        self.assertEqual(inspected["status"], "worktree")
+        self.assertFalse(inspected["dirty"])
+        self.assertEqual(inspected["git_status_short"], "")
+        self.assertEqual(inspected["diff_stat"], "")
+        self.assertEqual(inspected["changed_files"], [])
+
+    def test_inspect_task_worktree_reports_status_and_diff(self) -> None:
+        self.init_git_project()
+        record = task_workspaces.create_task_worktree(
+            "task-inspect-dirty",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        workspace_path = Path(str(record["workspace_path"]))
+        (workspace_path / "README.md").write_text("hello\nchanged\n", encoding="utf-8")
+        (workspace_path / "new.txt").write_text("new\n", encoding="utf-8")
+
+        inspected = task_workspaces.inspect_task_worktree(
+            "task-inspect-dirty",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        changed_paths = {str(item["path"]) for item in inspected["changed_files"]}
+        self.assertTrue(inspected["dirty"])
+        self.assertIn("README.md", inspected["git_status_short"])
+        self.assertIn("?? new.txt", inspected["git_status_short"])
+        self.assertIn("README.md", inspected["diff_stat"])
+        self.assertIn("README.md", changed_paths)
+        self.assertIn("new.txt", changed_paths)
+        self.assertEqual(inspected["changed_file_count"], 2)
+        self.assertEqual(self.run_git(self.project, ["status", "--porcelain"]).stdout, "")
+
+    def test_inspect_task_worktree_rejects_missing_record(self) -> None:
+        self.init_git_project()
+
+        with self.assertRaisesRegex(ValueError, "task workspace worktree is not ready"):
+            task_workspaces.inspect_task_worktree(
+                "task-missing",
+                cwd="project",
+                project_id="project-alpha",
+                runtime_root=self.runtime_root,
+                workspace_root=self.workspace_root,
+            )
+
+    def test_inspect_task_worktree_rejects_prepared_only_record(self) -> None:
+        self.init_git_project()
+        task_workspaces.prepare_task_workspace(
+            "task-prepared-only",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        with self.assertRaisesRegex(ValueError, "task workspace worktree is not ready"):
+            task_workspaces.inspect_task_worktree(
+                "task-prepared-only",
+                cwd="project",
+                project_id="project-alpha",
+                runtime_root=self.runtime_root,
+                workspace_root=self.workspace_root,
+            )
+
+    def test_inspect_task_worktree_rejects_non_git_workspace_path(self) -> None:
+        self.init_git_project()
+        record = task_workspaces.create_task_worktree(
+            "task-non-git",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        record_path = Path(str(record["record_path"]))
+        data = json.loads(record_path.read_text(encoding="utf-8"))
+        data["workspace_path"] = str(self.runtime_root / "task_workspaces" / "not-a-worktree" / "repo")
+        Path(str(data["workspace_path"])).mkdir(parents=True)
+        record_path.write_text(json.dumps(data), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "workspace_path is not a git worktree"):
+            task_workspaces.inspect_task_worktree(
+                "task-non-git",
+                cwd="project",
+                project_id="project-alpha",
+                runtime_root=self.runtime_root,
+                workspace_root=self.workspace_root,
+            )
+
+    def test_inspect_task_worktree_rejects_workspace_path_escape(self) -> None:
+        self.init_git_project()
+        record = task_workspaces.create_task_worktree(
+            "task-escape",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        record_path = Path(str(record["record_path"]))
+        data = json.loads(record_path.read_text(encoding="utf-8"))
+        data["workspace_path"] = str(self.workspace_root / "outside-worktree")
+        record_path.write_text(json.dumps(data), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "workspace_path escapes task workspace root"):
+            task_workspaces.inspect_task_worktree(
+                "task-escape",
+                cwd="project",
+                project_id="project-alpha",
+                runtime_root=self.runtime_root,
+                workspace_root=self.workspace_root,
+            )
+
+    def test_inspect_task_worktree_rejects_git_command_failure(self) -> None:
+        self.init_git_project()
+        task_workspaces.create_task_worktree(
+            "task-git-failure",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        def failing_git(argv: list[str]) -> subprocess.CompletedProcess[str]:
+            raise subprocess.CalledProcessError(128, argv, output="", stderr="not a git repository")
+
+        with self.assertRaisesRegex(RuntimeError, "git status --short failed: not a git repository"):
+            task_workspaces.inspect_task_worktree(
+                "task-git-failure",
+                cwd="project",
+                project_id="project-alpha",
+                runtime_root=self.runtime_root,
+                workspace_root=self.workspace_root,
+                git_runner=failing_git,
+            )
+
     def test_prepare_read_list_and_deterministic_key(self) -> None:
         first = task_workspaces.prepare_task_workspace(
             "task-a",
@@ -335,6 +492,7 @@ class TaskWorkspaceTests(unittest.TestCase):
         original_read = server._read_task_workspace
         original_list = server._list_task_workspaces
         original_create = server._create_task_worktree
+        original_inspect = server._inspect_task_worktree
         calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
 
         def call_through(tool_name: str, args: dict[str, object], action: object) -> object:
@@ -372,31 +530,51 @@ class TaskWorkspaceTests(unittest.TestCase):
             calls.append(("create", args, kwargs))
             return fake_record()
 
+        def fake_inspect(*args: object, **kwargs: object) -> dict[str, object]:
+            calls.append(("inspect", args, kwargs))
+            record = fake_record()
+            return {
+                **record,
+                "dirty": True,
+                "changed_file_count": 1,
+                "git_status_short": " M README.md",
+                "diff_stat": " README.md | 1 +",
+                "diff_name_status": "M\tREADME.md",
+                "changed_files": [{"status": "M", "path": "README.md"}],
+            }
+
         server._record_tool_call = call_through
         server._prepare_task_workspace = fake_prepare
         server._read_task_workspace = fake_read
         server._list_task_workspaces = fake_list
         server._create_task_worktree = fake_create
+        server._inspect_task_worktree = fake_inspect
         try:
             prepared = server.workspace_prepare_task_workspace("task-a", cwd="project", project_id="project-alpha")
             status = server.workspace_task_workspace_status("task-a", cwd="project", project_id="project-alpha")
             listed = server.workspace_list_task_workspaces(project_id="project-alpha")
             created = server.workspace_create_task_worktree("task-a", cwd="project", project_id="project-alpha")
+            inspected = server.workspace_inspect_task_worktree("task-a", cwd="project", project_id="project-alpha")
         finally:
             server._record_tool_call = original_record
             server._prepare_task_workspace = original_prepare
             server._read_task_workspace = original_read
             server._list_task_workspaces = original_list
             server._create_task_worktree = original_create
+            server._inspect_task_worktree = original_inspect
 
         self.assertIsInstance(prepared, TaskWorkspaceStatusResult)
         self.assertIsInstance(status, TaskWorkspaceStatusResult)
         self.assertIsInstance(listed, TaskWorkspaceListResult)
         self.assertIsInstance(created, TaskWorkspaceStatusResult)
-        self.assertEqual([call[0] for call in calls], ["prepare", "read", "list", "create"])
+        self.assertIsInstance(inspected, TaskWorktreeInspectionResult)
+        self.assertEqual([call[0] for call in calls], ["prepare", "read", "list", "create", "inspect"])
         self.assertEqual(calls[0][1], ("task-a",))
         self.assertEqual(calls[0][2], {"cwd": "project", "project_id": "project-alpha"})
+        self.assertEqual(calls[4][2], {"cwd": "project", "project_id": "project-alpha"})
         self.assertEqual(listed.count, 1)
+        self.assertTrue(inspected.dirty)
+        self.assertEqual(inspected.changed_file_count, 1)
 
 
 if __name__ == "__main__":

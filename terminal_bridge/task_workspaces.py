@@ -175,6 +175,16 @@ def _git_stdout(git_runner: GitRunner, argv: list[str]) -> str:
     return completed.stdout.strip()
 
 
+def _git_inspection_stdout(git_runner: GitRunner, workspace_path: Path, args: list[str]) -> str:
+    argv = ["git", "-C", str(workspace_path), *args]
+    try:
+        completed = git_runner(argv)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise RuntimeError(f"git {' '.join(args)} failed: {detail}") from exc
+    return completed.stdout.rstrip("\n")
+
+
 def _source_git_info(
     source_path: Path,
     *,
@@ -211,6 +221,89 @@ def _target_has_unknown_files(path: Path) -> bool:
     if _is_git_worktree_path(path):
         return False
     return any(path.iterdir())
+
+
+def _task_workspace_not_ready_message(status: str) -> str:
+    return (
+        "task workspace worktree is not ready "
+        f"(status={status}); run workspace_create_task_worktree before inspecting this task worktree."
+    )
+
+
+def _validate_task_worktree_record(
+    raw_record: dict[str, object],
+    *,
+    runtime_root: Path | None = None,
+) -> tuple[dict[str, object], Path]:
+    record = _record_with_current_status(raw_record)
+    workspace_path_text = str(raw_record.get("workspace_path") or "").strip()
+    if not workspace_path_text:
+        raise ValueError(_task_workspace_not_ready_message(str(record.get("status") or "missing")))
+
+    workspace_path = Path(workspace_path_text).expanduser().resolve(strict=False)
+    task_root = _task_workspace_root(runtime_root)
+    if workspace_path != task_root and not workspace_path.is_relative_to(task_root):
+        raise ValueError(f"workspace_path escapes task workspace root: {workspace_path}")
+
+    raw_status = str(raw_record.get("status") or "")
+    status = str(record.get("status") or "missing")
+    worktree_status = str(record.get("worktree_status") or "")
+
+    if raw_status == "worktree" and workspace_path.exists() and not _is_git_worktree_path(workspace_path):
+        raise ValueError(f"workspace_path is not a git worktree: {workspace_path}")
+
+    if status != "worktree" or worktree_status != "ready":
+        raise ValueError(_task_workspace_not_ready_message(status))
+
+    if not _is_git_worktree_path(workspace_path):
+        raise ValueError(f"workspace_path is not a git worktree: {workspace_path}")
+
+    return record, workspace_path
+
+
+def _parse_diff_name_status(diff_name_status: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for line in diff_name_status.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        status = parts[0]
+        if len(parts) >= 3 and status[:1] in {"R", "C"}:
+            old_path = parts[1]
+            path = parts[2]
+            item = {"status": status, "path": path, "old_path": old_path}
+        elif len(parts) >= 2:
+            path = parts[-1]
+            item = {"status": status, "path": path}
+        else:
+            continue
+        if path not in seen:
+            seen.add(path)
+            rows.append(item)
+
+    return rows
+
+
+def _parse_status_short_extra_paths(status_short: str, seen_paths: set[str]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for line in status_short.splitlines():
+        if len(line) < 4:
+            continue
+        status = line[:2].strip() or line[:2]
+        path_text = line[3:]
+        old_path: str | None = None
+        if " -> " in path_text:
+            old_path, path_text = path_text.split(" -> ", 1)
+        if path_text in seen_paths:
+            continue
+        seen_paths.add(path_text)
+        item = {"status": status, "path": path_text}
+        if old_path:
+            item["old_path"] = old_path
+        rows.append(item)
+    return rows
 
 
 def _missing_record(fields: dict[str, object]) -> dict[str, object]:
@@ -362,6 +455,50 @@ def create_task_worktree(
         raise ValueError("Invalid task workspace record path.")
     _write_json(record_path, record)
     return record
+
+
+def inspect_task_worktree(
+    task_id: str,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+    git_runner: GitRunner = _run_git,
+) -> dict[str, object]:
+    fields = _task_workspace_paths(
+        task_id,
+        cwd=cwd,
+        project_id=project_id,
+        runtime_root=runtime_root,
+        workspace_root=workspace_root,
+    )
+    record_path = fields["record_path"]
+    if not isinstance(record_path, Path) or not record_path.exists():
+        raise ValueError(_task_workspace_not_ready_message("missing"))
+
+    raw_record = _read_json(record_path)
+    record, workspace_path = _validate_task_worktree_record(raw_record, runtime_root=runtime_root)
+
+    git_status_short = _git_inspection_stdout(git_runner, workspace_path, ["status", "--short"])
+    base_sha = str(record.get("base_sha") or "").strip()
+    diff_ref = base_sha or "HEAD"
+    diff_stat = _git_inspection_stdout(git_runner, workspace_path, ["diff", "--stat", diff_ref, "--"])
+    diff_name_status = _git_inspection_stdout(git_runner, workspace_path, ["diff", "--name-status", diff_ref, "--"])
+
+    changed_files = _parse_diff_name_status(diff_name_status)
+    seen_paths = {item["path"] for item in changed_files}
+    changed_files.extend(_parse_status_short_extra_paths(git_status_short, seen_paths))
+
+    return {
+        **record,
+        "dirty": bool(git_status_short.strip() or diff_name_status.strip()),
+        "changed_file_count": len(changed_files),
+        "git_status_short": git_status_short,
+        "diff_stat": diff_stat,
+        "diff_name_status": diff_name_status,
+        "changed_files": changed_files,
+    }
 
 
 def read_task_workspace(

@@ -408,3 +408,18 @@ class TaskWorkspaceStatusResult(BaseModel):
 class TaskWorkspaceListResult(BaseModel):
     entries: list[TaskWorkspaceStatusResult]
     count: int
+
+
+class TaskWorktreeChangedFile(BaseModel):
+    status: str
+    path: str
+    old_path: str | None = None
+
+
+class TaskWorktreeInspectionResult(TaskWorkspaceStatusResult):
+    dirty: bool
+    changed_file_count: int
+    git_status_short: str
+    diff_stat: str
+    diff_name_status: str
+    changed_files: list[TaskWorktreeChangedFile]

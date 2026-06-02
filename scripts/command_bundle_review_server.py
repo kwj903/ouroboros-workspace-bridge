@@ -57,7 +57,7 @@ from terminal_bridge.review_layout import (
     normalize_server_tab,
     page,
 )
-from terminal_bridge.task_workspaces import resolve_task_workspace_for_bundle
+from terminal_bridge.task_workspaces import inspect_task_worktree, resolve_task_workspace_for_bundle
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = PROJECT_ROOT / "scripts" / "command_bundle_runner.py"
@@ -966,6 +966,24 @@ def bundle_task_workspace_html(record: dict[str, object]) -> str:
     base_ref = str(task_record.get("base_ref") or "").strip()
     if base_ref:
         badges.append(status_badge(f"base: {base_ref}", "neutral"))
+    if resolution.status == "worktree":
+        try:
+            inspection = inspect_task_worktree(
+                str(resolution.task_id or ""),
+                cwd=resolution.source_cwd or record.get("cwd", "."),
+                project_id=resolution.project_id,
+                runtime_root=RUNTIME_ROOT,
+            )
+            dirty = bool(inspection.get("dirty"))
+            changed_count = int(inspection.get("changed_file_count") or 0)
+            diff_stat = str(inspection.get("diff_stat") or "").strip()
+            badges.append(status_badge("dirty" if dirty else "clean", "warn" if dirty else "ok"))
+            badges.append(status_badge(f"files: {changed_count}", "neutral"))
+            first_stat_line = next((line.strip() for line in diff_stat.splitlines() if line.strip()), "")
+            if first_stat_line:
+                badges.append(status_badge(f"diff: {first_stat_line}", "neutral"))
+        except Exception:
+            pass
     return '<div class="subnav">' + "".join(badges) + "</div>"
 
 
