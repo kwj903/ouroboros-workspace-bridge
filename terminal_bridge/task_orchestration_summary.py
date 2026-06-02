@@ -19,6 +19,18 @@ def _is_archived(record: dict[str, Any] | None) -> bool:
     return bool(record) and str(record.get("status") or "") == "archived"
 
 
+def _optional_bool(record: dict[str, Any] | None, key: str) -> bool | None:
+    if not record or record.get(key) is None:
+        return None
+    return bool(record.get(key))
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
 def _summary_entry(
     key: tuple[str, str, str],
     *,
@@ -58,6 +70,23 @@ def _summary_entry(
         except (TypeError, ValueError):
             anomaly_reasons.append("invalid_changed_file_count")
 
+    source_head_changed = _optional_bool(queue_record, "source_head_changed")
+    source_dirty = _optional_bool(queue_record, "source_dirty")
+    overlapping_files = _string_list(queue_record.get("overlapping_files") if queue_record else [])
+    conflict_risk = str(queue_record.get("conflict_risk")) if queue_record and queue_record.get("conflict_risk") is not None else None
+    recommended_action = str(queue_record.get("recommended_action")) if queue_record and queue_record.get("recommended_action") is not None else None
+
+    operator_attention_reasons: list[str] = []
+    if conflict_risk == "high":
+        operator_attention_reasons.append("high_risk")
+    if source_dirty:
+        operator_attention_reasons.append("source_dirty")
+    if source_head_changed:
+        operator_attention_reasons.append("source_head_changed")
+    if overlapping_files:
+        operator_attention_reasons.append("overlapping_files")
+    operator_attention_reasons.extend(anomaly_reasons)
+
     return {
         "project_id": project_id,
         "source_cwd": source_cwd,
@@ -67,9 +96,14 @@ def _summary_entry(
         "worktree_branch": worktree_branch,
         "workspace_path": workspace_path,
         "merge_queue_status": queue_status,
-        "conflict_risk": str(queue_record.get("conflict_risk")) if queue_record and queue_record.get("conflict_risk") is not None else None,
-        "recommended_action": str(queue_record.get("recommended_action")) if queue_record and queue_record.get("recommended_action") is not None else None,
+        "conflict_risk": conflict_risk,
+        "recommended_action": recommended_action,
         "changed_file_count": changed_file_count,
+        "source_head_changed": source_head_changed,
+        "source_dirty": source_dirty,
+        "overlapping_files": overlapping_files,
+        "operator_attention": bool(operator_attention_reasons),
+        "operator_attention_reasons": operator_attention_reasons,
         "archived": archived,
         "has_task_workspace_record": has_task,
         "has_merge_queue_record": has_queue,
@@ -100,6 +134,7 @@ def task_orchestration_summary(
     ]
     archived_count = sum(1 for entry in entries if bool(entry["archived"]))
     anomaly_count = sum(1 for entry in entries if bool(entry["anomaly"]))
+    attention_count = sum(1 for entry in entries if bool(entry.get("operator_attention")))
 
     return {
         "project_id": project_id.strip() if isinstance(project_id, str) and project_id.strip() else None,
@@ -108,4 +143,5 @@ def task_orchestration_summary(
         "active_count": len(entries) - archived_count,
         "archived_count": archived_count,
         "anomaly_count": anomaly_count,
+        "attention_count": attention_count,
     }

@@ -271,6 +271,11 @@ class ReviewServerHelperTests(unittest.TestCase):
                         "conflict_risk": "low",
                         "recommended_action": "merge_queue",
                         "changed_file_count": 2,
+                        "source_head_changed": False,
+                        "source_dirty": False,
+                        "overlapping_files": [],
+                        "operator_attention": False,
+                        "operator_attention_reasons": [],
                         "archived": False,
                         "has_task_workspace_record": True,
                         "has_merge_queue_record": True,
@@ -289,6 +294,11 @@ class ReviewServerHelperTests(unittest.TestCase):
                         "conflict_risk": None,
                         "recommended_action": None,
                         "changed_file_count": None,
+                        "source_head_changed": None,
+                        "source_dirty": None,
+                        "overlapping_files": [],
+                        "operator_attention": False,
+                        "operator_attention_reasons": [],
                         "archived": True,
                         "has_task_workspace_record": True,
                         "has_merge_queue_record": False,
@@ -307,6 +317,16 @@ class ReviewServerHelperTests(unittest.TestCase):
                         "conflict_risk": "high",
                         "recommended_action": "manual_conflict_review",
                         "changed_file_count": 1,
+                        "source_head_changed": True,
+                        "source_dirty": True,
+                        "overlapping_files": ["README.md"],
+                        "operator_attention": True,
+                        "operator_attention_reasons": [
+                            "high_risk",
+                            "source_dirty",
+                            "source_head_changed",
+                            "overlapping_files",
+                        ],
                         "archived": False,
                         "has_task_workspace_record": False,
                         "has_merge_queue_record": True,
@@ -331,6 +351,10 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("action: merge_queue", html)
         self.assertIn("files: 2", html)
         self.assertIn("archived: yes", html)
+        self.assertIn("attention: conflict review", html)
+        self.assertIn("source dirty", html)
+        self.assertIn("head drift", html)
+        self.assertIn("overlap: README.md", html)
         self.assertIn("anomaly: missing_task_workspace_record", html)
 
     def test_bundle_metadata_filter_uses_and_conditions(self) -> None:

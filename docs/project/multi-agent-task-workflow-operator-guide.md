@@ -19,6 +19,7 @@ Implemented:
 - Non-destructive archive helpers for task workspace and merge queue records.
 - Read-only orchestrator summary through `workspace_task_orchestration_summary`.
 - Compact read-only task orchestration summary rendering in the `/pending` review UI.
+- Conflict handling dashboard indicators and operator runbook for high-risk task worktree merges.
 
 Not implemented:
 
@@ -218,10 +219,76 @@ Each entry connects task workspace and merge queue records by `project_id`, `sou
 - task workspace status, worktree status, branch, and path
 - merge queue status, conflict risk, and recommended action
 - changed file count when a queue record captured it
+- source dirty, source HEAD drift, overlapping file, and operator attention indicators when a queue record captured merge preflight fields
 - archived state across task workspace or queue records
 - anomaly flags, including queue records whose task workspace record is missing
 
 The summary is read-only. It does not inspect git diffs live, run preflight, enqueue merges, archive records, or apply source changes. Use detailed tools when an entry needs action.
+
+## Conflict Handling Runbook
+
+Use this runbook when `workspace_merge_preflight_task_worktree`, `workspace_task_orchestration_summary`, or the `/pending` dashboard shows `conflict_risk="high"`, `attention: conflict review`, `source dirty`, `head drift`, `overlap: ...`, or an anomaly.
+
+### Source Dirty
+
+`source_dirty=true` means the source repository has local working-tree changes. Do not enqueue or approve task merge proposals while this is true.
+
+1. Inspect the source workspace changes outside the task worktree.
+2. Decide whether they should be committed, reverted, stashed, or turned into their own reviewed proposal.
+3. Return the source workspace to the intended clean state.
+4. Rerun `workspace_merge_preflight_task_worktree(task_id, cwd, project_id)`.
+5. Enqueue only if preflight reports `ready_to_merge=true`.
+
+### Source HEAD Drift
+
+`source_head_changed=true` means the source `HEAD` moved after the task worktree was created. This may still be mergeable, but it needs explicit review.
+
+1. Review what changed in the source branch since the task worktree `base_sha`.
+2. If changed files do not overlap and preflight recommends `merge_queue_with_source_head_check`, enqueue may be acceptable.
+3. If the drift is broad, ask the worker to recreate or refresh the task worktree in a later workflow.
+4. Re-run preflight immediately before enqueueing because the approved source merge command will reject stale queue records.
+
+### Overlapping Files
+
+`overlapping_files` means source changes and task worktree changes touched the same paths.
+
+1. Treat the task as high risk.
+2. Inspect the task diff with `workspace_inspect_task_worktree`.
+3. Inspect the source changes for each overlapping path.
+4. Do not use automatic merge/rebase/apply to resolve this in the current workflow.
+5. Ask the worker to revise the task, or manually create a new task that incorporates the current source state.
+6. Rerun preflight after the worker revision.
+
+### Queue And Task Record Mismatch
+
+Queue-only entries or `missing_task_workspace_record` anomalies mean runtime bookkeeping is inconsistent.
+
+1. Call `workspace_task_workspace_status(task_id, cwd, project_id)`.
+2. Call `workspace_merge_queue_status(task_id, cwd, project_id)`.
+3. If the task workspace was archived or removed intentionally, archive the stale queue entry with a clear reason.
+4. If the queue record is stale, rerun inspect and preflight before creating a fresh queue record.
+5. Do not approve source integration for queue-only anomalies.
+
+### Requeue After Preflight Failure
+
+When preflight fails, do not reuse old assumptions.
+
+1. Resolve the cause shown by `recommended_action`.
+2. Rerun `workspace_inspect_task_worktree`.
+3. Rerun `workspace_merge_preflight_task_worktree`.
+4. If a stale queue record exists, archive it first.
+5. Call `workspace_enqueue_task_worktree_merge` only after the latest preflight is ready.
+6. Create a fresh approved merge proposal with `workspace_propose_task_worktree_merge_and_wait`.
+
+### Worker Rework Request
+
+When a worker needs to revise a task:
+
+1. Keep the same `task_id` only if the task worktree remains valid and the scope is unchanged.
+2. Give the worker the exact conflict signal: source dirty, head drift, overlapping files, missing task record, or stale queue.
+3. Tell the worker not to enqueue, archive, merge, commit, or push.
+4. Require the worker to continue using `workspace_mode="task-workspace"`.
+5. After the worker reports completion, restart the orchestrator flow at inspect, then preflight, then enqueue.
 
 ## Recovery And Troubleshooting
 
@@ -317,5 +384,6 @@ After approved source integration:
 - Phase 3-J: this end-to-end multi-session workflow and operator guide.
 - Phase 3-K: read-only orchestrator dashboard summary across task workspace and merge queue records.
 - Phase 3-L: review UI rendering foundation for the task orchestration summary.
+- Phase 3-M: conflict handling workflow foundation with dashboard indicators and operator runbook.
 
-Remaining future work includes automatic task decomposition, richer interactive merge queue controls, explicit conflict resolution workflow, post-merge test/result tracking, commit flow integration, and physical worktree cleanup.
+Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, post-merge test/result tracking, commit flow integration, and physical worktree cleanup.

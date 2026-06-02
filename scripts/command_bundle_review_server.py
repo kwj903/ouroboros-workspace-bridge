@@ -1033,6 +1033,34 @@ def _conflict_risk_tone(risk: object) -> str:
     return "neutral"
 
 
+def _overlapping_files_label(value: object, limit: int = 3) -> str:
+    if not isinstance(value, list):
+        return ""
+    paths = [str(item) for item in value if str(item).strip()]
+    if not paths:
+        return ""
+    visible = paths[:limit]
+    suffix = f" +{len(paths) - limit}" if len(paths) > limit else ""
+    return ", ".join(visible) + suffix
+
+
+def _operator_attention_label(entry: Mapping[str, object]) -> tuple[str, str]:
+    conflict_risk = str(entry.get("conflict_risk") or "").strip()
+    source_dirty = entry.get("source_dirty") is True
+    source_head_changed = entry.get("source_head_changed") is True
+    has_overlap = bool(_overlapping_files_label(entry.get("overlapping_files")))
+    anomaly = bool(entry.get("anomaly"))
+    if conflict_risk == "high" or source_dirty or has_overlap:
+        return "conflict review", "danger"
+    if source_head_changed:
+        return "head drift", "warn"
+    if anomaly:
+        return "anomaly", "danger"
+    if bool(entry.get("operator_attention")):
+        return "review", "warn"
+    return "no", "ok"
+
+
 def _task_orchestration_entry_html(entry: Mapping[str, object]) -> str:
     relation_label, relation_tone = _task_orchestration_relation(entry)
     task_id = str(entry.get("task_id") or "missing")
@@ -1048,6 +1076,15 @@ def _task_orchestration_entry_html(entry: Mapping[str, object]) -> str:
     anomaly = bool(entry.get("anomaly"))
     reasons = entry.get("anomaly_reasons") if isinstance(entry.get("anomaly_reasons"), list) else []
     anomaly_label = ", ".join(str(item) for item in reasons if str(item).strip()) if anomaly else "no"
+    attention_label, attention_tone = _operator_attention_label(entry)
+    conflict_badges = [status_badge(f"attention: {attention_label}", attention_tone)]
+    if entry.get("source_dirty") is True:
+        conflict_badges.append(status_badge("source dirty", "danger"))
+    if entry.get("source_head_changed") is True:
+        conflict_badges.append(status_badge("head drift", "warn"))
+    overlap_label = _overlapping_files_label(entry.get("overlapping_files"))
+    if overlap_label:
+        conflict_badges.append(status_badge(f"overlap: {overlap_label}", "danger"))
 
     return f"""
     <tr>
@@ -1076,6 +1113,7 @@ def _task_orchestration_entry_html(entry: Mapping[str, object]) -> str:
       </td>
       <td>
         <div class="subnav">
+          {"".join(conflict_badges)}
           {status_badge(f"archived: {'yes' if archived else 'no'}", "neutral" if archived else "ok")}
           {status_badge(f"anomaly: {anomaly_label}", "danger" if anomaly else "ok")}
         </div>
@@ -1109,12 +1147,14 @@ def task_orchestration_summary_html(
     active_count = int(resolved_summary.get("active_count") or 0)
     archived_count = int(resolved_summary.get("archived_count") or 0)
     anomaly_count = int(resolved_summary.get("anomaly_count") or 0)
+    attention_count = int(resolved_summary.get("attention_count") or 0)
     summary_badges = "".join(
         [
             project_badge,
             status_badge(f"total: {count}", "neutral"),
             status_badge(f"active: {active_count}", "ok" if active_count else "neutral"),
             status_badge(f"archived: {archived_count}", "neutral"),
+            status_badge(f"attention: {attention_count}", "danger" if attention_count else "ok"),
             status_badge(f"anomalies: {anomaly_count}", "danger" if anomaly_count else "ok"),
         ]
     )

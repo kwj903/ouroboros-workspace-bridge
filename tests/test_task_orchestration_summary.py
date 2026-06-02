@@ -88,6 +88,46 @@ class TaskOrchestrationSummaryTests(unittest.TestCase):
         self.assertEqual(entry["worktree_branch"], task["worktree_branch"])
         self.assertFalse(entry["anomaly"])
 
+    def test_summary_preserves_conflict_handling_fields_from_queue_record(self) -> None:
+        task = self.prepare_task("task-conflict")
+        queue = {
+            "queue_key": "task-conflict-queuekey",
+            "task_id": "task-conflict",
+            "project_id": "project-alpha",
+            "source_cwd": "project",
+            "workspace_path": task["workspace_path"],
+            "worktree_branch": "task/task-conflict",
+            "changed_file_count": 2,
+            "source_head_changed": True,
+            "source_dirty": True,
+            "overlapping_files": ["README.md", "terminal_bridge/task_workspaces.py"],
+            "conflict_risk": "high",
+            "recommended_action": "manual_conflict_review",
+            "status": "queued",
+            "exists": True,
+            "record_path": "",
+            "created_at": "2026-06-02T00:00:00+00:00",
+            "updated_at": "2026-06-02T00:00:00+00:00",
+        }
+        record_path = merge_queue._queue_record_path(str(queue["queue_key"]), runtime_root=self.runtime_root)
+        queue["record_path"] = str(record_path)
+        merge_queue._write_json(record_path, queue)
+
+        summary = task_orchestration_summary.task_orchestration_summary(
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+        )
+
+        entry = summary["entries"][0]
+        self.assertTrue(entry["source_head_changed"])
+        self.assertTrue(entry["source_dirty"])
+        self.assertEqual(entry["overlapping_files"], ["README.md", "terminal_bridge/task_workspaces.py"])
+        self.assertTrue(entry["operator_attention"])
+        self.assertEqual(
+            entry["operator_attention_reasons"],
+            ["high_risk", "source_dirty", "source_head_changed", "overlapping_files"],
+        )
+
     def test_summary_includes_queue_record_without_task_workspace_as_anomaly(self) -> None:
         queue = {
             "queue_key": "task-missing-queuekey",
