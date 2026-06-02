@@ -380,8 +380,11 @@ Use this checklist before retrying.
 ### Runtime Records Need Cleanup
 
 - Use archive helpers first.
-- Do not manually delete runtime records while sessions are active.
-- Physical worktree removal is not part of the current public workflow.
+- Preview cleanup candidates with `workspace_task_cleanup_preview(project_id)`.
+- Only entries with `cleanup_ready=true` should be sent to `workspace_propose_task_cleanup_and_wait(task_id, cwd, project_id)`.
+- Approve the generated `/pending` item only after confirming the task was merged, source validation passed, and the task workspace was archived.
+- Do not manually edit runtime records while sessions are active.
+- If cleanup proposal execution fails, inspect the bundle result, rerun `workspace_task_cleanup_preview`, and preserve the task worktree until blockers are understood.
 
 ## Operator Checklist
 
@@ -431,5 +434,6 @@ After approved source integration:
 - Phase 3-M: conflict handling workflow foundation with dashboard indicators and operator runbook.
 - Phase 3-N: post-merge validation tracking foundation on merge queue records and dashboard summaries.
 - Phase 3-O1: read-only physical cleanup preview and candidate detection foundation.
+- Phase 3-O2: locally approved task worktree cleanup proposal and execution foundation.
 
-Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, automatic validation command execution, commit flow integration, and explicit physical worktree cleanup.
+Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, automatic validation command execution, and commit flow integration.

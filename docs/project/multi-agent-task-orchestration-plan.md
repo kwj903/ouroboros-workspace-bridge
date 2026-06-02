@@ -622,3 +622,7 @@ ChatGPT / Codex / Claude / Grok 등 각 client가 task 생성
 ```
 
 이 순서가 기존 사용성을 유지하면서 병렬 에이전트 작업 구조로 확장하는 가장 안전한 경로다.
+
+## Phase 3-O2 Update
+
+Phase 3-O2 adds an approved task worktree cleanup proposal path after the preview-only cleanup foundation. The cleanup command is staged through `/pending` and only proceeds for conservative `cleanup_ready=true` candidates. It removes the task worktree through git worktree management and records `cleaned` metadata on runtime task/queue records. Direct mode, source merge/apply behavior, validation recording, and manual archive behavior remain unchanged.

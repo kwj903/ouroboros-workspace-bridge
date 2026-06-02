@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 
 import server
-from terminal_bridge import merge_queue, merge_queue_apply, task_cleanup_preview, task_workspaces
-from terminal_bridge.models import TaskCleanupPreviewResult
+from terminal_bridge import merge_queue, merge_queue_apply, task_cleanup_apply, task_cleanup_preview, task_workspaces
+from terminal_bridge.models import CommandBundleStatusResult, TaskCleanupPreviewResult
 from terminal_bridge.storage import _now_iso, _write_json
 
 
@@ -255,6 +255,134 @@ class TaskCleanupPreviewTests(unittest.TestCase):
         self.assertFalse(entry["has_task_workspace_record"])
         self.assertTrue(entry["has_merge_queue_record"])
         self.assertIn("missing_task_workspace_record", entry["cleanup_blockers"])
+
+    def test_apply_task_cleanup_removes_ready_worktree_and_marks_record(self) -> None:
+        self.init_git_project()
+        record = self.merged_archived_task("task-cleanup-apply", commit_worktree=True)
+        workspace_path = Path(str(record["workspace_path"]))
+
+        result = task_cleanup_apply.apply_task_cleanup(
+            "task-cleanup-apply",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        self.assertEqual(result["cleanup_status"], "cleaned")
+        self.assertTrue(result["worktree_removed"])
+        self.assertFalse(workspace_path.exists())
+        cleaned = task_workspaces.read_task_workspace(
+            "task-cleanup-apply",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        self.assertEqual(cleaned["status"], "cleaned")
+        self.assertEqual(cleaned["worktree_status"], "removed")
+        self.assertFalse(cleaned["exists"])
+        self.assertIsNotNone(cleaned.get("cleanup_applied_at"))
+
+    def test_apply_task_cleanup_rejects_blocked_preview_entry(self) -> None:
+        self.init_git_project()
+        self.merged_archived_task("task-cleanup-blocked-apply", commit_worktree=True, validation_status="failed")
+
+        with self.assertRaises(ValueError):
+            task_cleanup_apply.apply_task_cleanup(
+                "task-cleanup-blocked-apply",
+                cwd="project",
+                project_id="project-alpha",
+                runtime_root=self.runtime_root,
+                workspace_root=self.workspace_root,
+            )
+
+    def test_server_cleanup_proposal_wrapper_stages_approved_command(self) -> None:
+        original_record = server._record_tool_call
+        original_preview = server._task_cleanup_preview
+        original_stage = server._workspace_stage_command_bundle_and_wait_impl
+        calls: list[tuple[str, dict[str, object]]] = []
+        staged: dict[str, object] = {}
+
+        def call_through(tool_name: str, args: dict[str, object], action: object) -> object:
+            calls.append((tool_name, args))
+            return action()
+
+        def fake_preview(*, project_id: str | None = None) -> dict[str, object]:
+            return {
+                "project_id": project_id,
+                "entries": [
+                    {
+                        "task_id": "task-a",
+                        "project_id": project_id or "project-alpha",
+                        "source_cwd": "project",
+                        "cleanup_ready": True,
+                        "cleanup_blockers": [],
+                        "recommended_action": "ready_for_physical_cleanup_review",
+                    }
+                ],
+                "count": 1,
+                "ready_count": 1,
+                "blocked_count": 0,
+            }
+
+        def fake_stage(
+            title: str,
+            cwd: str,
+            steps: list[object],
+            timeout: int,
+            poll: float,
+            metadata: dict[str, object],
+        ) -> CommandBundleStatusResult:
+            staged["title"] = title
+            staged["cwd"] = cwd
+            staged["steps"] = steps
+            staged["metadata"] = metadata
+            return CommandBundleStatusResult(
+                bundle_id="cmd-cleanup",
+                title=title,
+                cwd=cwd,
+                status="pending",
+                risk="medium",
+                approval_required=True,
+                command_count=1,
+                created_at="now",
+                updated_at="now",
+                metadata=metadata,
+            )
+
+        server._record_tool_call = call_through
+        server._task_cleanup_preview = fake_preview
+        server._workspace_stage_command_bundle_and_wait_impl = fake_stage
+        try:
+            result = server.workspace_propose_task_cleanup_and_wait(
+                task_id="task-a",
+                cwd="project",
+                project_id="project-alpha",
+            )
+        finally:
+            server._record_tool_call = original_record
+            server._task_cleanup_preview = original_preview
+            server._workspace_stage_command_bundle_and_wait_impl = original_stage
+
+        self.assertIsInstance(result, CommandBundleStatusResult)
+        self.assertEqual(calls[0][0], "workspace_propose_task_cleanup_and_wait")
+        self.assertEqual(staged["title"], "Clean task worktree: task-a")
+        self.assertEqual(staged["cwd"], "project")
+        self.assertEqual(
+            staged["metadata"],
+            {
+                "task_id": "task-a",
+                "project_id": "project-alpha",
+                "workspace_mode": "direct",
+                "source_cwd": "project",
+                "effective_cwd": "project",
+            },
+        )
+        step = staged["steps"][0]
+        self.assertIn("task_cleanup_apply.py", step.argv[1])
+        self.assertIn("--task-id", step.argv)
+        self.assertIn("task-a", step.argv)
 
     def test_server_public_wrapper_returns_cleanup_preview_model(self) -> None:
         original_record = server._record_tool_call

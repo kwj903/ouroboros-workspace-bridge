@@ -990,6 +990,7 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_task_orchestration_summary",
     "workspace_task_cleanup_preview",
     "workspace_record_task_validation",
+    "workspace_propose_task_cleanup_and_wait",
     "workspace_task_validation_status",
     "workspace_propose_task_worktree_merge_and_wait",
     "workspace_archive_task_workspace",
@@ -2360,6 +2361,87 @@ def workspace_task_cleanup_preview(
         "workspace_task_cleanup_preview",
         {"project_id": project_id},
         lambda: TaskCleanupPreviewResult(**_task_cleanup_preview(project_id=project_id)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_propose_task_cleanup_and_wait(
+    task_id: Annotated[str, Field(description="Task id for the ready archived task worktree cleanup.")],
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Create one pending command proposal to physically clean up a ready archived task worktree.
+
+    The cleanup does not run in ChatGPT. It runs only after local /pending approval.
+    """
+
+    def action() -> CommandBundleStatusResult:
+        preview = _task_cleanup_preview(project_id=project_id)
+        normalized_cwd = cwd.strip() or "."
+        matches = [
+            entry
+            for entry in preview.get("entries", [])
+            if entry.get("task_id") == task_id and entry.get("source_cwd") == normalized_cwd
+        ]
+        if not matches:
+            raise FileNotFoundError("cleanup preview entry not found for task/source/project.")
+        entry = matches[0]
+        if not bool(entry.get("cleanup_ready")):
+            blockers = entry.get("cleanup_blockers", [])
+            recommended_action = entry.get("recommended_action")
+            raise ValueError(
+                "task workspace is not ready for physical cleanup "
+                f"(blockers={blockers}, recommended_action={recommended_action})"
+            )
+        title = f"Clean task worktree: {task_id}"
+        step = CommandBundleStep(
+            name=title,
+            argv=[
+                "python",
+                str(Path(__file__).resolve().parent / "terminal_bridge" / "task_cleanup_apply.py"),
+                "--task-id",
+                task_id,
+                "--cwd",
+                cwd,
+                *(["--project-id", project_id] if project_id else []),
+            ],
+            timeout_seconds=120,
+        )
+        metadata = {
+            "task_id": task_id,
+            "project_id": project_id,
+            "workspace_mode": "direct",
+            "source_cwd": cwd,
+            "effective_cwd": cwd,
+        }
+        return _workspace_stage_command_bundle_and_wait_impl(
+            title,
+            cwd,
+            [step],
+            timeout_seconds,
+            poll_interval_seconds,
+            metadata,
+        )
+
+    return _record_tool_call(
+        "workspace_propose_task_cleanup_and_wait",
+        {
+            "task_id": task_id,
+            "cwd": cwd,
+            "project_id": project_id,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        action,
     )
 
 

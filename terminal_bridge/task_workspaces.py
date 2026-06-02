@@ -153,7 +153,10 @@ def _record_with_current_status(record: dict[str, object]) -> dict[str, object]:
     raw_workspace_path = str(refreshed.get("workspace_path") or "").strip()
     workspace_path = Path(raw_workspace_path) if raw_workspace_path else None
     exists = bool(workspace_path) and workspace_path.exists()
-    if refreshed.get("status") != "archived":
+    if refreshed.get("status") == "cleaned":
+        refreshed["worktree_status"] = "removed"
+        refreshed["exists"] = False
+    elif refreshed.get("status") != "archived":
         if workspace_path is not None and _is_git_worktree_path(workspace_path):
             refreshed["status"] = "worktree"
             refreshed["worktree_status"] = "ready"
@@ -162,7 +165,7 @@ def _record_with_current_status(record: dict[str, object]) -> dict[str, object]:
             refreshed["worktree_status"] = "missing"
         else:
             refreshed["status"] = "created" if exists else "missing"
-    refreshed["exists"] = exists
+        refreshed["exists"] = exists
     return refreshed
 
 
