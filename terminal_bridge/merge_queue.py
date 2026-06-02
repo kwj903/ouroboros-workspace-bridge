@@ -154,6 +154,42 @@ def read_merge_queue_entry(
     )
 
 
+def archive_merge_queue_entry(
+    task_id: str,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    reason: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+) -> dict[str, Any]:
+    record = read_merge_queue_entry(
+        task_id,
+        cwd=cwd,
+        project_id=project_id,
+        runtime_root=runtime_root,
+        workspace_root=workspace_root,
+    )
+    if not record.get("exists"):
+        raise FileNotFoundError("merge queue record not found.")
+    record_path = Path(str(record.get("record_path") or "")).expanduser().resolve(strict=False)
+    if not record_path.exists():
+        raise FileNotFoundError("merge queue record not found.")
+    now = _now_iso()
+    normalized_reason = str(reason or "").strip() or None
+    record.update(
+        {
+            "status": "archived",
+            "archived_at": now,
+            "archive_reason": normalized_reason,
+            "updated_at": now,
+            "exists": True,
+        }
+    )
+    _write_json(record_path, record)
+    return record
+
+
 def list_merge_queue(
     *,
     project_id: str | None = None,

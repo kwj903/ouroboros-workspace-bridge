@@ -454,7 +454,7 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - Phase 3-F는 `workspace_merge_preflight_task_worktree`로 source HEAD drift, source dirty state, overlapping file changes, conflict risk, and merge readiness를 read-only로 점검하는 foundation을 추가했다.
 - Phase 3-G는 `workspace_enqueue_task_worktree_merge`, `workspace_merge_queue_status`, `workspace_list_merge_queue`로 ready task worktree를 source-project apply 없이 queue record로 관리하는 foundation을 추가했다.
 - Phase 3-H는 `workspace_propose_task_worktree_merge_and_wait`로 queued task worktree 변경을 source project에 적용하는 command bundle을 local `/pending` 승인 대상으로 생성하는 foundation을 추가했다.
-- 아직 cleanup/archive는 구현하지 않았다.
+- Phase 3-I는 `workspace_archive_task_workspace`, `workspace_archive_merge_queue_entry`로 runtime task workspace record와 merge queue record를 archived 상태로 전환하는 non-destructive archive foundation을 추가했다.
 
 성공 기준:
 

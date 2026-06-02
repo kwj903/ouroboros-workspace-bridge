@@ -589,6 +589,35 @@ def merge_preflight_task_worktree(
     }
 
 
+def archive_task_workspace(
+    task_id: str,
+    *,
+    cwd: object = ".",
+    project_id: object | None = None,
+    reason: object | None = None,
+    runtime_root: Path | None = None,
+    workspace_root: Path = WORKSPACE_ROOT,
+) -> dict[str, object]:
+    paths = _task_workspace_paths(task_id, cwd=cwd, project_id=project_id, runtime_root=runtime_root, workspace_root=workspace_root)
+    record_path = paths["record_path"]
+    if not isinstance(record_path, Path) or not record_path.exists():
+        raise FileNotFoundError("task workspace record not found.")
+
+    record = _read_json(record_path)
+    now = _now_iso()
+    normalized_reason = str(reason or "").strip() or None
+    record.update(
+        {
+            "status": "archived",
+            "archived_at": now,
+            "archive_reason": normalized_reason,
+            "updated_at": now,
+        }
+    )
+    _write_json(record_path, record)
+    return _record_with_current_status(record)
+
+
 def read_task_workspace(
     task_id: str,
     *,
@@ -635,29 +664,6 @@ def list_task_workspaces(
 
     rows.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
     return rows
-
-
-def archive_task_workspace(
-    task_id: str,
-    *,
-    cwd: object = ".",
-    project_id: object | None = None,
-    runtime_root: Path | None = None,
-    workspace_root: Path = WORKSPACE_ROOT,
-) -> dict[str, object]:
-    record = read_task_workspace(
-        task_id,
-        cwd=cwd,
-        project_id=project_id,
-        runtime_root=runtime_root,
-        workspace_root=workspace_root,
-    )
-    if not record.get("created_at"):
-        raise FileNotFoundError(f"Task workspace not found: {task_id}")
-    record["status"] = "archived"
-    record["updated_at"] = _now_iso()
-    _write_json(Path(str(record["record_path"])), record)
-    return _record_with_current_status(record)
 
 
 def resolve_task_workspace_for_bundle(

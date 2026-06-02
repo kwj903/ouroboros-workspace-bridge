@@ -137,6 +137,31 @@ class MergeQueueTests(unittest.TestCase):
         self.assertEqual(status["status"], "queued")
         self.assertEqual({entry["task_id"] for entry in listed}, {"task-queue-list-a", "task-queue-list-b"})
 
+    def test_archive_merge_queue_entry_marks_record_without_apply(self) -> None:
+        self.init_git_project()
+        self.dirty_task_worktree("task-queue-archive")
+        queued = merge_queue.enqueue_task_worktree_merge(
+            "task-queue-archive",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        archived = merge_queue.archive_merge_queue_entry(
+            "task-queue-archive",
+            cwd="project",
+            project_id="project-alpha",
+            reason="done",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        self.assertEqual(archived["status"], "archived")
+        self.assertEqual(archived["archive_reason"], "done")
+        self.assertEqual((self.project / "README.md").read_text(encoding="utf-8"), "hello\n")
+        self.assertTrue(Path(str(queued["record_path"])).exists())
+
     def test_queue_status_missing(self) -> None:
         self.init_git_project()
         self.dirty_task_worktree("task-queue-missing")

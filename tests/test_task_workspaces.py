@@ -487,6 +487,38 @@ class TaskWorkspaceTests(unittest.TestCase):
                 workspace_root=self.workspace_root,
             )
 
+    def test_archive_task_workspace_marks_record_without_deleting_worktree(self) -> None:
+        self.init_git_project()
+        record = task_workspaces.create_task_worktree(
+            "task-archive",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        workspace_path = Path(str(record["workspace_path"]))
+
+        archived = task_workspaces.archive_task_workspace(
+            "task-archive",
+            cwd="project",
+            project_id="project-alpha",
+            reason="done",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+
+        self.assertEqual(archived["status"], "archived")
+        self.assertEqual(archived["archive_reason"], "done")
+        self.assertTrue(workspace_path.exists())
+        stored = task_workspaces.read_task_workspace(
+            "task-archive",
+            cwd="project",
+            project_id="project-alpha",
+            runtime_root=self.runtime_root,
+            workspace_root=self.workspace_root,
+        )
+        self.assertEqual(stored["status"], "archived")
+
     def test_prepare_read_list_and_deterministic_key(self) -> None:
         first = task_workspaces.prepare_task_workspace(
             "task-a",

@@ -403,6 +403,8 @@ class TaskWorkspaceStatusResult(BaseModel):
     exists: bool
     created_at: str
     updated_at: str
+    archived_at: str | None = None
+    archive_reason: str | None = None
 
 
 class TaskWorkspaceListResult(BaseModel):
@@ -461,6 +463,8 @@ class MergeQueueEntryResult(BaseModel):
     record_path: str
     created_at: str
     updated_at: str
+    archived_at: str | None = None
+    archive_reason: str | None = None
 
 
 class MergeQueueListResult(BaseModel):

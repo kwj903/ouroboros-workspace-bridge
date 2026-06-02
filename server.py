@@ -123,6 +123,7 @@ from terminal_bridge.handoffs import handoff_for_bundle as _handoff_for_bundle_r
 from terminal_bridge.handoffs import list_handoffs as _list_handoff_records
 from terminal_bridge.handoffs import next_handoff as _next_handoff_record
 from terminal_bridge.merge_queue import (
+    archive_merge_queue_entry as _archive_merge_queue_entry,
     enqueue_task_worktree_merge as _enqueue_task_worktree_merge,
     list_merge_queue as _list_merge_queue,
     read_merge_queue_entry as _read_merge_queue_entry,
@@ -210,6 +211,7 @@ from terminal_bridge.tasks import (
     _write_task,
 )
 from terminal_bridge.task_workspaces import (
+    archive_task_workspace as _archive_task_workspace,
     create_task_worktree as _create_task_worktree,
     inspect_task_worktree as _inspect_task_worktree,
     list_task_workspaces as _list_task_workspaces,
@@ -980,6 +982,8 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_merge_queue_status",
     "workspace_list_merge_queue",
     "workspace_propose_task_worktree_merge_and_wait",
+    "workspace_archive_task_workspace",
+    "workspace_archive_merge_queue_entry",
     "workspace_task_workspace_status",
     "workspace_list_task_workspaces",
     "workspace_stage_text_payload",
@@ -2304,6 +2308,50 @@ def workspace_propose_task_worktree_merge_and_wait(
             "poll_interval_seconds": poll_interval_seconds,
         },
         action,
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_archive_task_workspace(
+    task_id: Annotated[str, Field(description="Task id for the task workspace record to archive.")],
+    cwd: Annotated[str, Field(description="Relative source workspace directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+    reason: Annotated[str | None, Field(description="Optional archive reason stored in the record.")] = None,
+) -> TaskWorkspaceStatusResult:
+    """Archive a task workspace record without deleting source files or the worktree directory."""
+    return _record_tool_call(
+        "workspace_archive_task_workspace",
+        {"task_id": task_id, "cwd": cwd, "project_id": project_id, "reason": reason},
+        lambda: TaskWorkspaceStatusResult(**_archive_task_workspace(task_id, cwd=cwd, project_id=project_id, reason=reason)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_archive_merge_queue_entry(
+    task_id: Annotated[str, Field(description="Task id for the merge queue record to archive.")],
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+    reason: Annotated[str | None, Field(description="Optional archive reason stored in the queue record.")] = None,
+) -> MergeQueueEntryResult:
+    """Archive a merge queue record without applying changes or deleting files."""
+    return _record_tool_call(
+        "workspace_archive_merge_queue_entry",
+        {"task_id": task_id, "cwd": cwd, "project_id": project_id, "reason": reason},
+        lambda: MergeQueueEntryResult(**_archive_merge_queue_entry(task_id, cwd=cwd, project_id=project_id, reason=reason)),
     )
 
 

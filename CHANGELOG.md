@@ -20,6 +20,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Public MCP helper `workspace_merge_preflight_task_worktree` for read-only task worktree merge readiness and conflict-risk inspection before merge queue integration.
 - Public MCP helpers `workspace_enqueue_task_worktree_merge`, `workspace_merge_queue_status`, and `workspace_list_merge_queue` for merge queue record foundation without source-project apply.
 - Public MCP helper `workspace_propose_task_worktree_merge_and_wait` for staging a locally approved source apply command from a queued task worktree merge.
+- Public MCP helpers `workspace_archive_task_workspace` and `workspace_archive_merge_queue_entry` for non-destructive task workspace and queue record archiving.
 
 ### Changed
 
