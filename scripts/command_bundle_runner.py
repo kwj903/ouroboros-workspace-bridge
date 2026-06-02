@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from terminal_bridge.commands import _classify_exec_command, _validate_exec_argv
+from terminal_bridge.bundles import _normalize_command_bundle_metadata
 from terminal_bridge.config import (
     BLOCKED_DIR_NAMES,
     BLOCKED_FILE_PATTERNS,
@@ -28,6 +30,7 @@ from terminal_bridge.config import (
     WORKSPACE_ROOT,
 )
 from terminal_bridge.handoffs import write_handoff_from_bundle
+from terminal_bridge.task_workspaces import TASK_WORKSPACE_MODE, resolve_task_workspace_for_bundle
 from terminal_bridge.truncation import truncate_text
 
 COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
@@ -37,6 +40,37 @@ REJECTED_DIR = COMMAND_BUNDLES_DIR / "rejected"
 FAILED_DIR = COMMAND_BUNDLES_DIR / "failed"
 BACKUP_DIR = RUNTIME_ROOT / "command_bundle_file_backups"
 TEXT_PAYLOAD_DIR = RUNTIME_ROOT / "text_payloads"
+
+
+@dataclass(frozen=True)
+class RunnerWorkspace:
+    workspace_mode: str
+    source_root: Path
+    apply_root: Path
+    source_cwd: Path
+    apply_cwd: Path
+    task_id: str | None = None
+    workspace_path: Path | None = None
+    record_path: str | None = None
+    reason: str = "direct"
+
+    def as_result(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "workspace_mode": self.workspace_mode,
+            "source_cwd": _source_relative(self.source_cwd),
+            "actual_cwd": str(self.apply_cwd),
+            "reason": self.reason,
+        }
+        if self.task_id:
+            result["task_id"] = self.task_id
+        if self.workspace_path is not None:
+            result["workspace_path"] = str(self.workspace_path)
+        if self.record_path:
+            result["record_path"] = self.record_path
+        return result
+
+
+_ACTIVE_RUNNER_WORKSPACE: RunnerWorkspace | None = None
 
 
 def now_iso() -> str:
@@ -173,7 +207,14 @@ def safe_env() -> dict[str, str]:
     }
 
 
-def resolve_cwd(cwd: str) -> Path:
+def _source_relative(path: Path) -> str:
+    resolved = path.resolve(strict=False)
+    if resolved == WORKSPACE_ROOT:
+        return "."
+    return str(resolved.relative_to(WORKSPACE_ROOT))
+
+
+def _resolve_source_cwd(cwd: str) -> Path:
     raw = Path(cwd)
     if raw.is_absolute() or ".." in raw.parts:
         raise ValueError("cwd must be a relative path under WORKSPACE_ROOT")
@@ -187,7 +228,137 @@ def resolve_cwd(cwd: str) -> Path:
     return target
 
 
-def resolve_file_path(raw_path: str) -> Path:
+def _task_workspace_root() -> Path:
+    return (RUNTIME_ROOT / "task_workspaces").resolve(strict=False)
+
+
+def _is_git_worktree_path(path: Path) -> bool:
+    return path.is_dir() and (path / ".git").exists()
+
+
+def _is_task_workspace_bundle(record: dict[str, Any]) -> bool:
+    metadata = _normalize_command_bundle_metadata(record)
+    return str(metadata.get("workspace_mode") or "direct").strip() == TASK_WORKSPACE_MODE
+
+
+def _task_workspace_not_ready_message(status: str) -> str:
+    return (
+        "task workspace worktree is not ready "
+        f"(status={status}); run workspace_create_task_worktree before applying this bundle."
+    )
+
+
+def _validate_task_workspace_path(workspace_path: Path) -> Path:
+    task_root = _task_workspace_root()
+    resolved = workspace_path.expanduser().resolve(strict=False)
+    if resolved != task_root and not resolved.is_relative_to(task_root):
+        raise ValueError(f"workspace_path escapes task workspace root: {resolved}")
+    return resolved
+
+
+def require_ready_task_worktree(record: dict[str, Any]) -> RunnerWorkspace:
+    resolution = resolve_task_workspace_for_bundle(
+        record,
+        runtime_root=RUNTIME_ROOT,
+        workspace_root=WORKSPACE_ROOT,
+    )
+    if resolution.workspace_mode != TASK_WORKSPACE_MODE:
+        raise ValueError("bundle is not a task-workspace bundle.")
+
+    workspace_path_text = str(resolution.workspace_path or "").strip()
+    if workspace_path_text == "":
+        raise ValueError(_task_workspace_not_ready_message(resolution.status))
+
+    workspace_path = _validate_task_workspace_path(Path(workspace_path_text))
+    workspace_record = resolution.record if isinstance(resolution.record, dict) else None
+
+    if workspace_record is None:
+        raise ValueError(_task_workspace_not_ready_message(resolution.status))
+
+    status = str(workspace_record.get("status") or resolution.status or "missing")
+    worktree_status = str(workspace_record.get("worktree_status") or "")
+    if status != "worktree" or worktree_status != "ready":
+        if workspace_path.exists() and not _is_git_worktree_path(workspace_path) and status == "missing":
+            raise ValueError(f"workspace_path is not a git worktree: {workspace_path}")
+        raise ValueError(_task_workspace_not_ready_message(status))
+
+    if not _is_git_worktree_path(workspace_path):
+        raise ValueError(f"workspace_path is not a git worktree: {workspace_path}")
+
+    source_root_text = str(workspace_record.get("source_git_root") or "").strip()
+    if source_root_text == "":
+        raise ValueError("task workspace record is missing source_git_root.")
+    source_root = Path(source_root_text).expanduser().resolve(strict=False)
+    if source_root != WORKSPACE_ROOT and not source_root.is_relative_to(WORKSPACE_ROOT):
+        raise ValueError(f"source_git_root escapes WORKSPACE_ROOT: {source_root}")
+
+    source_cwd = _resolve_source_cwd(str(record.get("cwd", ".")))
+    if source_cwd != source_root and not source_cwd.is_relative_to(source_root):
+        raise ValueError("bundle cwd is outside task workspace source_git_root.")
+
+    apply_cwd = (workspace_path / source_cwd.relative_to(source_root)).resolve(strict=False)
+    if apply_cwd != workspace_path and not apply_cwd.is_relative_to(workspace_path):
+        raise ValueError("resolved cwd escapes task workspace_path.")
+    if not apply_cwd.exists() or not apply_cwd.is_dir():
+        raise NotADirectoryError(f"task workspace cwd does not exist: {apply_cwd}")
+
+    return RunnerWorkspace(
+        workspace_mode=TASK_WORKSPACE_MODE,
+        source_root=source_root,
+        apply_root=workspace_path,
+        source_cwd=source_cwd,
+        apply_cwd=apply_cwd,
+        task_id=resolution.task_id,
+        workspace_path=workspace_path,
+        record_path=resolution.record_path,
+        reason="task-workspace",
+    )
+
+
+def resolve_runner_workspace(record: dict[str, Any]) -> RunnerWorkspace:
+    if _is_task_workspace_bundle(record):
+        return require_ready_task_worktree(record)
+
+    workspace_root = WORKSPACE_ROOT.resolve(strict=False)
+    source_cwd = _resolve_source_cwd(str(record.get("cwd", ".")))
+    return RunnerWorkspace(
+        workspace_mode="direct",
+        source_root=workspace_root,
+        apply_root=workspace_root,
+        source_cwd=source_cwd,
+        apply_cwd=source_cwd,
+        reason="direct",
+    )
+
+
+def resolve_bundle_apply_cwd(record: dict[str, Any]) -> Path:
+    return resolve_runner_workspace(record).apply_cwd
+
+
+def _map_source_path_for_apply(source_path: Path) -> Path:
+    route = _ACTIVE_RUNNER_WORKSPACE
+    if route is None or route.workspace_mode != TASK_WORKSPACE_MODE:
+        return source_path
+
+    resolved = source_path.resolve(strict=False)
+    if resolved != route.source_root and not resolved.is_relative_to(route.source_root):
+        raise ValueError("task workspace path is outside source_git_root.")
+
+    target = (route.apply_root / resolved.relative_to(route.source_root)).resolve(strict=False)
+    if target != route.apply_root and not target.is_relative_to(route.apply_root):
+        raise ValueError("resolved task workspace path escapes workspace_path.")
+    return target
+
+
+def resolve_cwd(cwd: str) -> Path:
+    source_target = _resolve_source_cwd(cwd)
+    target = _map_source_path_for_apply(source_target)
+    if not target.exists() or not target.is_dir():
+        raise NotADirectoryError(f"cwd does not exist or is not a directory: {cwd}")
+    return target
+
+
+def _resolve_source_file_path(raw_path: str) -> Path:
     raw = Path(raw_path)
     if raw.is_absolute() or raw_path.startswith("~") or ".." in raw.parts:
         raise ValueError(f"unsafe file action path: {raw_path}")
@@ -204,6 +375,10 @@ def resolve_file_path(raw_path: str) -> Path:
         raise PermissionError(f"file action touches blocked file: {raw_path}")
 
     return target
+
+
+def resolve_file_path(raw_path: str) -> Path:
+    return _map_source_path_for_apply(_resolve_source_file_path(raw_path))
 
 
 def clean_patch_path(raw_path: str) -> str | None:
@@ -332,7 +507,13 @@ def step_patch_paths(step: dict[str, Any], patch: str) -> list[str]:
 
 
 def relative(path: Path) -> str:
-    return str(path.resolve(strict=False).relative_to(WORKSPACE_ROOT))
+    resolved = path.resolve(strict=False)
+    route = _ACTIVE_RUNNER_WORKSPACE
+    if route is not None and route.workspace_mode == TASK_WORKSPACE_MODE:
+        if resolved == route.apply_root or resolved.is_relative_to(route.apply_root):
+            source_path = (route.source_root / resolved.relative_to(route.apply_root)).resolve(strict=False)
+            return _source_relative(source_path)
+    return _source_relative(resolved)
 
 
 def backup_file(path: Path) -> str | None:
@@ -377,11 +558,13 @@ def action_step_targets(steps: list[Any]) -> list[Path]:
 
 def snapshot_action_targets(cwd: Path, steps: list[Any]) -> list[dict[str, Any]]:
     snapshots: list[dict[str, Any]] = []
+    route = _ACTIVE_RUNNER_WORKSPACE
+    fallback_stop_at = route.apply_root if route is not None else WORKSPACE_ROOT
 
     for target in action_step_targets(steps):
         existed = target.exists()
         content = target.read_bytes() if existed and target.is_file() else None
-        stop_at = cwd if target == cwd or target.is_relative_to(cwd) else WORKSPACE_ROOT
+        stop_at = cwd if target == cwd or target.is_relative_to(cwd) else fallback_stop_at
 
         snapshots.append(
             {
@@ -576,7 +759,9 @@ def apply_command(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
         raise ValueError("Invalid command argv")
     argv = _validate_exec_argv(argv)
-    risk, reason = _classify_exec_command(cwd, argv)
+    route = _ACTIVE_RUNNER_WORKSPACE
+    classify_cwd = route.source_cwd if route is not None and route.workspace_mode == TASK_WORKSPACE_MODE else cwd
+    risk, reason = _classify_exec_command(classify_cwd, argv)
     if risk == "blocked":
         raise PermissionError(f"blocked command cannot be applied: {reason}")
 
@@ -757,6 +942,8 @@ def apply_step(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply_bundle(bundle_id: str, yes: bool) -> None:
+    global _ACTIVE_RUNNER_WORKSPACE
+
     path, record = find_bundle(bundle_id)
     if record.get("status") != "pending":
         raise SystemExit(f"Only pending bundles can be applied. Current: {record.get('status')}")
@@ -768,7 +955,6 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
         if answer.strip() != "yes":
             raise SystemExit("aborted")
 
-    cwd = resolve_cwd(str(record.get("cwd", ".")))
     action_bundle = is_action_bundle(record)
     raw_steps = record.get("steps", [])
     if not isinstance(raw_steps, list):
@@ -779,17 +965,21 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
     failure_error: str | None = None
     rollback_result: dict[str, Any] | None = None
     action_snapshots: list[dict[str, Any]] = []
+    runner_workspace: RunnerWorkspace | None = None
+    previous_workspace = _ACTIVE_RUNNER_WORKSPACE
 
-    if action_bundle:
+    try:
         try:
-            action_snapshots = snapshot_action_targets(cwd, raw_steps)
+            runner_workspace = resolve_runner_workspace(record)
         except Exception as exc:
+            if not _is_task_workspace_bundle(record):
+                raise
             failed = True
             failure_error = str(exc)
             results.append(
                 {
                     "type": "preflight",
-                    "name": "Action bundle file snapshot",
+                    "name": "Task workspace routing",
                     "exit_code": None,
                     "stdout": "",
                     "stderr": str(exc),
@@ -797,44 +987,67 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
                 }
             )
 
-    if not failed:
-        for idx, raw_step in enumerate(raw_steps, 1):
-            if not isinstance(raw_step, dict):
-                failed = True
-                failure_error = f"Invalid step at index {idx}"
-                results.append({"exit_code": None, "stderr": failure_error})
-                break
+        if runner_workspace is not None:
+            _ACTIVE_RUNNER_WORKSPACE = runner_workspace
+            cwd = runner_workspace.apply_cwd
 
-            print(f"\n[{idx}] applying: {raw_step.get('name')}")
-
-            try:
-                result = apply_step(cwd, raw_step)
-                results.append(result)
-
-                if result.get("type") == "command" and result.get("exit_code") != 0:
+            if action_bundle:
+                try:
+                    action_snapshots = snapshot_action_targets(cwd, raw_steps)
+                except Exception as exc:
                     failed = True
-                    failure_error = f"command exited with code {result.get('exit_code')}"
-                    if action_bundle:
-                        result["action_index"] = idx
-                        result["error"] = failure_error
-                    break
+                    failure_error = str(exc)
+                    results.append(
+                        {
+                            "type": "preflight",
+                            "name": "Action bundle file snapshot",
+                            "exit_code": None,
+                            "stdout": "",
+                            "stderr": str(exc),
+                            "truncated": False,
+                        }
+                    )
 
-            except Exception as exc:
-                failed = True
-                failure_error = str(exc)
-                results.append(
-                    {
-                        "type": step_type(raw_step),
-                        "name": raw_step.get("name"),
-                        "action_index": idx if action_bundle else None,
-                        "exit_code": None,
-                        "stdout": "",
-                        "stderr": str(exc),
-                        "truncated": False,
-                    }
-                )
-                print(str(exc), file=sys.stderr)
-                break
+            if not failed:
+                for idx, raw_step in enumerate(raw_steps, 1):
+                    if not isinstance(raw_step, dict):
+                        failed = True
+                        failure_error = f"Invalid step at index {idx}"
+                        results.append({"exit_code": None, "stderr": failure_error})
+                        break
+
+                    print(f"\n[{idx}] applying: {raw_step.get('name')}")
+
+                    try:
+                        result = apply_step(cwd, raw_step)
+                        results.append(result)
+
+                        if result.get("type") == "command" and result.get("exit_code") != 0:
+                            failed = True
+                            failure_error = f"command exited with code {result.get('exit_code')}"
+                            if action_bundle:
+                                result["action_index"] = idx
+                                result["error"] = failure_error
+                            break
+
+                    except Exception as exc:
+                        failed = True
+                        failure_error = str(exc)
+                        results.append(
+                            {
+                                "type": step_type(raw_step),
+                                "name": raw_step.get("name"),
+                                "action_index": idx if action_bundle else None,
+                                "exit_code": None,
+                                "stdout": "",
+                                "stderr": str(exc),
+                                "truncated": False,
+                            }
+                        )
+                        print(str(exc), file=sys.stderr)
+                        break
+    finally:
+        _ACTIVE_RUNNER_WORKSPACE = previous_workspace
 
     if action_bundle and failed:
         rollback_result = rollback_action_changes(action_snapshots)
@@ -848,6 +1061,14 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
 
     record["result"] = {
         "cwd": str(record.get("cwd", ".")),
+        "workspace_routing": (
+            runner_workspace.as_result()
+            if runner_workspace is not None
+            else {
+                "workspace_mode": TASK_WORKSPACE_MODE,
+                "error": failure_error,
+            }
+        ),
         "steps": results,
         "ok": not failed,
     }

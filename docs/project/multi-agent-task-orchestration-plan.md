@@ -449,7 +449,8 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - Public MCP helper로 `workspace_prepare_task_workspace`, `workspace_task_workspace_status`, `workspace_list_task_workspaces`를 제공한다.
 - Review UI는 `task-workspace` bundle에 대해 workspace record가 `created`인지 `missing`인지 표시한다.
 - Phase 3-C는 명시 호출형 `workspace_create_task_worktree`로 source git repo 검증 후 runtime 아래 실제 git worktree를 생성하는 foundation을 추가했다.
-- 아직 runner의 task workspace apply routing과 merge queue는 구현하지 않았다.
+- Phase 3-D는 승인된 `task-workspace` bundle을 준비된 git worktree에서 apply하도록 runner routing을 추가했다. Direct mode bundle은 기존 source workspace cwd를 계속 사용한다.
+- 아직 merge queue와 source-project 통합 apply는 구현하지 않았다.
 
 성공 기준:
 

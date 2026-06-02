@@ -24,6 +24,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Review UI pending settings include a scoped approval override form and a saved scoped override list with delete actions.
 - Proposal metadata now accepts `workspace_mode="task-workspace"` when a `task_id` is provided, preparing the metadata foundation for isolated task workspaces.
 - Review UI bundle cards now show task workspace status, path, branch, and base ref for `workspace_mode="task-workspace"` bundles when available.
+- Approved `task-workspace` bundles now apply inside their ready git worktree while preserving direct-mode runner behavior and source bundle `cwd` records.
 - User documentation now explains help language selection, `WOOJAE_HELP_LANG`, and Korean help usage.
 - Default public MCP tool guidance now favors small proposal wrapper tools while keeping the generic bundle functions internally available.
 - Refactored MCP tool helper implementations out of `server.py` into `terminal_bridge/mcp_tools/` modules while preserving public MCP tool names, wrappers, signatures, schemas, approval flow, and runner behavior.
