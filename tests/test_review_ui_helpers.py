@@ -246,8 +246,8 @@ class ReviewServerHelperTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("Task orchestration", html)
-        self.assertIn("No task orchestration records", html)
+        self.assertIn("Worktree task 현황", html)
+        self.assertIn("worktree task 기록이 없습니다", html)
         self.assertIn("total: 0", html)
 
     def test_task_orchestration_summary_html_renders_entry_types_and_anomalies(self) -> None:
@@ -352,7 +352,7 @@ class ReviewServerHelperTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("Task orchestration", html)
+        self.assertIn("Worktree task 현황", html)
         self.assertIn("project: project-alpha", html)
         self.assertIn("workspace+queue", html)
         self.assertIn("workspace-only", html)
@@ -777,7 +777,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         ):
             html = review.task_orchestration_summary_html(project_id="project-alpha")
 
-        self.assertIn("Task orchestration", html)
+        self.assertIn("Worktree task 현황", html)
         self.assertIn("task-validation-error", html)
         self.assertIn("validation hint: unavailable", html)
 
@@ -907,6 +907,51 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("client_id=client-a", html)
         self.assertIn("workspace_mode=direct", html)
         self.assertNotIn("session_id=", html)
+
+    def test_history_pagination_defaults_to_newest_100(self) -> None:
+        rows = [{"bundle_id": f"cmd-{idx:03d}"} for idx in range(125)]
+
+        page = review.paginate_bundle_records(rows)
+
+        self.assertEqual(len(page["rows"]), 100)
+        self.assertEqual(page["total"], 125)
+        self.assertEqual(page["start"], 1)
+        self.assertEqual(page["end"], 100)
+        self.assertTrue(page["has_next"])
+        self.assertFalse(page["has_previous"])
+
+    def test_history_pagination_uses_page_and_limit(self) -> None:
+        rows = [{"bundle_id": f"cmd-{idx:03d}"} for idx in range(125)]
+
+        page = review.paginate_bundle_records(rows, page=3, limit=50)
+
+        self.assertEqual([item["bundle_id"] for item in page["rows"]], [f"cmd-{idx:03d}" for idx in range(100, 125)])
+        self.assertEqual(page["start"], 101)
+        self.assertEqual(page["end"], 125)
+        self.assertFalse(page["has_next"])
+        self.assertTrue(page["has_previous"])
+
+    def test_history_pagination_preserves_status_and_metadata_filters(self) -> None:
+        filters = review.metadata_filter_params(
+            parse_qs("client_id=client-a&session_id=session-a&workspace_mode=direct")
+        )
+
+        url = review.history_pagination_url("/history", filters, status_filter="failed", page=2, limit=25)
+        html = review.history_pagination_html(
+            {"page": 1, "limit": 25, "total": 26, "start": 1, "end": 25, "has_next": True, "has_previous": False},
+            status_filter="failed",
+            metadata_filters=filters,
+        )
+
+        self.assertIn("status=failed", url)
+        self.assertIn("page=2", url)
+        self.assertIn("limit=25", url)
+        self.assertIn("client_id=client-a", url)
+        self.assertIn("session_id=session-a", url)
+        self.assertIn("workspace_mode=direct", url)
+        self.assertIn("status=failed", html)
+        self.assertIn("client_id=client-a", html)
+        self.assertIn("전체 26개 중 1–25개 표시", html)
 
     def test_latest_pending_bundle_id_uses_newest_pending(self) -> None:
         self.write_bundle("pending", "cmd-old", "2026-01-01T00:00:00+00:00")
@@ -1657,6 +1702,74 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("white-space: pre-wrap", html)
         self.assertIn("overflow-wrap: anywhere", html)
         self.assertIn("max-width: 100%", html)
+
+    def test_management_nav_html_contains_storage_cleanup_tab(self) -> None:
+        html = review_layout.management_nav_html("storage_cleanup")
+
+        self.assertIn("저장소 정리", html)
+        self.assertIn("tab=storage_cleanup", html)
+        self.assertIn('aria-current="page"', html)
+
+    def test_storage_cleanup_page_renders_sections_and_actions(self) -> None:
+        root = Path(self.tmp.name) / "runtime"
+        review.RUNTIME_ROOT = root
+        html = review.server_tab_content_html("storage_cleanup", review.server_state())
+
+        self.assertIn("런타임 이력/백업 관리", html)
+        self.assertIn("런타임 저장소 요약", html)
+        self.assertIn("이력 개수", html)
+        self.assertIn("cleanup_policy.json", html)
+        self.assertIn('/servers/storage-cleanup/policy', html)
+        self.assertIn('/servers/storage-cleanup/preview', html)
+        self.assertIn('/servers/storage-cleanup/apply', html)
+        self.assertIn('/servers/storage-cleanup/apply-with-backups', html)
+        self.assertIn('/servers/storage-cleanup/clear-history', html)
+        self.assertIn("DELETE HISTORY", html)
+
+    def test_cleanup_policy_from_form_validates_zero_and_negative_values(self) -> None:
+        form = {key: ["1"] for key in review.CLEANUP_POLICY_INT_FIELDS}
+        form["keep_applied"] = ["0"]
+        form["keep_failed"] = ["-1"]
+
+        _policy, errors, _warnings = review.cleanup_policy_from_form(form)
+
+        joined = " ".join(errors)
+        self.assertIn("0", joined)
+        self.assertIn("음수", joined)
+
+    def test_cleanup_policy_from_form_empty_resets_to_defaults(self) -> None:
+        form = {key: [""] for key in review.CLEANUP_POLICY_INT_FIELDS}
+
+        policy, errors, _warnings = review.cleanup_policy_from_form(form)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(policy["keep_applied"], review.CLEANUP_POLICY_DEFAULTS["keep_applied"])
+        self.assertEqual(policy["older_than_text_payload_days"], review.CLEANUP_POLICY_DEFAULTS["older_than_text_payload_days"])
+
+    def test_clear_history_candidates_preserve_pending_and_protected_files(self) -> None:
+        root = Path(self.tmp.name) / "runtime"
+        applied_dir = root / "command_bundles" / "applied"
+        pending_dir = root / "command_bundles" / "pending"
+        processes_dir = root / "processes"
+        applied_dir.mkdir(parents=True)
+        pending_dir.mkdir(parents=True)
+        processes_dir.mkdir(parents=True)
+        applied = applied_dir / "cmd-applied.json"
+        pending = pending_dir / "cmd-pending.json"
+        session = root / "session.json"
+        pid_file = processes_dir / "review.pid"
+        applied.write_text("{}", encoding="utf-8")
+        pending.write_text("{}", encoding="utf-8")
+        session.write_text("{}", encoding="utf-8")
+        pid_file.write_text("123", encoding="utf-8")
+
+        candidates = review.clear_history_cleanup_candidates(root)
+        names = {candidate.path.name for candidate in candidates}
+
+        self.assertIn(applied.name, names)
+        self.assertNotIn(pending.name, names)
+        self.assertNotIn(session.name, names)
+        self.assertNotIn(pid_file.name, names)
 
 
 class WatcherHelperTests(unittest.TestCase):

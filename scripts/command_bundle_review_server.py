@@ -32,7 +32,7 @@ from terminal_bridge.review_notifications import (
     review_url as notification_review_url,
     send_notification,
 )
-from terminal_bridge import bundle_watcher
+from terminal_bridge import bundle_watcher, runtime_storage
 from terminal_bridge.approval_modes import (
     VALID_APPROVAL_MODES,
     delete_scoped_approval_mode,
@@ -82,6 +82,35 @@ PORT = int(os.environ.get("BUNDLE_REVIEW_PORT", "8790"))
 EVENT_POLL_SECONDS = 0.5
 EVENT_TIMEOUT_SECONDS = 25.0
 VALID_STATUS_FILTERS = {"all", "pending", "applied", "failed", "rejected"}
+DEFAULT_HISTORY_LIMIT = 100
+MAX_HISTORY_LIMIT = 200
+CLEAR_HISTORY_CONFIRMATION = "DELETE HISTORY"
+CLEANUP_POLICY_DEFAULTS: dict[str, object] = {
+    "keep_applied": 1000,
+    "keep_failed": 500,
+    "keep_rejected": 200,
+    "keep_tool_calls": 2000,
+    "keep_handoffs": 1000,
+    "keep_text_payloads": 500,
+    "older_than_text_payload_days": 14,
+    "older_than_operations_days": 30,
+    "older_than_backups_days": 30,
+    "include_backups_by_default": False,
+}
+CLEANUP_POLICY_INT_FIELDS = tuple(
+    key for key, value in CLEANUP_POLICY_DEFAULTS.items() if isinstance(value, int) and not isinstance(value, bool)
+)
+CLEANUP_POLICY_FIELD_LABELS = {
+    "keep_applied": "적용 완료 bundle 보존 개수",
+    "keep_failed": "실패 bundle 보존 개수",
+    "keep_rejected": "거절 bundle 보존 개수",
+    "keep_tool_calls": "tool call 기록 보존 개수",
+    "keep_handoffs": "handoff 기록 보존 개수",
+    "keep_text_payloads": "text payload 기록 보존 개수",
+    "older_than_text_payload_days": "text payload 보존 기간(일)",
+    "older_than_operations_days": "operation 기록 보존 기간(일)",
+    "older_than_backups_days": "backup/trash 보존 기간(일)",
+}
 
 
 class BundleRowsState(TypedDict):
@@ -186,6 +215,50 @@ def metadata_filter_params(params: Mapping[str, list[str]]) -> dict[str, str | N
     return filters
 
 
+def parse_positive_int(value: str | None, default: int, *, minimum: int = 1, maximum: int | None = None) -> int:
+    try:
+        parsed = int(str(value or "").strip())
+    except ValueError:
+        parsed = default
+    if parsed < minimum:
+        parsed = default
+    if maximum is not None and parsed > maximum:
+        parsed = maximum
+    return parsed
+
+
+def history_pagination_params(params: Mapping[str, list[str]]) -> tuple[int, int]:
+    page = parse_positive_int(params.get("page", [None])[0], 1)
+    limit = parse_positive_int(params.get("limit", [None])[0], DEFAULT_HISTORY_LIMIT, maximum=MAX_HISTORY_LIMIT)
+    return page, limit
+
+
+def paginate_bundle_records(
+    rows: list[dict[str, object]],
+    *,
+    page: int = 1,
+    limit: int = DEFAULT_HISTORY_LIMIT,
+) -> dict[str, object]:
+    safe_limit = parse_positive_int(str(limit), DEFAULT_HISTORY_LIMIT, maximum=MAX_HISTORY_LIMIT)
+    total = len(rows)
+    max_page = max(1, (total + safe_limit - 1) // safe_limit)
+    safe_page = min(parse_positive_int(str(page), 1), max_page)
+    start_index = (safe_page - 1) * safe_limit
+    end_index = min(start_index + safe_limit, total)
+    visible_rows = rows[start_index:end_index]
+
+    return {
+        "rows": visible_rows,
+        "page": safe_page,
+        "limit": safe_limit,
+        "total": total,
+        "start": start_index + 1 if total else 0,
+        "end": end_index,
+        "has_previous": safe_page > 1,
+        "has_next": end_index < total,
+    }
+
+
 def metadata_filter_url(
     path: str,
     filters: Mapping[str, str | None],
@@ -198,6 +271,20 @@ def metadata_filter_url(
     query_values.update(active_metadata_filters(filters))
     query = urlencode(query_values)
     return f"{path}?{query}" if query else path
+
+
+def history_pagination_url(
+    path: str,
+    filters: Mapping[str, str | None],
+    *,
+    status_filter: str,
+    page: int,
+    limit: int,
+) -> str:
+    query_values = {"status": normalize_status_filter(status_filter), "page": str(page), "limit": str(limit)}
+    query_values.update(active_metadata_filters(filters))
+    query = urlencode(query_values)
+    return f"{path}?{query}"
 
 
 def filter_bundle_records_by_metadata(
@@ -548,6 +635,255 @@ def embedded_watcher_config() -> dict[str, object]:
             default=False,
         ),
         "base_url": review_base_url(),
+    }
+
+
+def cleanup_policy_file(root: Path | None = None) -> Path:
+    return (root or RUNTIME_ROOT) / "cleanup_policy.json"
+
+
+def cleanup_policy_defaults() -> dict[str, object]:
+    return dict(CLEANUP_POLICY_DEFAULTS)
+
+
+def _coerce_policy_bool(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    return default
+
+
+def _coerce_policy_int(value: object, default: int) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def load_cleanup_policy(root: Path | None = None) -> dict[str, object]:
+    defaults = cleanup_policy_defaults()
+    path = cleanup_policy_file(root)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return defaults
+    if not isinstance(raw, dict):
+        return defaults
+
+    policy = cleanup_policy_defaults()
+    for key in CLEANUP_POLICY_INT_FIELDS:
+        policy[key] = _coerce_policy_int(raw.get(key), int(defaults[key]))
+    policy["include_backups_by_default"] = _coerce_policy_bool(
+        raw.get("include_backups_by_default"),
+        bool(defaults["include_backups_by_default"]),
+    )
+    return policy
+
+
+def save_cleanup_policy(policy: Mapping[str, object], root: Path | None = None) -> None:
+    path = cleanup_policy_file(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    saved = cleanup_policy_defaults()
+    saved.update({key: policy[key] for key in saved.keys() if key in policy})
+    path.write_text(json.dumps(saved, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def cleanup_policy_from_form(form: Mapping[str, list[str]]) -> tuple[dict[str, object], list[str], list[str]]:
+    defaults = cleanup_policy_defaults()
+    policy: dict[str, object] = {}
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    for key in CLEANUP_POLICY_INT_FIELDS:
+        label = CLEANUP_POLICY_FIELD_LABELS[key]
+        raw = str(form.get(key, [""])[0]).strip()
+        if raw == "":
+            policy[key] = defaults[key]
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            errors.append(f"{label}: 숫자를 입력하세요.")
+            policy[key] = defaults[key]
+            continue
+        if value < 0:
+            errors.append(f"{label}: 음수는 허용하지 않습니다.")
+        elif value == 0:
+            errors.append(f"{label}: 0은 일반 policy 저장에서는 허용하지 않습니다. clear-history를 사용하세요.")
+        elif value < 10:
+            warnings.append(f"{label}: {value}은 매우 낮은 보존값입니다.")
+        policy[key] = value
+
+    raw_include = str(form.get("include_backups_by_default", [""])[0]).strip().lower()
+    policy["include_backups_by_default"] = raw_include in {"1", "true", "yes", "on"}
+    return policy, errors, warnings
+
+
+def _count_runtime_children(path: Path) -> int:
+    if not path.exists() or path.is_symlink() or not path.is_dir():
+        return 0
+    count = 0
+    for child in path.iterdir():
+        if child.is_symlink():
+            continue
+        count += 1
+    return count
+
+
+def storage_cleanup_history_counts(root: Path | None = None) -> dict[str, int]:
+    root = root or RUNTIME_ROOT
+    counts = {
+        "pending_bundles": _count_runtime_children(root / "command_bundles" / "pending"),
+        "applied_bundles": _count_runtime_children(root / "command_bundles" / "applied"),
+        "failed_bundles": _count_runtime_children(root / "command_bundles" / "failed"),
+        "rejected_bundles": _count_runtime_children(root / "command_bundles" / "rejected"),
+        "tool_calls": _count_runtime_children(root / "tool_calls"),
+        "handoffs": _count_runtime_children(root / "handoffs"),
+        "operations": _count_runtime_children(root / "operations"),
+        "text_payloads": _count_runtime_children(root / "text_payloads"),
+    }
+    counts["total_bundle_history"] = (
+        counts["pending_bundles"]
+        + counts["applied_bundles"]
+        + counts["failed_bundles"]
+        + counts["rejected_bundles"]
+    )
+    return counts
+
+
+def _candidate_size(path: Path) -> int:
+    return runtime_storage.total_storage(path).bytes
+
+
+def clear_history_cleanup_candidates(root: Path | None = None, *, include_backups: bool = False) -> list[runtime_storage.CleanupCandidate]:
+    root = (root or RUNTIME_ROOT).expanduser().resolve(strict=False)
+    directories: list[tuple[str, Path]] = [
+        ("command_bundles/applied", root / "command_bundles" / "applied"),
+        ("command_bundles/failed", root / "command_bundles" / "failed"),
+        ("command_bundles/rejected", root / "command_bundles" / "rejected"),
+        ("tool_calls", root / "tool_calls"),
+        ("handoffs", root / "handoffs"),
+        ("operations", root / "operations"),
+        ("text_payloads", root / "text_payloads"),
+        ("intent_imports", root / "intent_imports"),
+        ("trash", root / "trash"),
+    ]
+    if include_backups:
+        directories.extend(
+            [
+                ("backups", root / "backups"),
+                ("command_bundle_file_backups", root / "command_bundle_file_backups"),
+            ]
+        )
+
+    candidates: list[runtime_storage.CleanupCandidate] = []
+    for category, directory in directories:
+        if not directory.exists() or directory.is_symlink() or not directory.is_dir():
+            continue
+        for child in directory.iterdir():
+            candidate = runtime_storage.CleanupCandidate(
+                path=child,
+                kind="dir" if child.is_dir() and not child.is_symlink() else "file",
+                bytes=_candidate_size(child),
+                reason=f"clear eligible history: {category}",
+            )
+            if runtime_storage.is_deletable_candidate(candidate, root):
+                candidates.append(candidate)
+    return candidates
+
+
+def cleanup_result_from_candidates(
+    candidates: list[runtime_storage.CleanupCandidate],
+    *,
+    dry_run: bool,
+    root: Path | None = None,
+) -> runtime_storage.CleanupResult:
+    root = (root or RUNTIME_ROOT).expanduser().resolve(strict=False)
+    if dry_run:
+        return runtime_storage.CleanupResult(True, candidates, 0, 0, 0, [])
+
+    deleted_files = 0
+    deleted_dirs = 0
+    reclaimed = 0
+    errors: list[runtime_storage.CleanupError] = []
+    for candidate in candidates:
+        if candidate.action != "delete" or not runtime_storage.is_deletable_candidate(candidate, root):
+            continue
+        try:
+            files, dirs = runtime_storage._delete_path(candidate.path)
+            deleted_files += files
+            deleted_dirs += dirs
+            reclaimed += candidate.bytes
+        except Exception as exc:
+            errors.append(runtime_storage.CleanupError(candidate.path, f"{type(exc).__name__}: {exc}"))
+    return runtime_storage.CleanupResult(False, candidates, deleted_files, deleted_dirs, reclaimed, errors)
+
+
+def run_storage_cleanup(
+    *,
+    dry_run: bool,
+    include_backups: bool,
+    clear_history: bool = False,
+) -> runtime_storage.CleanupResult:
+    if clear_history:
+        candidates = clear_history_cleanup_candidates(RUNTIME_ROOT, include_backups=include_backups)
+        return cleanup_result_from_candidates(candidates, dry_run=dry_run, root=RUNTIME_ROOT)
+    return runtime_storage.cleanup_runtime(RUNTIME_ROOT, dry_run=dry_run, include_backups=include_backups)
+
+
+def cleanup_candidate_category(candidate: runtime_storage.CleanupCandidate, root: Path | None = None) -> str:
+    root = (root or RUNTIME_ROOT).expanduser().resolve(strict=False)
+    try:
+        parts = candidate.path.expanduser().resolve(strict=False).relative_to(root).parts
+    except ValueError:
+        return candidate.kind
+    if len(parts) >= 2 and parts[0] == "command_bundles":
+        return f"command_bundles/{parts[1]}"
+    return parts[0] if parts else candidate.kind
+
+
+def cleanup_candidate_summary(result: runtime_storage.CleanupResult, root: Path | None = None) -> dict[str, dict[str, int]]:
+    summary: dict[str, dict[str, int]] = {}
+    for candidate in result.candidates:
+        category = cleanup_candidate_category(candidate, root)
+        bucket = summary.setdefault(category, {"count": 0, "bytes": 0})
+        bucket["count"] += 1
+        bucket["bytes"] += candidate.bytes
+    return dict(sorted(summary.items()))
+
+
+def storage_cleanup_state() -> dict[str, object]:
+    total = runtime_storage.total_storage(RUNTIME_ROOT)
+    entries = runtime_storage.storage_summary(RUNTIME_ROOT)
+    return {
+        "runtime_root": str(RUNTIME_ROOT),
+        "policy_file": str(cleanup_policy_file(RUNTIME_ROOT)),
+        "policy": load_cleanup_policy(RUNTIME_ROOT),
+        "history_counts": storage_cleanup_history_counts(RUNTIME_ROOT),
+        "total": {
+            "bytes": total.bytes,
+            "bytes_label": runtime_storage.format_bytes(total.bytes),
+            "files": total.files,
+            "dirs": total.dirs,
+        },
+        "summary": [
+            {
+                "name": entry.name,
+                "path": str(entry.path),
+                "exists": entry.exists,
+                "bytes": entry.bytes,
+                "bytes_label": runtime_storage.format_bytes(entry.bytes),
+                "files": entry.files,
+                "dirs": entry.dirs,
+            }
+            for entry in entries
+        ],
     }
 
 
@@ -1010,6 +1346,23 @@ def _task_orchestration_key(entry: Mapping[str, object]) -> tuple[str, str, str]
     )
 
 
+def _task_orchestration_record_is_active(entry: Mapping[str, object]) -> bool:
+    if bool(entry.get("anomaly")) or bool(entry.get("operator_attention")):
+        return True
+    if str(entry.get("validation_status") or "") == "failed":
+        return True
+    task_status = str(entry.get("task_workspace_status") or "").strip()
+    worktree_status = str(entry.get("worktree_status") or "").strip()
+    queue_status = str(entry.get("merge_queue_status") or "").strip()
+    if task_status in {"worktree", "created", "ready"}:
+        return True
+    if worktree_status not in {"", "none", "missing", "removed"}:
+        return True
+    if queue_status in {"queued", "pending", "ready", "failed", "conflict"}:
+        return True
+    return False
+
+
 def _task_status_tone(status: object) -> str:
     value = str(status or "").strip()
     if value in {"worktree", "created", "ready"}:
@@ -1185,10 +1538,20 @@ def _cleanup_readiness_badges(cleanup_entry: Mapping[str, object] | None) -> str
     validation_status = str(cleanup_entry.get("validation_status") or "unknown").strip() or "unknown"
     action = str(cleanup_entry.get("recommended_action") or "none").strip() or "none"
 
+    blockers = cleanup_entry.get("cleanup_blockers")
+    if workspace_status == "cleaned" and isinstance(blockers, list) and "workspace_path_missing" in blockers:
+        return "".join(
+            [
+                status_badge("cleanup: 완료", "ok"),
+                status_badge("worktree: 제거됨", "ok"),
+                status_badge(f"validation: {validation_status}", _validation_status_tone(validation_status)),
+            ]
+        )
+
     badges = [
         status_badge(f"cleanup ready: {'yes' if ready else 'no'}", ready_tone),
         status_badge(f"cleanup risk: {risk}", risk_tone),
-        status_badge(_cleanup_blockers_label(cleanup_entry.get("cleanup_blockers")), "ok" if ready else risk_tone),
+        status_badge(_cleanup_blockers_label(blockers), "ok" if ready else risk_tone),
         status_badge(f"cleanup action: {action}", "ok" if ready else "neutral"),
         status_badge(f"cleanup validation: {validation_status}", _validation_status_tone(validation_status)),
         status_badge(f"cleanup queue: {queue_status}", _queue_status_tone(queue_status)),
@@ -1390,29 +1753,26 @@ def task_orchestration_summary_html(
         ]
     )
 
-    if not entries:
-        body = '<p class="meta">No task orchestration records.</p>'
-    else:
+    def render_table(table_entries: list[Mapping[str, object]]) -> str:
         rows = "\n".join(
             _task_orchestration_entry_html(
                 entry,
                 cleanup_entries_by_key.get(_task_orchestration_key(entry)),
                 validation_result_hints_by_key.get(_task_orchestration_key(entry)),
             )
-            for entry in entries
-            if isinstance(entry, Mapping)
+            for entry in table_entries
         )
-        body = f"""
+        return f"""
         <div class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Task</th>
-                <th>Source</th>
-                <th>Workspace</th>
-                <th>Queue</th>
-                <th>State</th>
-                <th>Cleanup</th>
+                <th>작업</th>
+                <th>원본</th>
+                <th>워크스페이스</th>
+                <th>병합 큐</th>
+                <th>상태</th>
+                <th>정리</th>
               </tr>
             </thead>
             <tbody>
@@ -1422,16 +1782,38 @@ def task_orchestration_summary_html(
         </div>
         """
 
+    typed_entries = [entry for entry in entries if isinstance(entry, Mapping)]
+    active_entries = [entry for entry in typed_entries if _task_orchestration_record_is_active(entry)]
+    archived_entries = [entry for entry in typed_entries if not _task_orchestration_record_is_active(entry)]
+    if not typed_entries:
+        body = '<p class="meta">worktree task 기록이 없습니다.</p>'
+    else:
+        active_body = (
+            render_table(active_entries)
+            if active_entries
+            else '<p class="meta">현재 확인이 필요한 active worktree task가 없습니다. 과거 기록은 아래 접힌 영역에서 확인할 수 있습니다.</p>'
+        )
+        archived_body = ""
+        if archived_entries:
+            archived_body = f"""
+            <details class="card">
+              <summary><strong>과거/보관된 작업 기록 {len(archived_entries)}개 보기</strong></summary>
+              <p class="meta">이미 병합, 보관, 정리된 task record입니다. 브랜치나 worktree가 남아있다는 뜻은 아닙니다.</p>
+              {render_table(archived_entries)}
+            </details>
+            """
+        body = active_body + archived_body
+
     return f"""
-    <details class="card" open>
-      <summary><strong>Task orchestration</strong></summary>
+    <section class="card">
+      <h3>Worktree task 현황</h3>
       <p class="meta">
-        Read-only overview of task workspace, merge queue, validation, and cleanup preview records.
-        It does not merge, apply, enqueue, archive, or clean up task worktrees.
+        task worktree, merge queue, validation, cleanup preview record를 보기 전용으로 확인합니다.
+        실제 브랜치/워크트리 정리와 과거 record 이력은 별개로 관리됩니다.
       </p>
       <div class="subnav">{summary_badges}</div>
       {body}
-    </details>
+    </section>
     """
 
 
@@ -2162,6 +2544,59 @@ def history_summary_html(state: dict[str, object]) -> str:
     """
 
 
+def history_visible_range_html(pagination: Mapping[str, object]) -> str:
+    total = int(pagination.get("total", 0))
+    start = int(pagination.get("start", 0))
+    end = int(pagination.get("end", 0))
+    limit = int(pagination.get("limit", DEFAULT_HISTORY_LIMIT))
+    page_number = int(pagination.get("page", 1))
+    if total == 0:
+        range_text = "표시할 bundle이 없습니다."
+    else:
+        range_text = f"전체 {total}개 중 {start}–{end}개 표시"
+    return f"""
+    <div class="notice">
+      <strong>이력 표시 범위</strong><br>
+      {escape(range_text)} · page <code>{escape(page_number)}</code> · limit <code>{escape(limit)}</code>
+    </div>
+    """
+
+
+def history_pagination_html(
+    pagination: Mapping[str, object],
+    *,
+    status_filter: str,
+    metadata_filters: Mapping[str, str | None],
+) -> str:
+    total = int(pagination.get("total", 0))
+    page_number = int(pagination.get("page", 1))
+    limit = int(pagination.get("limit", DEFAULT_HISTORY_LIMIT))
+    has_previous = bool(pagination.get("has_previous"))
+    has_next = bool(pagination.get("has_next"))
+    if has_previous:
+        previous_link = f'<a class="subnav-link" href="{escape(history_pagination_url("/history", metadata_filters, status_filter=status_filter, page=page_number - 1, limit=limit))}">← 이전</a>'
+    else:
+        previous_link = '<span class="subnav-link is-disabled">← 이전</span>'
+    if has_next:
+        next_link = f'<a class="subnav-link" href="{escape(history_pagination_url("/history", metadata_filters, status_filter=status_filter, page=page_number + 1, limit=limit))}">다음 →</a>'
+    else:
+        next_link = '<span class="subnav-link is-disabled">다음 →</span>'
+
+    limit_links = []
+    for candidate in (25, 50, 100, 200):
+        if candidate == limit:
+            limit_links.append(f'<span class="subnav-link is-active" aria-current="page">{candidate}</span>')
+        else:
+            href = history_pagination_url("/history", metadata_filters, status_filter=status_filter, page=1, limit=candidate)
+            limit_links.append(f'<a class="subnav-link" href="{escape(href)}">{candidate}</a>')
+
+    if total <= limit and page_number == 1:
+        nav = f"<div class=\"subnav\"><span class=\"meta-label\">limit</span>{''.join(limit_links)}</div>"
+    else:
+        nav = f"<div class=\"subnav\">{previous_link}{next_link}</div><div class=\"subnav\"><span class=\"meta-label\">limit</span>{''.join(limit_links)}</div>"
+    return history_visible_range_html(pagination) + nav
+
+
 def bundle_card_html(record: dict[str, object]) -> str:
     bundle_id = str(record.get("bundle_id", ""))
     status = str(record.get("status", "unknown"))
@@ -2358,6 +2793,498 @@ def supervisor_action_notice_html(action: str, service: str, status: str) -> str
     )
 
 
+def storage_summary_table_html(entries: list[runtime_storage.StorageEntry]) -> str:
+    rows = []
+    for entry in entries:
+        rows.append(
+            "<tr>"
+            f"<td><code>{escape(entry.name)}</code></td>"
+            f"<td>{status_badge('present' if entry.exists else 'missing', 'ok' if entry.exists else 'neutral')}</td>"
+            f"<td>{escape(runtime_storage.format_bytes(entry.bytes))}</td>"
+            f"<td>{escape(entry.files)}</td>"
+            f"<td>{escape(entry.dirs)}</td>"
+            f"<td><code>{escape(entry.path)}</code></td>"
+            "</tr>"
+        )
+    return (
+        '<div class="table-wrap"><table class="data-table">'
+        '<thead><tr><th>Category</th><th>Status</th><th>Bytes</th><th>Files</th><th>Dirs</th><th>Path</th></tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
+def storage_history_counts_table_html(counts: Mapping[str, int], policy: Mapping[str, object]) -> str:
+    rows = []
+    items = (
+        ("pending bundles", "pending_bundles", None),
+        ("applied bundles", "applied_bundles", "keep_applied"),
+        ("failed bundles", "failed_bundles", "keep_failed"),
+        ("rejected bundles", "rejected_bundles", "keep_rejected"),
+        ("total bundle history", "total_bundle_history", None),
+        ("tool call records", "tool_calls", "keep_tool_calls"),
+        ("handoff records", "handoffs", "keep_handoffs"),
+        ("operation records", "operations", None),
+        ("text payload records", "text_payloads", "keep_text_payloads"),
+    )
+    for label, key, policy_key in items:
+        value = int(counts.get(key, 0))
+        recommendation = ""
+        if policy_key:
+            keep = int(policy.get(policy_key, 0))
+            tone = "warn" if keep > 0 and value > keep else "ok"
+            recommendation = status_badge(f"keep {keep}", tone)
+        rows.append(
+            "<tr>"
+            f"<td>{escape(label)}</td>"
+            f"<td>{escape(value)}</td>"
+            f"<td>{recommendation}</td>"
+            "</tr>"
+        )
+    return (
+        '<div class="table-wrap"><table class="data-table">'
+        '<thead><tr><th>History</th><th>Count</th><th>Policy</th></tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
+def cleanup_policy_form_html(
+    policy: Mapping[str, object],
+    *,
+    errors: list[str] | None = None,
+    warnings: list[str] | None = None,
+) -> str:
+    errors = errors or []
+    warnings = warnings or []
+    error_html = "".join(f"<li>{escape(message)}</li>" for message in errors)
+    warning_html = "".join(f"<li>{escape(message)}</li>" for message in warnings)
+    messages = ""
+    if error_html:
+        messages += f'<div class="notice"><strong>Policy validation failed</strong><ul class="compact">{error_html}</ul></div>'
+    if warning_html:
+        messages += f'<div class="notice"><strong>Policy warning</strong><ul class="compact">{warning_html}</ul></div>'
+
+    rows = []
+    for key in CLEANUP_POLICY_INT_FIELDS:
+        rows.append(
+            '<div class="kv-row">'
+            f'<div class="kv-label"><label for="policy-{escape(key)}">{escape(CLEANUP_POLICY_FIELD_LABELS[key])}</label></div>'
+            '<div class="kv-value">'
+            f'<input id="policy-{escape(key)}" name="{escape(key)}" type="number" min="1" value="{escape(policy.get(key, ""))}">'
+            f'<span class="meta"><code>{escape(key)}</code></span>'
+            '</div></div>'
+        )
+    checked = " checked" if bool(policy.get("include_backups_by_default")) else ""
+    rows.append(
+        '<div class="kv-row">'
+        '<div class="kv-label">Include backups by default</div>'
+        '<div class="kv-value">'
+        f'<label><input type="checkbox" name="include_backups_by_default" value="1"{checked}> ordinary cleanup includes backups/trash</label>'
+        '<span class="meta"><code>include_backups_by_default</code></span>'
+        '</div></div>'
+    )
+    return f"""
+    {messages}
+    <form method="post" action="/servers/storage-cleanup/policy">
+      <div class="kv">{''.join(rows)}</div>
+      <p class="meta">빈 입력은 기본값으로 저장합니다. 음수와 0은 일반 policy 저장에서 거부됩니다.</p>
+      <button class="approve" type="submit">정리 정책 저장</button>
+    </form>
+    """
+
+
+def cleanup_result_html(result: runtime_storage.CleanupResult, *, title: str) -> str:
+    summary = cleanup_candidate_summary(result, RUNTIME_ROOT)
+    rows = []
+    for category, values in summary.items():
+        rows.append(
+            "<tr>"
+            f"<td><code>{escape(category)}</code></td>"
+            f"<td>{escape(values['count'])}</td>"
+            f"<td>{escape(runtime_storage.format_bytes(values['bytes']))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append('<tr><td colspan="3" class="meta">No cleanup candidates.</td></tr>')
+
+    sample_items = []
+    for candidate in result.candidates[:12]:
+        sample_items.append(
+            f"<li><code>{escape(candidate.path)}</code> "
+            f"<span class='meta'>({escape(candidate.kind)}, {escape(runtime_storage.format_bytes(candidate.bytes))}, {escape(candidate.reason)})</span></li>"
+        )
+    sample_html = "" if not sample_items else f"<details><summary>Candidate sample</summary><ul class='compact'>{''.join(sample_items)}</ul></details>"
+    error_items = "".join(f"<li><code>{escape(error.path)}</code>: {escape(error.error)}</li>" for error in result.errors)
+    errors_html = "" if not error_items else f"<div class='notice'><strong>Errors</strong><ul class='compact'>{error_items}</ul></div>"
+    mode = "Preview" if result.dry_run else "Applied"
+    return f"""
+    <section class="card">
+      <h3>{escape(title)}</h3>
+      <p class="meta">
+        Mode: <code>{escape(mode)}</code><br>
+        Candidates: <code>{escape(len(result.candidates))}</code><br>
+        Estimated reclaimed: <code>{escape(runtime_storage.format_bytes(sum(candidate.bytes for candidate in result.candidates)))}</code><br>
+        Deleted files: <code>{escape(result.deleted_files)}</code>, deleted dirs: <code>{escape(result.deleted_dirs)}</code>, reclaimed: <code>{escape(runtime_storage.format_bytes(result.reclaimed_bytes))}</code>
+      </p>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Category</th><th>Candidates</th><th>Bytes</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
+      {sample_html}
+      {errors_html}
+    </section>
+    """
+
+
+def storage_cleanup_action_notice_html(status: str) -> str:
+    if status == "policy_saved":
+        return '<div class="notice"><strong>Cleanup policy saved.</strong><br>저장된 policy는 다음 preview/apply에서 사용됩니다.</div>'
+    return ""
+
+
+def storage_cleanup_page_html(
+    *,
+    result: runtime_storage.CleanupResult | None = None,
+    result_title: str = "Cleanup preview",
+    notice_html: str = "",
+    policy_errors: list[str] | None = None,
+    policy_warnings: list[str] | None = None,
+) -> str:
+    policy = load_cleanup_policy(RUNTIME_ROOT)
+    total = runtime_storage.total_storage(RUNTIME_ROOT)
+    entries = runtime_storage.storage_summary(RUNTIME_ROOT)
+    counts = storage_cleanup_history_counts(RUNTIME_ROOT)
+    default_include = "1" if bool(policy.get("include_backups_by_default")) else "0"
+    result_block = cleanup_result_html(result, title=result_title) if result is not None else ""
+    return f"""
+    <div class="stack">
+      <div class="section-title">
+        <h2>{escape(SERVER_TAB_LABELS['storage_cleanup'])} <span class="meta">런타임 이력/백업 관리</span></h2>
+        <p class="meta">런타임 저장소 사용량, 이력 개수, 정리 정책, 미리보기/실행 작업을 한 곳에서 관리합니다.</p>
+      </div>
+      {notice_html}
+      <section class="card">
+        <h3>런타임 저장소 요약</h3>
+        <div class="kv">
+          {kv_row_html("런타임 루트", str(RUNTIME_ROOT), code_value=True)}
+          {kv_row_html("전체 사용량", f"{runtime_storage.format_bytes(total.bytes)} ({total.files}개 파일, {total.dirs}개 폴더)")}
+          {kv_row_html("정책 파일", str(cleanup_policy_file(RUNTIME_ROOT)), code_value=True)}
+        </div>
+        {storage_summary_table_html(entries)}
+      </section>
+      <section class="card">
+        <h3>이력 개수</h3>
+        <p class="meta">승인 대기 bundle은 항상 보호되며 일반 정리나 이력 전체 삭제 후보에 포함되지 않습니다.</p>
+        {storage_history_counts_table_html(counts, policy)}
+      </section>
+      <section class="card">
+        <h3>정리 정책 설정</h3>
+        {cleanup_policy_form_html(policy, errors=policy_errors, warnings=policy_warnings)}
+      </section>
+      <section class="card">
+        <h3>미리보기 및 실행</h3>
+        <p class="meta">일반 정리는 저장된 정리 정책과 현재 runtime_storage 정리 helper를 사용합니다. 먼저 미리보기로 삭제 후보와 예상 회수 용량을 확인하세요.</p>
+        <div class="button-row">
+          <form class="inline" method="post" action="/servers/storage-cleanup/preview">
+            <input type="hidden" name="include_backups" value="{default_include}">
+            <button class="secondary" type="submit">기본 정리 미리보기</button>
+          </form>
+          <form class="inline" method="post" action="/servers/storage-cleanup/preview">
+            <input type="hidden" name="include_backups" value="1">
+            <button class="secondary" type="submit">백업 포함 정리 미리보기</button>
+          </form>
+        </div>
+        <div class="notice">
+          <strong>일반 정리 실행 확인</strong><br>
+          정리 후보로 계산된 런타임 이력을 삭제합니다. 승인 대기 bundle, session 설정, secret, 실행 중인 pid 파일은 보존됩니다.
+        </div>
+        <div class="button-row">
+          <form class="inline" method="post" action="/servers/storage-cleanup/apply">
+            <input type="hidden" name="include_backups" value="{default_include}">
+            <label class="meta"><input type="checkbox" name="confirm" value="1" required> 일반 정리 실행 확인</label>
+            <button class="approve" type="submit">기본 정리 실행</button>
+          </form>
+          <form class="inline" method="post" action="/servers/storage-cleanup/apply-with-backups">
+            <input type="hidden" name="include_backups" value="1">
+            <label class="meta"><input type="checkbox" name="confirm" value="1" required> 백업 포함 정리 실행 확인</label>
+            <button class="approve" type="submit">백업 포함 정리 실행</button>
+          </form>
+        </div>
+      </section>
+      <section class="card is-failed">
+        <h3>위험 작업</h3>
+        <p class="meta">정리 가능한 이력 전체 삭제는 보존 개수를 무시합니다. 그래도 승인 대기 bundle, session 설정, secret, 실행 중인 pid 파일은 보존됩니다.</p>
+        <div class="button-row">
+          <form class="inline" method="post" action="/servers/storage-cleanup/preview">
+            <input type="hidden" name="clear_history" value="1">
+            <button class="secondary" type="submit">이력 전체 삭제 미리보기</button>
+          </form>
+        </div>
+        <form method="post" action="/servers/storage-cleanup/clear-history">
+          <p><label>계속하려면 <code>{escape(CLEAR_HISTORY_CONFIRMATION)}</code> 를 입력하세요<br>
+          <input name="confirm" autocomplete="off" placeholder="DELETE HISTORY"></label></p>
+          <p><label><input type="checkbox" name="include_backups" value="1"> 백업과 command bundle 파일 백업도 포함</label></p>
+          <button class="reject" type="submit">정리 가능한 이력 전체 삭제</button>
+        </form>
+      </section>
+      {result_block}
+    </div>
+    """
+
+
+def run_project_git(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=PROJECT_ROOT,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        shell=False,
+        check=False,
+        timeout=30,
+    )
+
+
+def actual_task_git_state() -> dict[str, object]:
+    branch_result = run_project_git(["branch", "--format=%(refname:short)", "--list", "task/*"])
+    branches = sorted(line.strip() for line in branch_result.stdout.splitlines() if line.strip().startswith("task/"))
+    current_result = run_project_git(["rev-parse", "--abbrev-ref", "HEAD"])
+    current_branch = current_result.stdout.strip() if current_result.returncode == 0 else "unknown"
+    worktree_result = run_project_git(["worktree", "list", "--porcelain"])
+    worktrees: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for raw_line in worktree_result.stdout.splitlines():
+        if raw_line.startswith("worktree "):
+            if current:
+                worktrees.append(current)
+            current = {"path": raw_line.removeprefix("worktree ")}
+        elif raw_line.startswith("branch "):
+            branch_ref = raw_line.removeprefix("branch ")
+            current["branch_ref"] = branch_ref
+            current["branch"] = branch_ref.removeprefix("refs/heads/")
+        elif raw_line.startswith("HEAD "):
+            current["head"] = raw_line.removeprefix("HEAD ")
+        elif raw_line.strip() == "bare":
+            current["bare"] = "1"
+        elif raw_line.strip() == "detached":
+            current["detached"] = "1"
+    if current:
+        worktrees.append(current)
+
+    task_root = (RUNTIME_ROOT / "task_workspaces").expanduser().resolve(strict=False)
+    task_worktrees: list[dict[str, str]] = []
+    for item in worktrees:
+        branch = item.get("branch", "")
+        path_text = item.get("path", "")
+        try:
+            path = Path(path_text).expanduser().resolve(strict=False)
+        except Exception:
+            path = Path(path_text)
+        under_task_root = path == task_root or path.is_relative_to(task_root)
+        if branch.startswith("task/") or under_task_root:
+            task_worktrees.append(item)
+
+    return {
+        "current_branch": current_branch,
+        "branches": branches,
+        "worktrees": worktrees,
+        "task_worktrees": task_worktrees,
+        "branch_error": branch_result.stderr.strip() if branch_result.returncode else "",
+        "worktree_error": worktree_result.stderr.strip() if worktree_result.returncode else "",
+    }
+
+
+def _task_git_branch_options_html(branches: list[str]) -> str:
+    if not branches:
+        return '<p class="meta">남아있는 <code>task/*</code> 브랜치가 없습니다.</p>'
+    rows = []
+    for branch in branches:
+        rows.append(
+            "<tr>"
+            f"<td><code>{escape(branch)}</code></td>"
+            "<td>"
+            "<form class='inline' method='post' action='/servers/worktree-tasks/delete-branch'>"
+            f"<input type='hidden' name='branch' value='{escape(branch)}'>"
+            "<label class='meta'><input type='checkbox' name='confirm' value='1' required> 삭제 확인</label> "
+            "<button class='reject' type='submit'>브랜치 삭제</button>"
+            "</form>"
+            "</td>"
+            "</tr>"
+        )
+    return "<div class='table-wrap'><table class='data-table'><thead><tr><th>브랜치</th><th>작업</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
+
+
+def _task_git_worktree_options_html(worktrees: list[dict[str, str]]) -> str:
+    if not worktrees:
+        return '<p class="meta">남아있는 작업용 git worktree가 없습니다.</p>'
+    rows = []
+    for item in worktrees:
+        path_text = item.get("path", "")
+        branch = item.get("branch", "detached")
+        rows.append(
+            "<tr>"
+            f"<td><code>{escape(path_text)}</code></td>"
+            f"<td><code>{escape(branch)}</code></td>"
+            "<td>"
+            "<form class='inline' method='post' action='/servers/worktree-tasks/remove-worktree'>"
+            f"<input type='hidden' name='worktree_path' value='{escape(path_text)}'>"
+            "<label class='meta'><input type='checkbox' name='confirm' value='1' required> 제거 확인</label> "
+            "<button class='reject' type='submit'>워크트리 제거</button>"
+            "</form>"
+            "</td>"
+            "</tr>"
+        )
+    return "<div class='table-wrap'><table class='data-table'><thead><tr><th>경로</th><th>브랜치</th><th>작업</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
+
+
+def actual_task_git_state_html(state: Mapping[str, object]) -> str:
+    branches = [str(item) for item in state.get("branches", []) if str(item).strip().startswith("task/")]
+    task_worktrees = [item for item in state.get("task_worktrees", []) if isinstance(item, dict)]
+    clean = not branches and not task_worktrees
+    branch_error = str(state.get("branch_error") or "").strip()
+    worktree_error = str(state.get("worktree_error") or "").strip()
+    error_html = ""
+    if branch_error or worktree_error:
+        error_html = f"<div class='notice'><strong>Git 상태 확인 오류</strong><br>{escape(branch_error or worktree_error)}</div>"
+    return f"""
+    <section class="card">
+      <h3>실제 Git 작업 상태</h3>
+      <p class="meta">아래 내용은 현재 git repository에서 직접 조회한 실제 상태입니다. 과거 Workspace Bridge record와 다를 수 있습니다.</p>
+      {error_html}
+      <div class="kv">
+        {kv_row_html("현재 브랜치", str(state.get("current_branch") or "unknown"), code_value=True)}
+        {kv_row_html("작업용 worktree", status_badge("없음" if not task_worktrees else f"{len(task_worktrees)}개 남음", "ok" if not task_worktrees else "warn"), value_is_html=True)}
+        {kv_row_html("task/* 브랜치", status_badge("없음" if not branches else f"{len(branches)}개 남음", "ok" if not branches else "warn"), value_is_html=True)}
+        {kv_row_html("정리 상태", status_badge("정리 완료" if clean else "정리 필요", "ok" if clean else "warn"), value_is_html=True)}
+      </div>
+    </section>
+    <section class="card">
+      <h3>남아있는 task/* 브랜치</h3>
+      {_task_git_branch_options_html(branches)}
+    </section>
+    <section class="card">
+      <h3>남아있는 작업용 worktree</h3>
+      {_task_git_worktree_options_html(task_worktrees)}
+    </section>
+    """
+
+
+def clear_archived_worktree_task_records() -> dict[str, object]:
+    git_state = actual_task_git_state()
+    branches = {str(item) for item in git_state.get("branches", [])}
+    task_workspace_root = (RUNTIME_ROOT / "task_workspaces").expanduser().resolve(strict=False)
+    merge_queue_root = (RUNTIME_ROOT / "merge_queue").expanduser().resolve(strict=False)
+    removed_workspaces = 0
+    removed_merge_records = 0
+    errors: list[str] = []
+
+    if task_workspace_root.exists():
+        for record_path in sorted(task_workspace_root.glob("*/workspace.json")):
+            workspace_dir = record_path.parent.resolve(strict=False)
+            try:
+                record = read_json(record_path)
+                status = str(record.get("status") or "")
+                branch = str(record.get("worktree_branch") or "")
+                workspace_path_text = str(record.get("workspace_path") or "")
+                workspace_path = Path(workspace_path_text).expanduser().resolve(strict=False) if workspace_path_text else workspace_dir / "repo"
+                if status not in {"archived", "cleaned"}:
+                    continue
+                if branch in branches:
+                    continue
+                if workspace_path.exists() and (workspace_path / ".git").exists():
+                    continue
+                if workspace_dir != task_workspace_root and workspace_dir.is_relative_to(task_workspace_root):
+                    shutil.rmtree(workspace_dir)
+                    removed_workspaces += 1
+            except Exception as exc:
+                errors.append(f"{record_path}: {type(exc).__name__}: {exc}")
+
+    if merge_queue_root.exists():
+        for queue_path in sorted(merge_queue_root.glob("*/queue.json")):
+            queue_dir = queue_path.parent.resolve(strict=False)
+            try:
+                record = read_json(queue_path)
+                status = str(record.get("status") or "")
+                if status != "archived":
+                    continue
+                if queue_dir != merge_queue_root and queue_dir.is_relative_to(merge_queue_root):
+                    shutil.rmtree(queue_dir)
+                    removed_merge_records += 1
+            except Exception as exc:
+                errors.append(f"{queue_path}: {type(exc).__name__}: {exc}")
+
+    return {"removed_workspaces": removed_workspaces, "removed_merge_records": removed_merge_records, "errors": errors}
+
+
+def delete_task_branch_direct(branch: str) -> subprocess.CompletedProcess[str]:
+    normalized = branch.strip()
+    if not normalized.startswith("task/") or normalized != branch or ".." in normalized or " " in normalized:
+        raise ValueError("task/* 브랜치만 삭제할 수 있습니다.")
+    state = actual_task_git_state()
+    branches = {str(item) for item in state.get("branches", [])}
+    if normalized not in branches:
+        raise ValueError("현재 git에 존재하는 task/* 브랜치가 아닙니다.")
+    return run_project_git(["branch", "-D", normalized])
+
+
+def remove_task_worktree_direct(path_text: str) -> subprocess.CompletedProcess[str]:
+    raw = path_text.strip()
+    if not raw:
+        raise ValueError("워크트리 경로가 비어 있습니다.")
+    state = actual_task_git_state()
+    allowed_paths = {str(item.get("path")) for item in state.get("task_worktrees", []) if isinstance(item, dict)}
+    if raw not in allowed_paths:
+        raise ValueError("현재 git worktree list에 있는 작업용 worktree만 제거할 수 있습니다.")
+    path = Path(raw).expanduser().resolve(strict=False)
+    task_root = (RUNTIME_ROOT / "task_workspaces").expanduser().resolve(strict=False)
+    if not (path == task_root or path.is_relative_to(task_root)):
+        raise ValueError("task workspace runtime root 아래 worktree만 제거할 수 있습니다.")
+    return run_project_git(["worktree", "remove", raw])
+
+
+def worktree_task_action_notice_html(status: str, message: str) -> str:
+    if not status:
+        return ""
+    tone = "ok" if status == "ok" else "danger"
+    title = "작업 완료" if status == "ok" else "작업 실패"
+    return f'<div class="notice"><strong>{escape(title)}</strong><br>{status_badge(escape(status), tone)} {escape(message)}</div>'
+
+
+def worktree_task_management_page_html(
+    project_id: str | None = None,
+    *,
+    action_status: str = "",
+    action_message: str = "",
+) -> str:
+    git_state = actual_task_git_state()
+    notice = worktree_task_action_notice_html(action_status, action_message)
+    return f"""
+    <div class="stack">
+      <div class="section-title">
+        <h2>{escape(SERVER_TAB_LABELS['worktree_tasks'])}</h2>
+        <p class="meta">실제 git worktree/task 브랜치와 Workspace Bridge 작업 record를 분리해서 확인합니다.</p>
+      </div>
+      {notice}
+      <div class="notice">
+        <strong>실제 Git 상태가 우선입니다.</strong><br>
+        <code>task/*</code> 브랜치와 작업용 worktree는 상단 카드에서 실제 git 상태로 확인합니다.
+        아래 과거 record는 감사 이력이며 브랜치나 worktree가 남아있다는 뜻은 아닙니다.
+      </div>
+      {actual_task_git_state_html(git_state)}
+      <section class="card is-failed">
+        <h3>과거 record 이력 삭제</h3>
+        <p class="meta">실제 task 브랜치와 git worktree가 남아있지 않은 보관 record만 삭제합니다. 현재 작업 중인 worktree나 branch는 삭제하지 않습니다.</p>
+        <form method="post" action="/servers/worktree-tasks/clear-records">
+          <p><label>계속하려면 <code>CLEAR TASK RECORDS</code> 를 입력하세요<br>
+          <input name="confirm" autocomplete="off" placeholder="CLEAR TASK RECORDS"></label></p>
+          <button class="reject" type="submit">보관된 Worktree Task record 삭제</button>
+        </form>
+      </section>
+      <section class="card">
+        <h3>과거 Worktree Task 이력</h3>
+        {task_orchestration_summary_html(project_id=project_id)}
+      </section>
+    </div>
+    """
+
+
 def server_tab_content_html(tab: str, state: dict[str, object], action_notice_html: str = "") -> str:
     tab = normalize_server_tab(tab)
     review_server = state.get("review_server") if isinstance(state.get("review_server"), dict) else {}
@@ -2551,6 +3478,12 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
         </div>
         """
 
+    if tab == "storage_cleanup":
+        return storage_cleanup_page_html(notice_html=action_notice_html)
+
+    if tab == "worktree_tasks":
+        return worktree_task_management_page_html()
+
     if tab == "tools":
         notifier_installed = bool(tools.get("terminal_notifier", False))
         notification_available = any(tools.get(name, False) for name in ("terminal_notifier", "osascript", "notify_send", "powershell"))
@@ -2701,6 +3634,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(audit_state())
             return
 
+        if parsed.path == "/api/storage-cleanup-state":
+            self.send_json(storage_cleanup_state())
+            return
+
+        if parsed.path == "/servers/storage-cleanup":
+            self.redirect("/servers?tab=storage_cleanup")
+            return
+
         if parsed.path == "/handoffs/latest":
             self.send_json(latest_handoff_payload())
             return
@@ -2777,8 +3718,7 @@ class Handler(BaseHTTPRequestHandler):
                 + approval_mode_card_html(approval_mode)
                 + scoped_approval_mode_card_html()
                 + saved_scoped_approval_modes_html()
-                + task_orchestration_summary_html(project_id=metadata_filters.get("project_id") or None)
-                + "<p><a href='/history'>전체 이력 보기</a></p>"
+                + "<p><a href='/servers?tab=worktree_tasks'>Worktree Task 관리</a> · <a href='/history'>전체 이력 보기</a></p>"
                 + metadata_filter_form_html("/pending", metadata_filters)
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
                 + latest_handoff_html(metadata_filters)
@@ -2823,6 +3763,8 @@ class Handler(BaseHTTPRequestHandler):
                     params.get("service", [""])[0],
                     params.get("action_status", [""])[0],
                 )
+            elif current_tab == "storage_cleanup":
+                action_notice_html = storage_cleanup_action_notice_html(params.get("storage_status", [""])[0])
             self.send_html(
                 "관리",
                 server_state_html(server_state(), current_tab, action_notice_html=action_notice_html),
@@ -2836,13 +3778,16 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query)
             status_filter = normalize_status_filter(params.get("status", ["all"])[0])
             metadata_filters = metadata_filter_params(params)
+            page_number, limit = history_pagination_params(params)
             rows = filter_bundle_records_by_metadata(list_bundles(status_filter), metadata_filters)
-            cards = [bundle_card_html(record) for record in rows]
+            pagination = paginate_bundle_records(rows, page=page_number, limit=limit)
+            cards = [bundle_card_html(record) for record in pagination["rows"]]
 
             self.send_html(
                 "이력/결과",
                 (
                     history_summary_html(history_state())
+                    + history_pagination_html(pagination, status_filter=status_filter, metadata_filters=metadata_filters)
                     + "<p><a href='/pending'>승인 대기 보기</a> · "
                     "<a href='/history'>새로고침</a></p>"
                     + status_filter_links_html(status_filter, metadata_filters)
@@ -2902,6 +3847,161 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         parts = [part for part in parsed.path.split("/") if part]
+
+        if parts[:2] == ["servers", "storage-cleanup"]:
+            if not is_local_client_address(str(self.client_address[0])):
+                self.send_html(
+                    "Forbidden",
+                    "<p>Local requests only.</p>",
+                    status=403,
+                    active_nav="servers",
+                    server_tab="storage_cleanup",
+                )
+                return
+
+            form = self.read_form()
+            include_backups = str(form.get("include_backups", [""])[0]).strip().lower() in {"1", "true", "yes", "on"}
+
+            if parts == ["servers", "storage-cleanup", "policy"]:
+                policy, errors, warnings = cleanup_policy_from_form(form)
+                if errors:
+                    self.send_html(
+                        "Cleanup policy validation failed",
+                        storage_cleanup_page_html(policy_errors=errors, policy_warnings=warnings),
+                        status=400,
+                        active_nav="servers",
+                        subtitle="저장소 정리 policy 값을 다시 확인하세요.",
+                        server_tab="storage_cleanup",
+                    )
+                    return
+                save_cleanup_policy(policy, RUNTIME_ROOT)
+                self.redirect("/servers?tab=storage_cleanup&storage_status=policy_saved")
+                return
+
+            if parts == ["servers", "storage-cleanup", "preview"]:
+                clear_history = str(form.get("clear_history", [""])[0]).strip().lower() in {"1", "true", "yes", "on"}
+                result = run_storage_cleanup(dry_run=True, include_backups=include_backups, clear_history=clear_history)
+                title = "eligible history preview" if clear_history else "Cleanup preview"
+                self.send_html(
+                    "저장소 정리 미리보기",
+                    storage_cleanup_page_html(result=result, result_title=title),
+                    active_nav="servers",
+                    subtitle="삭제 전 후보 목록과 예상 회수 용량을 확인합니다.",
+                    server_tab="storage_cleanup",
+                )
+                return
+
+            if parts in (["servers", "storage-cleanup", "apply"], ["servers", "storage-cleanup", "apply-with-backups"]):
+                include_backups = include_backups or parts == ["servers", "storage-cleanup", "apply-with-backups"]
+                if str(form.get("confirm", [""])[0]).strip() != "1":
+                    self.send_html(
+                        "Cleanup confirmation required",
+                        storage_cleanup_page_html(
+                            notice_html='<div class="notice"><strong>Cleanup confirmation required.</strong><br>체크박스로 ordinary cleanup 실행을 확인하세요.</div>'
+                        ),
+                        status=400,
+                        active_nav="servers",
+                        subtitle="저장소 정리 실행 확인이 필요합니다.",
+                        server_tab="storage_cleanup",
+                    )
+                    return
+                result = run_storage_cleanup(dry_run=False, include_backups=include_backups)
+                self.send_html(
+                    "저장소 정리 실행 결과",
+                    storage_cleanup_page_html(result=result, result_title="Cleanup apply result"),
+                    active_nav="servers",
+                    subtitle="런타임 cleanup 실행 결과입니다.",
+                    server_tab="storage_cleanup",
+                )
+                return
+
+            if parts == ["servers", "storage-cleanup", "clear-history"]:
+                if str(form.get("confirm", [""])[0]).strip() != CLEAR_HISTORY_CONFIRMATION:
+                    self.send_html(
+                        "history confirmation required",
+                        storage_cleanup_page_html(
+                            notice_html=f'<div class="notice"><strong>Clear-history confirmation required.</strong><br>정확히 <code>{escape(CLEAR_HISTORY_CONFIRMATION)}</code> 를 입력해야 합니다.</div>'
+                        ),
+                        status=400,
+                        active_nav="servers",
+                        subtitle="위험 작업 실행 확인이 필요합니다.",
+                        server_tab="storage_cleanup",
+                    )
+                    return
+                result = run_storage_cleanup(dry_run=False, include_backups=include_backups, clear_history=True)
+                self.send_html(
+                    "이력 정리 실행 결과",
+                    storage_cleanup_page_html(result=result, result_title="eligible history result"),
+                    active_nav="servers",
+                    subtitle="clear-history 실행 결과입니다.",
+                    server_tab="storage_cleanup",
+                )
+                return
+
+        if parts and parts[:2] == ["servers", "worktree-tasks"]:
+            if not is_local_client_address(str(self.client_address[0])):
+                self.send_html(
+                    "Forbidden",
+                    "<p>Local requests only.</p>",
+                    status=403,
+                    active_nav="servers",
+                    server_tab="worktree_tasks",
+                )
+                return
+
+            form = self.read_form()
+            try:
+                if parts == ["servers", "worktree-tasks", "delete-branch"]:
+                    if str(form.get("confirm", [""])[0]).strip() != "1":
+                        raise ValueError("브랜치 삭제 확인 체크가 필요합니다.")
+                    branch = str(form.get("branch", [""])[0]).strip()
+                    completed = delete_task_branch_direct(branch)
+                    if completed.returncode != 0:
+                        raise RuntimeError((completed.stderr or completed.stdout or "git branch 삭제 실패").strip())
+                    message = f"{branch} 브랜치를 삭제했습니다."
+                elif parts == ["servers", "worktree-tasks", "remove-worktree"]:
+                    if str(form.get("confirm", [""])[0]).strip() != "1":
+                        raise ValueError("워크트리 제거 확인 체크가 필요합니다.")
+                    path_text = str(form.get("worktree_path", [""])[0]).strip()
+                    completed = remove_task_worktree_direct(path_text)
+                    if completed.returncode != 0:
+                        raise RuntimeError((completed.stderr or completed.stdout or "git worktree 제거 실패").strip())
+                    message = f"작업용 worktree를 제거했습니다: {path_text}"
+                elif parts == ["servers", "worktree-tasks", "clear-records"]:
+                    if str(form.get("confirm", [""])[0]).strip() != "CLEAR TASK RECORDS":
+                        raise ValueError("정확히 CLEAR TASK RECORDS 를 입력해야 합니다.")
+                    result = clear_archived_worktree_task_records()
+                    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+                    if errors:
+                        message = (
+                            f"일부 record를 정리했습니다. task record {result.get('removed_workspaces', 0)}개, "
+                            f"merge queue record {result.get('removed_merge_records', 0)}개 삭제. 오류 {len(errors)}개."
+                        )
+                    else:
+                        message = (
+                            f"보관된 task record {result.get('removed_workspaces', 0)}개와 "
+                            f"merge queue record {result.get('removed_merge_records', 0)}개를 삭제했습니다."
+                        )
+                else:
+                    raise ValueError("지원하지 않는 Worktree Task 관리 작업입니다.")
+            except Exception as exc:
+                self.send_html(
+                    "Worktree Task 관리 실패",
+                    worktree_task_management_page_html(action_status="error", action_message=f"{type(exc).__name__}: {exc}"),
+                    status=400,
+                    active_nav="servers",
+                    server_tab="worktree_tasks",
+                )
+                return
+
+            self.send_html(
+                "Worktree Task 관리 결과",
+                worktree_task_management_page_html(action_status="ok", action_message=message),
+                active_nav="servers",
+                subtitle="Worktree Task 관리 작업이 완료되었습니다.",
+                server_tab="worktree_tasks",
+            )
+            return
 
         if parts == ["intents", "import"]:
             if not is_local_client_address(str(self.client_address[0])):

@@ -335,7 +335,7 @@ COMMAND_HELP: tuple[CommandHelp, ...] = (
     CommandHelp(
         name="cleanup",
         category=CATEGORY_STORAGE,
-        usage="uv run woojae cleanup [--dry-run|--apply] [--older-than-days N] [--include-backups]",
+        usage="uv run woojae cleanup [--dry-run|--apply] [--older-than-days N] [--include-backups] [--prune-all-history]",
         summary=LocalizedText(
             "Inspect or delete conservative runtime cleanup candidates.",
             "보수적으로 선별된 런타임 정리 후보를 확인하거나 삭제합니다.",
@@ -351,6 +351,7 @@ COMMAND_HELP: tuple[CommandHelp, ...] = (
             "uv run woojae cleanup --apply",
             "uv run woojae cleanup --dry-run --older-than-days 14",
             "uv run woojae cleanup --dry-run --include-backups",
+            "uv run woojae cleanup --dry-run --prune-all-history",
         ),
         caution=LocalizedText(
             "Always run --dry-run first and review the candidates before using --apply.",
@@ -634,6 +635,7 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup_mode.add_argument("--apply", action="store_true", help="Delete eligible cleanup candidates.")
     cleanup.add_argument("--older-than-days", type=int, default=None, help="Override age threshold for age-based cleanup candidates.")
     cleanup.add_argument("--include-backups", action="store_true", help="Include backups, command bundle file backups, and trash in cleanup candidates.")
+    cleanup.add_argument("--prune-all-history", action="store_true", help="Select all eligible history records while preserving pending/protected runtime state.")
     subparsers.add_parser("version", help=help_summary("version"))
 
     help_parser = subparsers.add_parser("help", help=help_summary("help"))
@@ -684,6 +686,7 @@ def main(argv: list[str] | None = None) -> int:
             apply=bool(args.apply),
             older_than_days=args.older_than_days,
             include_backups=bool(args.include_backups),
+            prune_all_history=bool(args.prune_all_history),
         )
     if args.command == "version":
         return print_version_info()

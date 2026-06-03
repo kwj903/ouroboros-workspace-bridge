@@ -697,25 +697,37 @@ def print_storage() -> int:
     return 0
 
 
-def cleanup_storage(*, apply: bool, older_than_days: int | None = None, include_backups: bool = False) -> int:
+def cleanup_storage(
+    *,
+    apply: bool,
+    older_than_days: int | None = None,
+    include_backups: bool = False,
+    prune_all_history: bool = False,
+) -> int:
     if older_than_days is not None and older_than_days < 1:
         print("[error] --older-than-days must be a positive integer.", file=sys.stderr)
         return 2
 
     settings = load_settings()
+    policy = runtime_storage.load_cleanup_policy(settings.runtime_root)
+    include_backup_candidates = include_backups or policy.include_backups_by_default
     dry_run = not apply
     result = runtime_storage.cleanup_runtime(
         settings.runtime_root,
         dry_run=dry_run,
         older_than_days=older_than_days,
-        include_backups=include_backups,
+        include_backups=include_backup_candidates,
+        policy=policy,
+        prune_all_history=prune_all_history,
     )
 
     print("Workspace Terminal Bridge runtime cleanup")
     print()
     print(f"Runtime root: {settings.runtime_root}")
     print(f"Mode: {'dry-run' if result.dry_run else 'apply'}")
-    print(f"Backup/trash cleanup: {'included' if include_backups else 'excluded'}")
+    print(f"Policy file: {runtime_storage.cleanup_policy_path(settings.runtime_root)}")
+    print(f"History mode: {'prune-all-history' if prune_all_history else 'policy'}")
+    print(f"Backup/trash cleanup: {'included' if include_backup_candidates else 'excluded'}")
     if older_than_days is not None:
         print(f"Age override: older than {older_than_days} days")
     print()
@@ -733,7 +745,8 @@ def cleanup_storage(*, apply: bool, older_than_days: int | None = None, include_
 
     print()
     if result.dry_run:
-        print("No files were deleted. Re-run with `uv run woojae cleanup --apply` to delete eligible candidates.")
+        extra = " --prune-all-history" if prune_all_history else ""
+        print(f"No files were deleted. Re-run with `uv run woojae cleanup --apply{extra}` to delete eligible candidates.")
     else:
         print(
             "Deleted: "

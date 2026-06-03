@@ -181,7 +181,9 @@ def _resolve_bundle_file_action_path(cwd_path: Path, action_path: str | None) ->
     if raw.is_absolute() or action_path.startswith("~") or ".." in raw.parts:
         raise ValueError(f"Unsafe file action path: {action_path}")
 
-    target = (cwd_path / raw).resolve(strict=False)
+    # Use lexical containment so workspace-relative development symlinks
+    # such as `.venv/bin/python` remain valid on CI runners.
+    target = (cwd_path / raw).absolute()
 
     if target != WORKSPACE_ROOT and not target.is_relative_to(WORKSPACE_ROOT):
         raise ValueError(f"File action path escapes workspace: {action_path}")
