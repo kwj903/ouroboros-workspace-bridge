@@ -107,6 +107,7 @@ from terminal_bridge.models import (
     TaskListResult,
     TaskCleanupPreviewResult,
     TaskOrchestrationSummaryResult,
+    TaskValidationResultHintResult,
     TaskStatusResult,
     TaskWorkspaceListResult,
     TaskWorktreeMergePreflightResult,
@@ -228,6 +229,7 @@ from terminal_bridge.task_orchestration_summary import task_orchestration_summar
 from terminal_bridge.task_validation_proposal import (
     prepare_task_validation_command_proposal as _prepare_task_validation_command_proposal,
 )
+from terminal_bridge.task_validation_result import task_validation_result_hint as _task_validation_result_hint
 from terminal_bridge.tool_calls import list_tool_calls as _list_tool_call_records
 from terminal_bridge.tool_calls import read_tool_call as _read_tool_call_record
 from terminal_bridge.trash import (
@@ -993,6 +995,7 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_task_orchestration_summary",
     "workspace_task_cleanup_preview",
     "workspace_record_task_validation",
+    "workspace_task_validation_result_hint",
     "workspace_propose_task_validation_command_and_wait",
     "workspace_propose_task_cleanup_and_wait",
     "workspace_task_validation_status",
@@ -2307,6 +2310,41 @@ def workspace_task_validation_status(
         "workspace_task_validation_status",
         {"task_id": task_id, "cwd": cwd, "project_id": project_id},
         lambda: MergeQueueEntryResult(**_task_validation_status(task_id, cwd=cwd, project_id=project_id)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def workspace_task_validation_result_hint(
+    task_id: Annotated[
+        str | None,
+        Field(description="Task id whose latest validation command bundle should be summarized when bundle_id is omitted."),
+    ] = None,
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+    bundle_id: Annotated[
+        str | None,
+        Field(description="Optional command bundle id to summarize directly instead of searching by task id."),
+    ] = None,
+) -> TaskValidationResultHintResult:
+    """Read a validation command bundle result and suggest a manual validation record update.
+
+    This helper does not run commands and does not update merge queue validation
+    metadata. Operators must review the hint and call
+    workspace_record_task_validation separately.
+    """
+    return _record_tool_call(
+        "workspace_task_validation_result_hint",
+        {"task_id": task_id, "cwd": cwd, "project_id": project_id, "bundle_id": bundle_id},
+        lambda: TaskValidationResultHintResult(
+            **_task_validation_result_hint(task_id=task_id, cwd=cwd, project_id=project_id, bundle_id=bundle_id)
+        ),
     )
 
 

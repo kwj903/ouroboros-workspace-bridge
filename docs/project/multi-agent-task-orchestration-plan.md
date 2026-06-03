@@ -464,6 +464,7 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - Phase 3-O2는 `workspace_propose_task_cleanup_and_wait`로 `cleanup_ready=true` 후보에 대해 local `/pending` 승인을 거친 task worktree cleanup proposal/execution foundation을 추가했다.
 - Phase 3-O3는 `/pending` task orchestration dashboard에 `workspace_task_cleanup_preview` 결과를 read-only로 연결해 cleanup readiness, risk, blocker, recommended action, validation, queue, workspace 상태를 표시한다. Dashboard 버튼으로 cleanup proposal을 직접 실행하지 않는다.
 - Phase 3-P1은 `workspace_propose_task_validation_command_and_wait`로 `merged` task의 source-level validation command를 local `/pending` 승인 대상으로 제안하는 foundation을 추가했다. 결과 해석과 `validation_status` 기록은 operator가 `workspace_record_task_validation`으로 별도 수행한다.
+- Phase 3-P2는 `workspace_task_validation_result_hint`로 validation command bundle 결과를 read-only로 요약하고 conservative `inferred_status` 후보와 `workspace_record_task_validation(...)` 제안값을 제공한다. 실제 validation record write는 operator가 별도로 수행한다.
 
 성공 기준:
 
@@ -637,3 +638,7 @@ Phase 3-O3 connects cleanup preview readiness to the `/pending` task orchestrati
 ## Phase 3-P1 Update
 
 Phase 3-P1 adds a public proposal wrapper, `workspace_propose_task_validation_command_and_wait`, for source-level validation of tasks whose merge queue record is already `merged`. The wrapper stages exactly one command bundle in `/pending`, runs it in the source project `cwd` with `workspace_mode="direct"` metadata, and never executes the command in ChatGPT. It records task/project/source/command metadata and marks dirty source workspaces as high-risk validation blockers in proposal metadata. It does not automatically parse command output or update `validation_status`; operators must review the result and call `workspace_record_task_validation` separately. Direct mode defaults, source merge/apply/archive/cleanup behavior, and cleanup execution behavior remain unchanged.
+
+## Phase 3-P2 Update
+
+Phase 3-P2 adds a public read-only helper, `workspace_task_validation_result_hint`, for guided validation result recording. The helper can summarize a specific validation command bundle by `bundle_id` or find the latest validation command bundle linked to a task/project/source cwd by proposal metadata. It reports command argv/summary, bundle status, command exit code when available, stdout/stderr previews, a conservative `inferred_status` candidate, recommended next action, and suggested `workspace_record_task_validation(...)` inputs. `exit_code=0` yields only a `passed` candidate, non-zero exit yields only a `failed` candidate, and pending/missing/no-exit-code results remain `unknown`. The helper never executes commands, modifies source files, updates runtime worktrees, or writes merge queue validation records. Direct mode defaults and source merge/apply/archive/cleanup execution behavior remain unchanged.

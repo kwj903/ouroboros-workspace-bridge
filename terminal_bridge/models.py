@@ -158,6 +158,37 @@ class CommandBundleListResult(BaseModel):
     count: int
 
 
+class TaskValidationRecordSuggestion(BaseModel):
+    task_id: str
+    cwd: str
+    project_id: str | None = None
+    validation_status: Literal["unknown", "pending", "passed", "failed"]
+    validation_commands: list[str] = Field(default_factory=list)
+    validation_summary: str | None = None
+    validated_by: str | None = None
+    client_id: str | None = None
+    session_id: str | None = None
+
+
+class TaskValidationResultHintResult(BaseModel):
+    task_id: str | None = None
+    project_id: str | None = None
+    source_cwd: str | None = None
+    bundle_id: str | None = None
+    bundle_status: str
+    command_argv: list[str] = Field(default_factory=list)
+    command_summary: str | None = None
+    exit_code: int | None = None
+    stdout_preview: str = ""
+    stderr_preview: str = ""
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+    result_available: bool = False
+    inferred_status: Literal["passed", "failed", "unknown"]
+    recommended_next_action: str
+    suggested_record_input: TaskValidationRecordSuggestion
+
+
 class TextPayloadStageResult(BaseModel):
     payload_id: str
     chunk_index: int

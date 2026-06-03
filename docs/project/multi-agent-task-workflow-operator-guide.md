@@ -22,6 +22,7 @@ Implemented:
 - Conflict handling dashboard indicators and operator runbook for high-risk task worktree merges.
 - Post-merge validation metadata recording through `workspace_record_task_validation` and `workspace_task_validation_status`.
 - Source-level validation command proposal staging through `workspace_propose_task_validation_command_and_wait`.
+- Read-only validation command result hints through `workspace_task_validation_result_hint`.
 - Read-only physical cleanup candidate preview through `workspace_task_cleanup_preview`.
 - Locally approved task worktree cleanup proposal and execution through `workspace_propose_task_cleanup_and_wait`.
 - Cleanup readiness, risk, blockers, validation, queue, and workspace status badges in the `/pending` task orchestration dashboard.
@@ -32,7 +33,7 @@ Not implemented:
 - Automatic worker session creation.
 - Automatic source merge without local review.
 - Automatic post-merge test execution or commits.
-- Automatic validation result interpretation or automatic `validation_status` updates after validation command execution.
+- Automatic `validation_status` updates after validation command execution.
 - Automatic task worktree cleanup without local review.
 - Manual runtime directory deletion outside the recorded cleanup path.
 - A full interactive merge queue UI with conflict resolution.
@@ -205,7 +206,21 @@ The tool checks that the merge queue record exists and has `status="merged"`. Th
 
 ### 10. Orchestrator Records Post-Merge Validation
 
-After the validation command has run, inspect the approved bundle result and record the human-reviewed outcome. This phase records what the operator observed; it does not rerun commands automatically.
+After the validation command has run, ask for a read-only result hint:
+
+```text
+workspace_task_validation_result_hint(task_id, cwd, project_id)
+```
+
+You can also pass `bundle_id` directly when you already know the validation command bundle id:
+
+```text
+workspace_task_validation_result_hint(bundle_id="cmd-...")
+```
+
+The hint summarizes the linked command bundle, including command argv, exit code, stdout/stderr previews, a conservative `inferred_status` candidate, and suggested `workspace_record_task_validation(...)` input values. `exit_code=0` is only a `passed` candidate, non-zero exit code is only a `failed` candidate, and pending or missing results remain `unknown`. The hint is read-only; it does not run commands, edit source files, update merge queue records, or set validation metadata.
+
+Review the hint and record the human-reviewed outcome. This phase records what the operator observed; it does not rerun commands automatically.
 
 Use `workspace_record_task_validation(task_id, cwd, project_id, validation_status, validation_commands, validation_summary, validated_by, client_id, session_id)` to update the merge queue record.
 
@@ -418,7 +433,7 @@ Use this checklist before retrying.
 - Confirm the task's merge queue record is still `merged` with `workspace_merge_queue_status`.
 - If the wrapper reports a missing or unmerged queue record, do not use a generic direct command proposal as a substitute; rerun the merge workflow checks first.
 - If the proposal metadata includes `source_dirty=true`, approve only when the dirty source state is the expected post-merge state you intend to validate.
-- After an approved command finishes, inspect the bundle result before calling `workspace_record_task_validation`.
+- After an approved command finishes, call `workspace_task_validation_result_hint(...)`, review the suggested status and stdout/stderr previews, then call `workspace_record_task_validation` manually.
 
 ### Runtime Records Need Cleanup
 
@@ -481,5 +496,6 @@ After approved source integration:
 - Phase 3-O2: locally approved task worktree cleanup proposal and execution foundation.
 - Phase 3-O3: `/pending` cleanup readiness dashboard and operator UX guidance.
 - Phase 3-P1: merged task source-level validation command proposal foundation.
+- Phase 3-P2: read-only validation command result hint and guided recording foundation.
 
-Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, automatic validation command execution, and commit flow integration.
+Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, automatic validation status recording, automatic validation command execution, and commit flow integration.
