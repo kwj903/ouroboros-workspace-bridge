@@ -375,6 +375,191 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("overlap: README.md", html)
         self.assertIn("anomaly: missing_task_workspace_record", html)
 
+    def test_task_orchestration_summary_html_renders_cleanup_readiness(self) -> None:
+        summary = {
+            "project_id": "project-alpha",
+            "count": 2,
+            "active_count": 0,
+            "archived_count": 2,
+            "anomaly_count": 0,
+            "attention_count": 0,
+            "entries": [
+                {
+                    "project_id": "project-alpha",
+                    "source_cwd": "project",
+                    "task_id": "task-cleanup-ready",
+                    "task_workspace_status": "archived",
+                    "worktree_status": "ready",
+                    "worktree_branch": "task/task-cleanup-ready",
+                    "workspace_path": "/tmp/runtime/task_workspaces/task-cleanup-ready/repo",
+                    "merge_queue_status": "merged",
+                    "conflict_risk": "low",
+                    "recommended_action": "merged",
+                    "changed_file_count": 2,
+                    "source_head_changed": False,
+                    "source_dirty": False,
+                    "overlapping_files": [],
+                    "operator_attention": False,
+                    "operator_attention_reasons": [],
+                    "validation_status": "passed",
+                    "validation_commands": [],
+                    "validation_summary": "passed",
+                    "validated_at": "2026-06-02T01:00:00+00:00",
+                    "validated_by": "operator-a",
+                    "archived": True,
+                    "has_task_workspace_record": True,
+                    "has_merge_queue_record": True,
+                    "anomaly": False,
+                    "anomaly_reasons": [],
+                },
+                {
+                    "project_id": "project-alpha",
+                    "source_cwd": "project",
+                    "task_id": "task-cleanup-blocked",
+                    "task_workspace_status": "archived",
+                    "worktree_status": "ready",
+                    "worktree_branch": "task/task-cleanup-blocked",
+                    "workspace_path": "/tmp/runtime/task_workspaces/task-cleanup-blocked/repo",
+                    "merge_queue_status": "merged",
+                    "conflict_risk": "low",
+                    "recommended_action": "merged",
+                    "changed_file_count": 1,
+                    "source_head_changed": False,
+                    "source_dirty": False,
+                    "overlapping_files": [],
+                    "operator_attention": True,
+                    "operator_attention_reasons": ["validation_failed"],
+                    "validation_status": "failed",
+                    "validation_commands": [],
+                    "validation_summary": "failed",
+                    "validated_at": "2026-06-02T02:00:00+00:00",
+                    "validated_by": "operator-b",
+                    "archived": True,
+                    "has_task_workspace_record": True,
+                    "has_merge_queue_record": True,
+                    "anomaly": False,
+                    "anomaly_reasons": [],
+                },
+            ],
+        }
+        cleanup_preview = {
+            "project_id": "project-alpha",
+            "count": 2,
+            "ready_count": 1,
+            "blocked_count": 1,
+            "entries": [
+                {
+                    "project_id": "project-alpha",
+                    "source_cwd": "project",
+                    "task_id": "task-cleanup-ready",
+                    "queue_status": "merged",
+                    "workspace_status": "archived",
+                    "validation_status": "passed",
+                    "cleanup_ready": True,
+                    "cleanup_risk": "low",
+                    "cleanup_blockers": [],
+                    "recommended_action": "ready_for_physical_cleanup_review",
+                },
+                {
+                    "project_id": "project-alpha",
+                    "source_cwd": "project",
+                    "task_id": "task-cleanup-blocked",
+                    "queue_status": "merged",
+                    "workspace_status": "archived",
+                    "validation_status": "failed",
+                    "cleanup_ready": False,
+                    "cleanup_risk": "high",
+                    "cleanup_blockers": ["validation_failed", "worktree_dirty"],
+                    "recommended_action": "resolve_failed_validation_before_cleanup",
+                },
+            ],
+        }
+
+        html = review.task_orchestration_summary_html(summary, cleanup_preview=cleanup_preview)
+
+        self.assertIn("cleanup ready: 1", html)
+        self.assertIn("cleanup blocked: 1", html)
+        self.assertIn("cleanup ready: yes", html)
+        self.assertIn("cleanup risk: low", html)
+        self.assertIn("cleanup blockers: 0", html)
+        self.assertIn("cleanup action: ready_for_physical_cleanup_review", html)
+        self.assertIn("cleanup validation: passed", html)
+        self.assertIn("cleanup queue: merged", html)
+        self.assertIn("cleanup workspace: archived", html)
+        self.assertIn("cleanup ready: no", html)
+        self.assertIn("cleanup risk: high", html)
+        self.assertIn("cleanup blockers: 2 validation_failed", html)
+        self.assertIn("cleanup action: resolve_failed_validation_before_cleanup", html)
+
+    def test_task_orchestration_summary_html_loads_cleanup_preview_for_dashboard(self) -> None:
+        summary = {
+            "project_id": "project-alpha",
+            "count": 1,
+            "active_count": 0,
+            "archived_count": 1,
+            "anomaly_count": 0,
+            "attention_count": 0,
+            "entries": [
+                {
+                    "project_id": "project-alpha",
+                    "source_cwd": "project",
+                    "task_id": "task-cleanup-ready",
+                    "task_workspace_status": "archived",
+                    "worktree_status": "ready",
+                    "merge_queue_status": "merged",
+                    "conflict_risk": "low",
+                    "recommended_action": "merged",
+                    "changed_file_count": 1,
+                    "source_head_changed": False,
+                    "source_dirty": False,
+                    "overlapping_files": [],
+                    "operator_attention": False,
+                    "operator_attention_reasons": [],
+                    "validation_status": "passed",
+                    "validation_commands": [],
+                    "validation_summary": "passed",
+                    "validated_at": None,
+                    "validated_by": None,
+                    "archived": True,
+                    "has_task_workspace_record": True,
+                    "has_merge_queue_record": True,
+                    "anomaly": False,
+                    "anomaly_reasons": [],
+                },
+            ],
+        }
+        cleanup_preview = {
+            "project_id": "project-alpha",
+            "count": 1,
+            "ready_count": 1,
+            "blocked_count": 0,
+            "entries": [
+                {
+                    "project_id": "project-alpha",
+                    "source_cwd": "project",
+                    "task_id": "task-cleanup-ready",
+                    "queue_status": "merged",
+                    "workspace_status": "archived",
+                    "validation_status": "passed",
+                    "cleanup_ready": True,
+                    "cleanup_risk": "low",
+                    "cleanup_blockers": [],
+                    "recommended_action": "ready_for_physical_cleanup_review",
+                },
+            ],
+        }
+
+        with (
+            patch.object(review, "task_orchestration_summary", return_value=summary) as summary_mock,
+            patch.object(review, "task_cleanup_preview", return_value=cleanup_preview) as cleanup_mock,
+        ):
+            html = review.task_orchestration_summary_html(project_id="project-alpha")
+
+        summary_mock.assert_called_once_with(project_id="project-alpha", runtime_root=review.RUNTIME_ROOT)
+        cleanup_mock.assert_called_once_with(project_id="project-alpha", runtime_root=review.RUNTIME_ROOT)
+        self.assertIn("cleanup ready: yes", html)
+        self.assertIn("cleanup action: ready_for_physical_cleanup_review", html)
+
     def test_bundle_metadata_filter_uses_and_conditions(self) -> None:
         rows = [
             {

@@ -461,6 +461,8 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - Phase 3-M은 conflict/high-risk task를 사람이 처리할 수 있도록 summary/dashboard의 source dirty, source HEAD drift, overlapping files, operator attention 표시와 conflict handling guide를 보강했다.
 - Phase 3-N은 `workspace_record_task_validation`, `workspace_task_validation_status`로 merge queue record에 post-merge validation metadata를 기록/조회하고 summary/dashboard에 validation 상태를 표시하는 foundation을 추가했다.
 - Phase 3-O1은 `workspace_task_cleanup_preview`로 archived task workspace와 merged/archived merge queue record를 기준으로 physical cleanup 후보를 read-only로 판정하는 foundation을 추가했다. 실제 `git worktree remove`나 runtime directory 삭제는 아직 구현하지 않는다.
+- Phase 3-O2는 `workspace_propose_task_cleanup_and_wait`로 `cleanup_ready=true` 후보에 대해 local `/pending` 승인을 거친 task worktree cleanup proposal/execution foundation을 추가했다.
+- Phase 3-O3는 `/pending` task orchestration dashboard에 `workspace_task_cleanup_preview` 결과를 read-only로 연결해 cleanup readiness, risk, blocker, recommended action, validation, queue, workspace 상태를 표시한다. Dashboard 버튼으로 cleanup proposal을 직접 실행하지 않는다.
 
 성공 기준:
 
@@ -626,3 +628,7 @@ ChatGPT / Codex / Claude / Grok 등 각 client가 task 생성
 ## Phase 3-O2 Update
 
 Phase 3-O2 adds an approved task worktree cleanup proposal path after the preview-only cleanup foundation. The cleanup command is staged through `/pending` and only proceeds for conservative `cleanup_ready=true` candidates. It removes the task worktree through git worktree management and records `cleaned` metadata on runtime task/queue records. Direct mode, source merge/apply behavior, validation recording, and manual archive behavior remain unchanged.
+
+## Phase 3-O3 Update
+
+Phase 3-O3 connects cleanup preview readiness to the `/pending` task orchestration dashboard as read-only operator UX. Dashboard entries show cleanup readiness, risk, blocker count/main blocker, recommended cleanup action, validation status, queue status, and workspace status from `workspace_task_cleanup_preview` data. Operators still call `workspace_propose_task_cleanup_and_wait(task_id, cwd, project_id)` explicitly for cleanup-ready tasks; the dashboard does not run cleanup proposals directly. Public MCP schemas, direct mode defaults, source merge/apply/archive/validation behavior, and cleanup execution behavior remain unchanged.

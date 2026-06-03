@@ -57,6 +57,7 @@ from terminal_bridge.review_layout import (
     normalize_server_tab,
     page,
 )
+from terminal_bridge.task_cleanup_preview import task_cleanup_preview
 from terminal_bridge.task_orchestration_summary import task_orchestration_summary
 from terminal_bridge.task_workspaces import inspect_task_worktree, resolve_task_workspace_for_bundle
 
@@ -1000,6 +1001,14 @@ def _task_orchestration_relation(entry: Mapping[str, object]) -> tuple[str, str]
     return "record-missing", "danger"
 
 
+def _task_orchestration_key(entry: Mapping[str, object]) -> tuple[str, str, str]:
+    return (
+        str(entry.get("project_id") or ""),
+        str(entry.get("source_cwd") or "."),
+        str(entry.get("task_id") or ""),
+    )
+
+
 def _task_status_tone(status: object) -> str:
     value = str(status or "").strip()
     if value in {"worktree", "created", "ready"}:
@@ -1044,6 +1053,17 @@ def _validation_status_tone(status: object) -> str:
     return "neutral"
 
 
+def _cleanup_risk_tone(risk: object) -> str:
+    value = str(risk or "").strip()
+    if value == "low":
+        return "ok"
+    if value == "medium":
+        return "warn"
+    if value == "high":
+        return "danger"
+    return "neutral"
+
+
 def _overlapping_files_label(value: object, limit: int = 3) -> str:
     if not isinstance(value, list):
         return ""
@@ -1074,7 +1094,58 @@ def _operator_attention_label(entry: Mapping[str, object]) -> tuple[str, str]:
     return "no", "ok"
 
 
-def _task_orchestration_entry_html(entry: Mapping[str, object]) -> str:
+def _cleanup_preview_entries_by_key(cleanup_preview: Mapping[str, object] | None) -> dict[tuple[str, str, str], Mapping[str, object]]:
+    if not cleanup_preview:
+        return {}
+    raw_entries = cleanup_preview.get("entries")
+    if not isinstance(raw_entries, list):
+        return {}
+    entries: dict[tuple[str, str, str], Mapping[str, object]] = {}
+    for raw_entry in raw_entries:
+        if isinstance(raw_entry, Mapping):
+            entries[_task_orchestration_key(raw_entry)] = raw_entry
+    return entries
+
+
+def _cleanup_blockers_label(value: object) -> str:
+    if not isinstance(value, list):
+        return "cleanup blockers: 0"
+    blockers = [str(item) for item in value if str(item).strip()]
+    if not blockers:
+        return "cleanup blockers: 0"
+    suffix = f" +{len(blockers) - 1}" if len(blockers) > 1 else ""
+    return f"cleanup blockers: {len(blockers)} {blockers[0]}{suffix}"
+
+
+def _cleanup_readiness_badges(cleanup_entry: Mapping[str, object] | None) -> str:
+    if not cleanup_entry:
+        return status_badge("cleanup: not loaded", "neutral")
+
+    ready = bool(cleanup_entry.get("cleanup_ready"))
+    risk = str(cleanup_entry.get("cleanup_risk") or "unknown").strip() or "unknown"
+    risk_tone = _cleanup_risk_tone(risk)
+    ready_tone = "ok" if ready else risk_tone
+    queue_status = str(cleanup_entry.get("queue_status") or "none").strip() or "none"
+    workspace_status = str(cleanup_entry.get("workspace_status") or "missing").strip() or "missing"
+    validation_status = str(cleanup_entry.get("validation_status") or "unknown").strip() or "unknown"
+    action = str(cleanup_entry.get("recommended_action") or "none").strip() or "none"
+
+    badges = [
+        status_badge(f"cleanup ready: {'yes' if ready else 'no'}", ready_tone),
+        status_badge(f"cleanup risk: {risk}", risk_tone),
+        status_badge(_cleanup_blockers_label(cleanup_entry.get("cleanup_blockers")), "ok" if ready else risk_tone),
+        status_badge(f"cleanup action: {action}", "ok" if ready else "neutral"),
+        status_badge(f"cleanup validation: {validation_status}", _validation_status_tone(validation_status)),
+        status_badge(f"cleanup queue: {queue_status}", _queue_status_tone(queue_status)),
+        status_badge(f"cleanup workspace: {workspace_status}", _task_status_tone(workspace_status)),
+    ]
+    return "".join(badges)
+
+
+def _task_orchestration_entry_html(
+    entry: Mapping[str, object],
+    cleanup_entry: Mapping[str, object] | None = None,
+) -> str:
     relation_label, relation_tone = _task_orchestration_relation(entry)
     task_id = str(entry.get("task_id") or "missing")
     source_cwd = str(entry.get("source_cwd") or ".")
@@ -1137,6 +1208,11 @@ def _task_orchestration_entry_html(entry: Mapping[str, object]) -> str:
           {status_badge(f"anomaly: {anomaly_label}", "danger" if anomaly else "ok")}
         </div>
       </td>
+      <td>
+        <div class="subnav">
+          {_cleanup_readiness_badges(cleanup_entry)}
+        </div>
+      </td>
     </tr>
     """
 
@@ -1145,6 +1221,7 @@ def task_orchestration_summary_html(
     summary: Mapping[str, object] | None = None,
     *,
     project_id: str | None = None,
+    cleanup_preview: Mapping[str, object] | None = None,
 ) -> str:
     try:
         resolved_summary = summary or task_orchestration_summary(project_id=project_id, runtime_root=RUNTIME_ROOT)
@@ -1159,7 +1236,20 @@ def task_orchestration_summary_html(
         </section>
         """
 
+    cleanup_preview_error: Exception | None = None
+    resolved_cleanup_preview = cleanup_preview
+    if resolved_cleanup_preview is None and summary is None:
+        try:
+            resolved_cleanup_preview = task_cleanup_preview(project_id=project_id, runtime_root=RUNTIME_ROOT)
+        except Exception as exc:
+            cleanup_preview_error = exc
+
     entries = resolved_summary.get("entries") if isinstance(resolved_summary.get("entries"), list) else []
+    cleanup_entries_by_key = (
+        _cleanup_preview_entries_by_key(resolved_cleanup_preview)
+        if isinstance(resolved_cleanup_preview, Mapping)
+        else {}
+    )
     project_label = str(resolved_summary.get("project_id") or project_id or "").strip()
     project_badge = status_badge(f"project: {project_label}", "neutral") if project_label else ""
     count = int(resolved_summary.get("count") or 0)
@@ -1167,6 +1257,20 @@ def task_orchestration_summary_html(
     archived_count = int(resolved_summary.get("archived_count") or 0)
     anomaly_count = int(resolved_summary.get("anomaly_count") or 0)
     attention_count = int(resolved_summary.get("attention_count") or 0)
+    cleanup_badges: list[str] = []
+    if isinstance(resolved_cleanup_preview, Mapping):
+        cleanup_ready_count = int(resolved_cleanup_preview.get("ready_count") or 0)
+        cleanup_blocked_count = int(resolved_cleanup_preview.get("blocked_count") or 0)
+        cleanup_badges.extend(
+            [
+                status_badge(f"cleanup ready: {cleanup_ready_count}", "ok" if cleanup_ready_count else "neutral"),
+                status_badge(f"cleanup blocked: {cleanup_blocked_count}", "warn" if cleanup_blocked_count else "ok"),
+            ]
+        )
+    elif cleanup_preview_error is not None:
+        cleanup_badges.append(status_badge("cleanup preview: unavailable", "warn"))
+    else:
+        cleanup_badges.append(status_badge("cleanup preview: not loaded", "neutral"))
     summary_badges = "".join(
         [
             project_badge,
@@ -1175,6 +1279,7 @@ def task_orchestration_summary_html(
             status_badge(f"archived: {archived_count}", "neutral"),
             status_badge(f"attention: {attention_count}", "danger" if attention_count else "ok"),
             status_badge(f"anomalies: {anomaly_count}", "danger" if anomaly_count else "ok"),
+            *cleanup_badges,
         ]
     )
 
@@ -1182,7 +1287,7 @@ def task_orchestration_summary_html(
         body = '<p class="meta">No task orchestration records.</p>'
     else:
         rows = "\n".join(
-            _task_orchestration_entry_html(entry)
+            _task_orchestration_entry_html(entry, cleanup_entries_by_key.get(_task_orchestration_key(entry)))
             for entry in entries
             if isinstance(entry, Mapping)
         )
@@ -1196,6 +1301,7 @@ def task_orchestration_summary_html(
                 <th>Workspace</th>
                 <th>Queue</th>
                 <th>State</th>
+                <th>Cleanup</th>
               </tr>
             </thead>
             <tbody>
@@ -1209,7 +1315,8 @@ def task_orchestration_summary_html(
     <details class="card" open>
       <summary><strong>Task orchestration</strong></summary>
       <p class="meta">
-        Read-only overview of task workspace and merge queue records. It does not merge, apply, enqueue, or archive.
+        Read-only overview of task workspace, merge queue, validation, and cleanup preview records.
+        It does not merge, apply, enqueue, archive, or clean up task worktrees.
       </p>
       <div class="subnav">{summary_badges}</div>
       {body}

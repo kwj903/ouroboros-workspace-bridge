@@ -22,6 +22,8 @@ Implemented:
 - Conflict handling dashboard indicators and operator runbook for high-risk task worktree merges.
 - Post-merge validation metadata recording through `workspace_record_task_validation` and `workspace_task_validation_status`.
 - Read-only physical cleanup candidate preview through `workspace_task_cleanup_preview`.
+- Locally approved task worktree cleanup proposal and execution through `workspace_propose_task_cleanup_and_wait`.
+- Cleanup readiness, risk, blockers, validation, queue, and workspace status badges in the `/pending` task orchestration dashboard.
 
 Not implemented:
 
@@ -29,9 +31,10 @@ Not implemented:
 - Automatic worker session creation.
 - Automatic source merge without local review.
 - Automatic post-merge test execution or commits.
-- Physical deletion of task worktree directories.
-- Automatic `git worktree remove` or runtime directory removal.
+- Automatic task worktree cleanup without local review.
+- Manual runtime directory deletion outside the recorded cleanup path.
 - A full interactive merge queue UI with conflict resolution.
+- A dashboard button that directly creates cleanup proposals.
 
 ## Roles
 
@@ -212,7 +215,7 @@ Archive is non-destructive. It updates runtime records to `status="archived"` an
 
 ### 11. Orchestrator Previews Physical Cleanup Candidates
 
-Use `workspace_task_cleanup_preview(project_id)` after source integration, validation recording, and archive steps to find runtime task worktrees that may be safe candidates for a future explicit cleanup step.
+Use `workspace_task_cleanup_preview(project_id)` after source integration, validation recording, and archive steps to find runtime task worktrees that may be safe candidates for an explicit cleanup proposal.
 
 This preview is read-only. It does not delete directories, run `git worktree remove`, update runtime records, apply patches, or modify the source project.
 
@@ -225,7 +228,25 @@ A task is marked `cleanup_ready=true` only when the preview can conservatively v
 - the task workspace path is a git worktree
 - `git status --short` in the task worktree is clean
 
-If any condition fails, the preview returns `cleanup_ready=false`, `cleanup_risk`, `cleanup_blockers`, and `recommended_action`. Treat `cleanup_ready=true` as a review signal only; physical cleanup remains a separate future workflow.
+If any condition fails, the preview returns `cleanup_ready=false`, `cleanup_risk`, `cleanup_blockers`, and `recommended_action`. Treat `cleanup_ready=true` as a prerequisite for staging the approval-gated cleanup proposal, not as automatic cleanup.
+
+The `/pending` task orchestration dashboard mirrors this preview with compact cleanup badges:
+
+- `cleanup ready`
+- `cleanup risk`
+- `cleanup blockers`
+- `cleanup action`
+- `cleanup validation`
+- `cleanup queue`
+- `cleanup workspace`
+
+When an entry shows `cleanup ready: yes`, `cleanup risk: low`, and `cleanup action: ready_for_physical_cleanup_review`, the next orchestrator call is:
+
+```text
+workspace_propose_task_cleanup_and_wait(task_id, cwd, project_id)
+```
+
+The dashboard does not create this proposal directly. The orchestrator must call the wrapper, and the local operator must approve the generated `/pending` item before `git worktree remove` runs.
 
 ## Parallel Session Operating Rules
 
@@ -256,6 +277,7 @@ Each entry connects task workspace and merge queue records by `project_id`, `sou
 - changed file count when a queue record captured it
 - source dirty, source HEAD drift, overlapping file, and operator attention indicators when a queue record captured merge preflight fields
 - post-merge validation status, commands, summary, timestamp, and operator metadata when recorded
+- cleanup preview readiness, risk, blocker count/main blocker, recommended cleanup action, validation status, queue status, and workspace status when cleanup preview data is available
 - archived state across task workspace or queue records
 - anomaly flags, including queue records whose task workspace record is missing
 
@@ -435,5 +457,6 @@ After approved source integration:
 - Phase 3-N: post-merge validation tracking foundation on merge queue records and dashboard summaries.
 - Phase 3-O1: read-only physical cleanup preview and candidate detection foundation.
 - Phase 3-O2: locally approved task worktree cleanup proposal and execution foundation.
+- Phase 3-O3: `/pending` cleanup readiness dashboard and operator UX guidance.
 
 Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, automatic validation command execution, and commit flow integration.
