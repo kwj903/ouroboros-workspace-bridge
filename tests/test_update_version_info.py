@@ -40,7 +40,7 @@ After MCP tool or schema changes, refresh or reconnect the ChatGPT custom MCP co
 
     def test_normalize_for_check_detects_version_changes(self) -> None:
         first = update_version_info.render_update_info()
-        second = first.replace("Version: 0.3.1", "Version: 9.9.9")
+        second = first.replace(f"Version: {update_version_info.__version__}", "Version: 9.9.9")
 
         self.assertNotEqual(update_version_info.normalize_for_check(first), update_version_info.normalize_for_check(second))
 

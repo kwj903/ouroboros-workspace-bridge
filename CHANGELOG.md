@@ -4,6 +4,8 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 ## Unreleased
 
+## 0.4.0 - 2026-06-03
+
 ### Added
 
 - Public MCP handoff lookup tool `workspace_get_handoff_for_bundle` for retrieving a specific bundle's handoff without relying on the global latest handoff stream.
