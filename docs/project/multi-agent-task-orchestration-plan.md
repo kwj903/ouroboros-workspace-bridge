@@ -463,6 +463,7 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - Phase 3-O1은 `workspace_task_cleanup_preview`로 archived task workspace와 merged/archived merge queue record를 기준으로 physical cleanup 후보를 read-only로 판정하는 foundation을 추가했다. 실제 `git worktree remove`나 runtime directory 삭제는 아직 구현하지 않는다.
 - Phase 3-O2는 `workspace_propose_task_cleanup_and_wait`로 `cleanup_ready=true` 후보에 대해 local `/pending` 승인을 거친 task worktree cleanup proposal/execution foundation을 추가했다.
 - Phase 3-O3는 `/pending` task orchestration dashboard에 `workspace_task_cleanup_preview` 결과를 read-only로 연결해 cleanup readiness, risk, blocker, recommended action, validation, queue, workspace 상태를 표시한다. Dashboard 버튼으로 cleanup proposal을 직접 실행하지 않는다.
+- Phase 3-P1은 `workspace_propose_task_validation_command_and_wait`로 `merged` task의 source-level validation command를 local `/pending` 승인 대상으로 제안하는 foundation을 추가했다. 결과 해석과 `validation_status` 기록은 operator가 `workspace_record_task_validation`으로 별도 수행한다.
 
 성공 기준:
 
@@ -632,3 +633,7 @@ Phase 3-O2 adds an approved task worktree cleanup proposal path after the previe
 ## Phase 3-O3 Update
 
 Phase 3-O3 connects cleanup preview readiness to the `/pending` task orchestration dashboard as read-only operator UX. Dashboard entries show cleanup readiness, risk, blocker count/main blocker, recommended cleanup action, validation status, queue status, and workspace status from `workspace_task_cleanup_preview` data. Operators still call `workspace_propose_task_cleanup_and_wait(task_id, cwd, project_id)` explicitly for cleanup-ready tasks; the dashboard does not run cleanup proposals directly. Public MCP schemas, direct mode defaults, source merge/apply/archive/validation behavior, and cleanup execution behavior remain unchanged.
+
+## Phase 3-P1 Update
+
+Phase 3-P1 adds a public proposal wrapper, `workspace_propose_task_validation_command_and_wait`, for source-level validation of tasks whose merge queue record is already `merged`. The wrapper stages exactly one command bundle in `/pending`, runs it in the source project `cwd` with `workspace_mode="direct"` metadata, and never executes the command in ChatGPT. It records task/project/source/command metadata and marks dirty source workspaces as high-risk validation blockers in proposal metadata. It does not automatically parse command output or update `validation_status`; operators must review the result and call `workspace_record_task_validation` separately. Direct mode defaults, source merge/apply/archive/cleanup behavior, and cleanup execution behavior remain unchanged.

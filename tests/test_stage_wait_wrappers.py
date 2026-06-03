@@ -239,6 +239,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertIn("workspace_propose_patch_and_wait", tools)
         self.assertIn("workspace_propose_git_commit_and_wait", tools)
         self.assertIn("workspace_propose_git_push_and_wait", tools)
+        self.assertIn("workspace_propose_task_validation_command_and_wait", tools)
         self.assertIn("workspace_list_tool_calls", tools)
         self.assertIn("workspace_tool_call_status", tools)
         self.assertNotIn("workspace_stage_command_bundle_and_wait", tools)

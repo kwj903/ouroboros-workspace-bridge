@@ -21,6 +21,7 @@ Implemented:
 - Compact read-only task orchestration summary rendering in the `/pending` review UI.
 - Conflict handling dashboard indicators and operator runbook for high-risk task worktree merges.
 - Post-merge validation metadata recording through `workspace_record_task_validation` and `workspace_task_validation_status`.
+- Source-level validation command proposal staging through `workspace_propose_task_validation_command_and_wait`.
 - Read-only physical cleanup candidate preview through `workspace_task_cleanup_preview`.
 - Locally approved task worktree cleanup proposal and execution through `workspace_propose_task_cleanup_and_wait`.
 - Cleanup readiness, risk, blockers, validation, queue, and workspace status badges in the `/pending` task orchestration dashboard.
@@ -31,6 +32,7 @@ Not implemented:
 - Automatic worker session creation.
 - Automatic source merge without local review.
 - Automatic post-merge test execution or commits.
+- Automatic validation result interpretation or automatic `validation_status` updates after validation command execution.
 - Automatic task worktree cleanup without local review.
 - Manual runtime directory deletion outside the recorded cleanup path.
 - A full interactive merge queue UI with conflict resolution.
@@ -189,9 +191,21 @@ On approved execution, the command validates:
 
 After success, the queue record transitions to `merged`. The source project now has working-tree changes from the task worktree; run source-level tests and decide whether to create a source commit through the normal review-gated workflow.
 
-### 9. Orchestrator Records Post-Merge Validation
+### 9. Orchestrator Stages Source-Level Validation For Approval
 
-After the source integration proposal is approved and applied, run the relevant source-level validation outside the task worktree. This phase does not run validation commands automatically; it records what the operator already ran or plans to run.
+After the source integration proposal is approved and applied, stage the relevant source-level validation command from the orchestrator:
+
+```text
+workspace_propose_task_validation_command_and_wait(task_id, argv, cwd, project_id)
+```
+
+This creates a pending command bundle in `/pending`. It does not run in ChatGPT. The local operator must review and approve it before the command runs.
+
+The tool checks that the merge queue record exists and has `status="merged"`. The command runs in the source project `cwd` with `workspace_mode="direct"` metadata. If the source project is dirty, the proposal metadata marks `source_dirty=true`, `validation_risk="high"`, and `validation_blockers=["source_dirty"]` so the operator can treat the validation as high risk. This phase does not automatically interpret stdout/stderr or record `validation_status`.
+
+### 10. Orchestrator Records Post-Merge Validation
+
+After the validation command has run, inspect the approved bundle result and record the human-reviewed outcome. This phase records what the operator observed; it does not rerun commands automatically.
 
 Use `workspace_record_task_validation(task_id, cwd, project_id, validation_status, validation_commands, validation_summary, validated_by, client_id, session_id)` to update the merge queue record.
 
@@ -204,7 +218,7 @@ Recommended statuses:
 
 Use `workspace_task_validation_status(task_id, cwd, project_id)` to read the latest validation metadata. Recording validation only updates runtime metadata; it does not run commands, edit source files, apply patches, archive records, or create commits.
 
-### 10. Orchestrator Archives Runtime Records
+### 11. Orchestrator Archives Runtime Records
 
 After a task is merged, abandoned, or superseded:
 
@@ -213,7 +227,7 @@ After a task is merged, abandoned, or superseded:
 
 Archive is non-destructive. It updates runtime records to `status="archived"` and preserves record files and worktree directories. It does not delete source files or remove worktrees.
 
-### 11. Orchestrator Previews Physical Cleanup Candidates
+### 12. Orchestrator Previews Physical Cleanup Candidates
 
 Use `workspace_task_cleanup_preview(project_id)` after source integration, validation recording, and archive steps to find runtime task worktrees that may be safe candidates for an explicit cleanup proposal.
 
@@ -399,6 +413,13 @@ Use this checklist before retrying.
 - Do not record `passed` until the latest source-level validation has actually succeeded.
 - If a worker needs to fix the failure, send the exact validation command and failure summary, and restart the orchestrator flow at inspect after the worker reports completion.
 
+### Validation Command Proposal Fails Or Is Rejected
+
+- Confirm the task's merge queue record is still `merged` with `workspace_merge_queue_status`.
+- If the wrapper reports a missing or unmerged queue record, do not use a generic direct command proposal as a substitute; rerun the merge workflow checks first.
+- If the proposal metadata includes `source_dirty=true`, approve only when the dirty source state is the expected post-merge state you intend to validate.
+- After an approved command finishes, inspect the bundle result before calling `workspace_record_task_validation`.
+
 ### Runtime Records Need Cleanup
 
 - Use archive helpers first.
@@ -434,8 +455,9 @@ Before approving source integration:
 After approved source integration:
 
 - Queue status is `merged`.
-- Source tests have been proposed and approved or run locally.
-- Validation status is recorded as `passed` or `failed` on the merge queue record.
+- Source tests have been proposed with `workspace_propose_task_validation_command_and_wait` and approved, or run locally by the operator.
+- Validation command output has been reviewed.
+- Validation status is recorded as `passed` or `failed` on the merge queue record with `workspace_record_task_validation`.
 - Source commit is created through normal review-gated flow if desired.
 - Queue and task workspace records are archived with a useful reason.
 
@@ -458,5 +480,6 @@ After approved source integration:
 - Phase 3-O1: read-only physical cleanup preview and candidate detection foundation.
 - Phase 3-O2: locally approved task worktree cleanup proposal and execution foundation.
 - Phase 3-O3: `/pending` cleanup readiness dashboard and operator UX guidance.
+- Phase 3-P1: merged task source-level validation command proposal foundation.
 
 Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, automatic validation command execution, and commit flow integration.

@@ -225,6 +225,9 @@ from terminal_bridge.task_workspaces import (
 )
 from terminal_bridge.task_cleanup_preview import task_cleanup_preview as _task_cleanup_preview
 from terminal_bridge.task_orchestration_summary import task_orchestration_summary as _task_orchestration_summary
+from terminal_bridge.task_validation_proposal import (
+    prepare_task_validation_command_proposal as _prepare_task_validation_command_proposal,
+)
 from terminal_bridge.tool_calls import list_tool_calls as _list_tool_call_records
 from terminal_bridge.tool_calls import read_tool_call as _read_tool_call_record
 from terminal_bridge.trash import (
@@ -990,6 +993,7 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_task_orchestration_summary",
     "workspace_task_cleanup_preview",
     "workspace_record_task_validation",
+    "workspace_propose_task_validation_command_and_wait",
     "workspace_propose_task_cleanup_and_wait",
     "workspace_task_validation_status",
     "workspace_propose_task_worktree_merge_and_wait",
@@ -2303,6 +2307,78 @@ def workspace_task_validation_status(
         "workspace_task_validation_status",
         {"task_id": task_id, "cwd": cwd, "project_id": project_id},
         lambda: MergeQueueEntryResult(**_task_validation_status(task_id, cwd=cwd, project_id=project_id)),
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_propose_task_validation_command_and_wait(
+    task_id: Annotated[str, Field(description="Task id for the merged task whose source-level validation command should be proposed.")],
+    argv: Annotated[
+        list[str],
+        Field(
+            min_length=1,
+            max_length=MAX_EXEC_ARGV_ITEMS,
+            description=(
+                "Exactly one argv-based source validation command proposal. This only creates a local pending bundle. "
+                "It does not run until approved at http://127.0.0.1:8790/pending."
+            ),
+        ),
+    ],
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+    command_name: Annotated[
+        str | None,
+        Field(description="Optional display name for the validation command step. Defaults to Run source validation."),
+    ] = None,
+    command_timeout_seconds: Annotated[int, Field(ge=1, le=MAX_COMMAND_TIMEOUT_SECONDS)] = 60,
+    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> CommandBundleStatusResult:
+    """Create one pending source-level validation command proposal for a merged task.
+
+    This tool only creates a local pending proposal. It never executes the
+    command in ChatGPT and it does not update validation_status automatically.
+    The command runs only after local /pending approval.
+    """
+
+    def action() -> CommandBundleStatusResult:
+        proposal = _prepare_task_validation_command_proposal(
+            task_id,
+            cwd=cwd,
+            project_id=project_id,
+            argv=argv,
+            command_name=command_name,
+            command_timeout_seconds=command_timeout_seconds,
+        )
+        return _workspace_stage_command_bundle_and_wait_impl(
+            str(proposal["title"]),
+            str(proposal["cwd"]),
+            [proposal["step"]],
+            timeout_seconds,
+            poll_interval_seconds,
+            proposal["metadata"],
+        )
+
+    return _record_tool_call(
+        "workspace_propose_task_validation_command_and_wait",
+        {
+            "task_id": task_id,
+            "cwd": cwd,
+            "project_id": project_id,
+            "argv": argv,
+            "command_name": command_name,
+            "command_timeout_seconds": command_timeout_seconds,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        action,
     )
 
 

@@ -28,6 +28,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Public MCP helpers `workspace_record_task_validation` and `workspace_task_validation_status` for recording and reading post-merge validation metadata on merge queue records.
 - Public MCP helper `workspace_task_cleanup_preview` for read-only physical task worktree cleanup candidate detection.
 - Public MCP helper `workspace_propose_task_cleanup_and_wait` for staging a locally approved task worktree cleanup command for ready archived task workspaces.
+- Public MCP helper `workspace_propose_task_validation_command_and_wait` for staging a locally approved source-level validation command for merged task worktree results.
 
 ### Changed
 
