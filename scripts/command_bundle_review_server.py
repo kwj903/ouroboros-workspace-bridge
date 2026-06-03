@@ -82,6 +82,8 @@ PORT = int(os.environ.get("BUNDLE_REVIEW_PORT", "8790"))
 EVENT_POLL_SECONDS = 0.5
 EVENT_TIMEOUT_SECONDS = 25.0
 VALID_STATUS_FILTERS = {"all", "pending", "applied", "failed", "rejected"}
+DEFAULT_HISTORY_LIMIT = 100
+MAX_HISTORY_LIMIT = 200
 
 
 class BundleRowsState(TypedDict):
@@ -186,6 +188,50 @@ def metadata_filter_params(params: Mapping[str, list[str]]) -> dict[str, str | N
     return filters
 
 
+def parse_positive_int(value: str | None, default: int, *, minimum: int = 1, maximum: int | None = None) -> int:
+    try:
+        parsed = int(str(value or "").strip())
+    except ValueError:
+        parsed = default
+    if parsed < minimum:
+        parsed = default
+    if maximum is not None and parsed > maximum:
+        parsed = maximum
+    return parsed
+
+
+def history_pagination_params(params: Mapping[str, list[str]]) -> tuple[int, int]:
+    page = parse_positive_int(params.get("page", [None])[0], 1)
+    limit = parse_positive_int(params.get("limit", [None])[0], DEFAULT_HISTORY_LIMIT, maximum=MAX_HISTORY_LIMIT)
+    return page, limit
+
+
+def paginate_bundle_records(
+    rows: list[dict[str, object]],
+    *,
+    page: int = 1,
+    limit: int = DEFAULT_HISTORY_LIMIT,
+) -> dict[str, object]:
+    safe_limit = parse_positive_int(str(limit), DEFAULT_HISTORY_LIMIT, maximum=MAX_HISTORY_LIMIT)
+    total = len(rows)
+    max_page = max(1, (total + safe_limit - 1) // safe_limit)
+    safe_page = min(parse_positive_int(str(page), 1), max_page)
+    start_index = (safe_page - 1) * safe_limit
+    end_index = min(start_index + safe_limit, total)
+    visible_rows = rows[start_index:end_index]
+
+    return {
+        "rows": visible_rows,
+        "page": safe_page,
+        "limit": safe_limit,
+        "total": total,
+        "start": start_index + 1 if total else 0,
+        "end": end_index,
+        "has_previous": safe_page > 1,
+        "has_next": end_index < total,
+    }
+
+
 def metadata_filter_url(
     path: str,
     filters: Mapping[str, str | None],
@@ -198,6 +244,20 @@ def metadata_filter_url(
     query_values.update(active_metadata_filters(filters))
     query = urlencode(query_values)
     return f"{path}?{query}" if query else path
+
+
+def history_pagination_url(
+    path: str,
+    filters: Mapping[str, str | None],
+    *,
+    status_filter: str,
+    page: int,
+    limit: int,
+) -> str:
+    query_values = {"status": normalize_status_filter(status_filter), "page": str(page), "limit": str(limit)}
+    query_values.update(active_metadata_filters(filters))
+    query = urlencode(query_values)
+    return f"{path}?{query}"
 
 
 def filter_bundle_records_by_metadata(
@@ -2162,6 +2222,59 @@ def history_summary_html(state: dict[str, object]) -> str:
     """
 
 
+def history_visible_range_html(pagination: Mapping[str, object]) -> str:
+    total = int(pagination.get("total", 0))
+    start = int(pagination.get("start", 0))
+    end = int(pagination.get("end", 0))
+    limit = int(pagination.get("limit", DEFAULT_HISTORY_LIMIT))
+    page_number = int(pagination.get("page", 1))
+    if total == 0:
+        range_text = "표시할 bundle이 없습니다."
+    else:
+        range_text = f"전체 {total}개 중 {start}–{end}개 표시"
+    return f"""
+    <div class="notice">
+      <strong>이력 표시 범위</strong><br>
+      {escape(range_text)} · page <code>{escape(page_number)}</code> · limit <code>{escape(limit)}</code>
+    </div>
+    """
+
+
+def history_pagination_html(
+    pagination: Mapping[str, object],
+    *,
+    status_filter: str,
+    metadata_filters: Mapping[str, str | None],
+) -> str:
+    total = int(pagination.get("total", 0))
+    page_number = int(pagination.get("page", 1))
+    limit = int(pagination.get("limit", DEFAULT_HISTORY_LIMIT))
+    has_previous = bool(pagination.get("has_previous"))
+    has_next = bool(pagination.get("has_next"))
+    if has_previous:
+        previous_link = f'<a class="subnav-link" href="{escape(history_pagination_url("/history", metadata_filters, status_filter=status_filter, page=page_number - 1, limit=limit))}">← 이전</a>'
+    else:
+        previous_link = '<span class="subnav-link is-disabled">← 이전</span>'
+    if has_next:
+        next_link = f'<a class="subnav-link" href="{escape(history_pagination_url("/history", metadata_filters, status_filter=status_filter, page=page_number + 1, limit=limit))}">다음 →</a>'
+    else:
+        next_link = '<span class="subnav-link is-disabled">다음 →</span>'
+
+    limit_links = []
+    for candidate in (25, 50, 100, 200):
+        if candidate == limit:
+            limit_links.append(f'<span class="subnav-link is-active" aria-current="page">{candidate}</span>')
+        else:
+            href = history_pagination_url("/history", metadata_filters, status_filter=status_filter, page=1, limit=candidate)
+            limit_links.append(f'<a class="subnav-link" href="{escape(href)}">{candidate}</a>')
+
+    if total <= limit and page_number == 1:
+        nav = f"<div class=\"subnav\"><span class=\"meta-label\">limit</span>{''.join(limit_links)}</div>"
+    else:
+        nav = f"<div class=\"subnav\">{previous_link}{next_link}</div><div class=\"subnav\"><span class=\"meta-label\">limit</span>{''.join(limit_links)}</div>"
+    return history_visible_range_html(pagination) + nav
+
+
 def bundle_card_html(record: dict[str, object]) -> str:
     bundle_id = str(record.get("bundle_id", ""))
     status = str(record.get("status", "unknown"))
@@ -2836,13 +2949,16 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query)
             status_filter = normalize_status_filter(params.get("status", ["all"])[0])
             metadata_filters = metadata_filter_params(params)
+            page_number, limit = history_pagination_params(params)
             rows = filter_bundle_records_by_metadata(list_bundles(status_filter), metadata_filters)
-            cards = [bundle_card_html(record) for record in rows]
+            pagination = paginate_bundle_records(rows, page=page_number, limit=limit)
+            cards = [bundle_card_html(record) for record in pagination["rows"]]
 
             self.send_html(
                 "이력/결과",
                 (
                     history_summary_html(history_state())
+                    + history_pagination_html(pagination, status_filter=status_filter, metadata_filters=metadata_filters)
                     + "<p><a href='/pending'>승인 대기 보기</a> · "
                     "<a href='/history'>새로고침</a></p>"
                     + status_filter_links_html(status_filter, metadata_filters)

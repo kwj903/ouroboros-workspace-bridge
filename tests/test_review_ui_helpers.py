@@ -908,6 +908,51 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("workspace_mode=direct", html)
         self.assertNotIn("session_id=", html)
 
+    def test_history_pagination_defaults_to_newest_100(self) -> None:
+        rows = [{"bundle_id": f"cmd-{idx:03d}"} for idx in range(125)]
+
+        page = review.paginate_bundle_records(rows)
+
+        self.assertEqual(len(page["rows"]), 100)
+        self.assertEqual(page["total"], 125)
+        self.assertEqual(page["start"], 1)
+        self.assertEqual(page["end"], 100)
+        self.assertTrue(page["has_next"])
+        self.assertFalse(page["has_previous"])
+
+    def test_history_pagination_uses_page_and_limit(self) -> None:
+        rows = [{"bundle_id": f"cmd-{idx:03d}"} for idx in range(125)]
+
+        page = review.paginate_bundle_records(rows, page=3, limit=50)
+
+        self.assertEqual([item["bundle_id"] for item in page["rows"]], [f"cmd-{idx:03d}" for idx in range(100, 125)])
+        self.assertEqual(page["start"], 101)
+        self.assertEqual(page["end"], 125)
+        self.assertFalse(page["has_next"])
+        self.assertTrue(page["has_previous"])
+
+    def test_history_pagination_preserves_status_and_metadata_filters(self) -> None:
+        filters = review.metadata_filter_params(
+            parse_qs("client_id=client-a&session_id=session-a&workspace_mode=direct")
+        )
+
+        url = review.history_pagination_url("/history", filters, status_filter="failed", page=2, limit=25)
+        html = review.history_pagination_html(
+            {"page": 1, "limit": 25, "total": 26, "start": 1, "end": 25, "has_next": True, "has_previous": False},
+            status_filter="failed",
+            metadata_filters=filters,
+        )
+
+        self.assertIn("status=failed", url)
+        self.assertIn("page=2", url)
+        self.assertIn("limit=25", url)
+        self.assertIn("client_id=client-a", url)
+        self.assertIn("session_id=session-a", url)
+        self.assertIn("workspace_mode=direct", url)
+        self.assertIn("status=failed", html)
+        self.assertIn("client_id=client-a", html)
+        self.assertIn("전체 26개 중 1–25개 표시", html)
+
     def test_latest_pending_bundle_id_uses_newest_pending(self) -> None:
         self.write_bundle("pending", "cmd-old", "2026-01-01T00:00:00+00:00")
         self.write_bundle("pending", "cmd-new", "2026-01-02T00:00:00+00:00")
