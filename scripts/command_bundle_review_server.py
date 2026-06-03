@@ -32,7 +32,7 @@ from terminal_bridge.review_notifications import (
     review_url as notification_review_url,
     send_notification,
 )
-from terminal_bridge import bundle_watcher
+from terminal_bridge import bundle_watcher, runtime_storage
 from terminal_bridge.approval_modes import (
     VALID_APPROVAL_MODES,
     delete_scoped_approval_mode,
@@ -84,6 +84,33 @@ EVENT_TIMEOUT_SECONDS = 25.0
 VALID_STATUS_FILTERS = {"all", "pending", "applied", "failed", "rejected"}
 DEFAULT_HISTORY_LIMIT = 100
 MAX_HISTORY_LIMIT = 200
+CLEAR_HISTORY_CONFIRMATION = "DELETE HISTORY"
+CLEANUP_POLICY_DEFAULTS: dict[str, object] = {
+    "keep_applied": 1000,
+    "keep_failed": 500,
+    "keep_rejected": 200,
+    "keep_tool_calls": 2000,
+    "keep_handoffs": 1000,
+    "keep_text_payloads": 500,
+    "older_than_text_payload_days": 14,
+    "older_than_operations_days": 30,
+    "older_than_backups_days": 30,
+    "include_backups_by_default": False,
+}
+CLEANUP_POLICY_INT_FIELDS = tuple(
+    key for key, value in CLEANUP_POLICY_DEFAULTS.items() if isinstance(value, int) and not isinstance(value, bool)
+)
+CLEANUP_POLICY_FIELD_LABELS = {
+    "keep_applied": "Keep newest applied bundles",
+    "keep_failed": "Keep newest failed bundles",
+    "keep_rejected": "Keep newest rejected bundles",
+    "keep_tool_calls": "Keep newest tool call records",
+    "keep_handoffs": "Keep newest handoff records",
+    "keep_text_payloads": "Keep newest text payload records",
+    "older_than_text_payload_days": "Text payload age threshold days",
+    "older_than_operations_days": "Operations age threshold days",
+    "older_than_backups_days": "Backup/trash age threshold days",
+}
 
 
 class BundleRowsState(TypedDict):
@@ -608,6 +635,255 @@ def embedded_watcher_config() -> dict[str, object]:
             default=False,
         ),
         "base_url": review_base_url(),
+    }
+
+
+def cleanup_policy_file(root: Path | None = None) -> Path:
+    return (root or RUNTIME_ROOT) / "cleanup_policy.json"
+
+
+def cleanup_policy_defaults() -> dict[str, object]:
+    return dict(CLEANUP_POLICY_DEFAULTS)
+
+
+def _coerce_policy_bool(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    return default
+
+
+def _coerce_policy_int(value: object, default: int) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def load_cleanup_policy(root: Path | None = None) -> dict[str, object]:
+    defaults = cleanup_policy_defaults()
+    path = cleanup_policy_file(root)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return defaults
+    if not isinstance(raw, dict):
+        return defaults
+
+    policy = cleanup_policy_defaults()
+    for key in CLEANUP_POLICY_INT_FIELDS:
+        policy[key] = _coerce_policy_int(raw.get(key), int(defaults[key]))
+    policy["include_backups_by_default"] = _coerce_policy_bool(
+        raw.get("include_backups_by_default"),
+        bool(defaults["include_backups_by_default"]),
+    )
+    return policy
+
+
+def save_cleanup_policy(policy: Mapping[str, object], root: Path | None = None) -> None:
+    path = cleanup_policy_file(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    saved = cleanup_policy_defaults()
+    saved.update({key: policy[key] for key in saved.keys() if key in policy})
+    path.write_text(json.dumps(saved, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def cleanup_policy_from_form(form: Mapping[str, list[str]]) -> tuple[dict[str, object], list[str], list[str]]:
+    defaults = cleanup_policy_defaults()
+    policy: dict[str, object] = {}
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    for key in CLEANUP_POLICY_INT_FIELDS:
+        label = CLEANUP_POLICY_FIELD_LABELS[key]
+        raw = str(form.get(key, [""])[0]).strip()
+        if raw == "":
+            policy[key] = defaults[key]
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            errors.append(f"{label}: 숫자를 입력하세요.")
+            policy[key] = defaults[key]
+            continue
+        if value < 0:
+            errors.append(f"{label}: 음수는 허용하지 않습니다.")
+        elif value == 0:
+            errors.append(f"{label}: 0은 일반 policy 저장에서는 허용하지 않습니다. clear-history를 사용하세요.")
+        elif value < 10:
+            warnings.append(f"{label}: {value}은 매우 낮은 보존값입니다.")
+        policy[key] = value
+
+    raw_include = str(form.get("include_backups_by_default", [""])[0]).strip().lower()
+    policy["include_backups_by_default"] = raw_include in {"1", "true", "yes", "on"}
+    return policy, errors, warnings
+
+
+def _count_runtime_children(path: Path) -> int:
+    if not path.exists() or path.is_symlink() or not path.is_dir():
+        return 0
+    count = 0
+    for child in path.iterdir():
+        if child.is_symlink():
+            continue
+        count += 1
+    return count
+
+
+def storage_cleanup_history_counts(root: Path | None = None) -> dict[str, int]:
+    root = root or RUNTIME_ROOT
+    counts = {
+        "pending_bundles": _count_runtime_children(root / "command_bundles" / "pending"),
+        "applied_bundles": _count_runtime_children(root / "command_bundles" / "applied"),
+        "failed_bundles": _count_runtime_children(root / "command_bundles" / "failed"),
+        "rejected_bundles": _count_runtime_children(root / "command_bundles" / "rejected"),
+        "tool_calls": _count_runtime_children(root / "tool_calls"),
+        "handoffs": _count_runtime_children(root / "handoffs"),
+        "operations": _count_runtime_children(root / "operations"),
+        "text_payloads": _count_runtime_children(root / "text_payloads"),
+    }
+    counts["total_bundle_history"] = (
+        counts["pending_bundles"]
+        + counts["applied_bundles"]
+        + counts["failed_bundles"]
+        + counts["rejected_bundles"]
+    )
+    return counts
+
+
+def _candidate_size(path: Path) -> int:
+    return runtime_storage.total_storage(path).bytes
+
+
+def clear_history_cleanup_candidates(root: Path | None = None, *, include_backups: bool = False) -> list[runtime_storage.CleanupCandidate]:
+    root = (root or RUNTIME_ROOT).expanduser().resolve(strict=False)
+    directories: list[tuple[str, Path]] = [
+        ("command_bundles/applied", root / "command_bundles" / "applied"),
+        ("command_bundles/failed", root / "command_bundles" / "failed"),
+        ("command_bundles/rejected", root / "command_bundles" / "rejected"),
+        ("tool_calls", root / "tool_calls"),
+        ("handoffs", root / "handoffs"),
+        ("operations", root / "operations"),
+        ("text_payloads", root / "text_payloads"),
+        ("intent_imports", root / "intent_imports"),
+        ("trash", root / "trash"),
+    ]
+    if include_backups:
+        directories.extend(
+            [
+                ("backups", root / "backups"),
+                ("command_bundle_file_backups", root / "command_bundle_file_backups"),
+            ]
+        )
+
+    candidates: list[runtime_storage.CleanupCandidate] = []
+    for category, directory in directories:
+        if not directory.exists() or directory.is_symlink() or not directory.is_dir():
+            continue
+        for child in directory.iterdir():
+            candidate = runtime_storage.CleanupCandidate(
+                path=child,
+                kind="dir" if child.is_dir() and not child.is_symlink() else "file",
+                bytes=_candidate_size(child),
+                reason=f"clear eligible history: {category}",
+            )
+            if runtime_storage.is_deletable_candidate(candidate, root):
+                candidates.append(candidate)
+    return candidates
+
+
+def cleanup_result_from_candidates(
+    candidates: list[runtime_storage.CleanupCandidate],
+    *,
+    dry_run: bool,
+    root: Path | None = None,
+) -> runtime_storage.CleanupResult:
+    root = (root or RUNTIME_ROOT).expanduser().resolve(strict=False)
+    if dry_run:
+        return runtime_storage.CleanupResult(True, candidates, 0, 0, 0, [])
+
+    deleted_files = 0
+    deleted_dirs = 0
+    reclaimed = 0
+    errors: list[runtime_storage.CleanupError] = []
+    for candidate in candidates:
+        if candidate.action != "delete" or not runtime_storage.is_deletable_candidate(candidate, root):
+            continue
+        try:
+            files, dirs = runtime_storage._delete_path(candidate.path)
+            deleted_files += files
+            deleted_dirs += dirs
+            reclaimed += candidate.bytes
+        except Exception as exc:
+            errors.append(runtime_storage.CleanupError(candidate.path, f"{type(exc).__name__}: {exc}"))
+    return runtime_storage.CleanupResult(False, candidates, deleted_files, deleted_dirs, reclaimed, errors)
+
+
+def run_storage_cleanup(
+    *,
+    dry_run: bool,
+    include_backups: bool,
+    clear_history: bool = False,
+) -> runtime_storage.CleanupResult:
+    if clear_history:
+        candidates = clear_history_cleanup_candidates(RUNTIME_ROOT, include_backups=include_backups)
+        return cleanup_result_from_candidates(candidates, dry_run=dry_run, root=RUNTIME_ROOT)
+    return runtime_storage.cleanup_runtime(RUNTIME_ROOT, dry_run=dry_run, include_backups=include_backups)
+
+
+def cleanup_candidate_category(candidate: runtime_storage.CleanupCandidate, root: Path | None = None) -> str:
+    root = (root or RUNTIME_ROOT).expanduser().resolve(strict=False)
+    try:
+        parts = candidate.path.expanduser().resolve(strict=False).relative_to(root).parts
+    except ValueError:
+        return candidate.kind
+    if len(parts) >= 2 and parts[0] == "command_bundles":
+        return f"command_bundles/{parts[1]}"
+    return parts[0] if parts else candidate.kind
+
+
+def cleanup_candidate_summary(result: runtime_storage.CleanupResult, root: Path | None = None) -> dict[str, dict[str, int]]:
+    summary: dict[str, dict[str, int]] = {}
+    for candidate in result.candidates:
+        category = cleanup_candidate_category(candidate, root)
+        bucket = summary.setdefault(category, {"count": 0, "bytes": 0})
+        bucket["count"] += 1
+        bucket["bytes"] += candidate.bytes
+    return dict(sorted(summary.items()))
+
+
+def storage_cleanup_state() -> dict[str, object]:
+    total = runtime_storage.total_storage(RUNTIME_ROOT)
+    entries = runtime_storage.storage_summary(RUNTIME_ROOT)
+    return {
+        "runtime_root": str(RUNTIME_ROOT),
+        "policy_file": str(cleanup_policy_file(RUNTIME_ROOT)),
+        "policy": load_cleanup_policy(RUNTIME_ROOT),
+        "history_counts": storage_cleanup_history_counts(RUNTIME_ROOT),
+        "total": {
+            "bytes": total.bytes,
+            "bytes_label": runtime_storage.format_bytes(total.bytes),
+            "files": total.files,
+            "dirs": total.dirs,
+        },
+        "summary": [
+            {
+                "name": entry.name,
+                "path": str(entry.path),
+                "exists": entry.exists,
+                "bytes": entry.bytes,
+                "bytes_label": runtime_storage.format_bytes(entry.bytes),
+                "files": entry.files,
+                "dirs": entry.dirs,
+            }
+            for entry in entries
+        ],
     }
 
 
@@ -2471,6 +2747,241 @@ def supervisor_action_notice_html(action: str, service: str, status: str) -> str
     )
 
 
+def storage_summary_table_html(entries: list[runtime_storage.StorageEntry]) -> str:
+    rows = []
+    for entry in entries:
+        rows.append(
+            "<tr>"
+            f"<td><code>{escape(entry.name)}</code></td>"
+            f"<td>{status_badge('present' if entry.exists else 'missing', 'ok' if entry.exists else 'neutral')}</td>"
+            f"<td>{escape(runtime_storage.format_bytes(entry.bytes))}</td>"
+            f"<td>{escape(entry.files)}</td>"
+            f"<td>{escape(entry.dirs)}</td>"
+            f"<td><code>{escape(entry.path)}</code></td>"
+            "</tr>"
+        )
+    return (
+        '<div class="table-wrap"><table class="data-table">'
+        '<thead><tr><th>Category</th><th>Status</th><th>Bytes</th><th>Files</th><th>Dirs</th><th>Path</th></tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
+def storage_history_counts_table_html(counts: Mapping[str, int], policy: Mapping[str, object]) -> str:
+    rows = []
+    items = (
+        ("pending bundles", "pending_bundles", None),
+        ("applied bundles", "applied_bundles", "keep_applied"),
+        ("failed bundles", "failed_bundles", "keep_failed"),
+        ("rejected bundles", "rejected_bundles", "keep_rejected"),
+        ("total bundle history", "total_bundle_history", None),
+        ("tool call records", "tool_calls", "keep_tool_calls"),
+        ("handoff records", "handoffs", "keep_handoffs"),
+        ("operation records", "operations", None),
+        ("text payload records", "text_payloads", "keep_text_payloads"),
+    )
+    for label, key, policy_key in items:
+        value = int(counts.get(key, 0))
+        recommendation = ""
+        if policy_key:
+            keep = int(policy.get(policy_key, 0))
+            tone = "warn" if keep > 0 and value > keep else "ok"
+            recommendation = status_badge(f"keep {keep}", tone)
+        rows.append(
+            "<tr>"
+            f"<td>{escape(label)}</td>"
+            f"<td>{escape(value)}</td>"
+            f"<td>{recommendation}</td>"
+            "</tr>"
+        )
+    return (
+        '<div class="table-wrap"><table class="data-table">'
+        '<thead><tr><th>History</th><th>Count</th><th>Policy</th></tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
+def cleanup_policy_form_html(
+    policy: Mapping[str, object],
+    *,
+    errors: list[str] | None = None,
+    warnings: list[str] | None = None,
+) -> str:
+    errors = errors or []
+    warnings = warnings or []
+    error_html = "".join(f"<li>{escape(message)}</li>" for message in errors)
+    warning_html = "".join(f"<li>{escape(message)}</li>" for message in warnings)
+    messages = ""
+    if error_html:
+        messages += f'<div class="notice"><strong>Policy validation failed</strong><ul class="compact">{error_html}</ul></div>'
+    if warning_html:
+        messages += f'<div class="notice"><strong>Policy warning</strong><ul class="compact">{warning_html}</ul></div>'
+
+    rows = []
+    for key in CLEANUP_POLICY_INT_FIELDS:
+        rows.append(
+            '<div class="kv-row">'
+            f'<div class="kv-label"><label for="policy-{escape(key)}">{escape(CLEANUP_POLICY_FIELD_LABELS[key])}</label></div>'
+            '<div class="kv-value">'
+            f'<input id="policy-{escape(key)}" name="{escape(key)}" type="number" min="1" value="{escape(policy.get(key, ""))}">'
+            f'<span class="meta"><code>{escape(key)}</code></span>'
+            '</div></div>'
+        )
+    checked = " checked" if bool(policy.get("include_backups_by_default")) else ""
+    rows.append(
+        '<div class="kv-row">'
+        '<div class="kv-label">Include backups by default</div>'
+        '<div class="kv-value">'
+        f'<label><input type="checkbox" name="include_backups_by_default" value="1"{checked}> ordinary cleanup includes backups/trash</label>'
+        '<span class="meta"><code>include_backups_by_default</code></span>'
+        '</div></div>'
+    )
+    return f"""
+    {messages}
+    <form method="post" action="/servers/storage-cleanup/policy">
+      <div class="kv">{''.join(rows)}</div>
+      <p class="meta">빈 입력은 기본값으로 저장합니다. 음수와 0은 일반 policy 저장에서 거부됩니다.</p>
+      <button class="approve" type="submit">Save cleanup policy</button>
+    </form>
+    """
+
+
+def cleanup_result_html(result: runtime_storage.CleanupResult, *, title: str) -> str:
+    summary = cleanup_candidate_summary(result, RUNTIME_ROOT)
+    rows = []
+    for category, values in summary.items():
+        rows.append(
+            "<tr>"
+            f"<td><code>{escape(category)}</code></td>"
+            f"<td>{escape(values['count'])}</td>"
+            f"<td>{escape(runtime_storage.format_bytes(values['bytes']))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append('<tr><td colspan="3" class="meta">No cleanup candidates.</td></tr>')
+
+    sample_items = []
+    for candidate in result.candidates[:12]:
+        sample_items.append(
+            f"<li><code>{escape(candidate.path)}</code> "
+            f"<span class='meta'>({escape(candidate.kind)}, {escape(runtime_storage.format_bytes(candidate.bytes))}, {escape(candidate.reason)})</span></li>"
+        )
+    sample_html = "" if not sample_items else f"<details><summary>Candidate sample</summary><ul class='compact'>{''.join(sample_items)}</ul></details>"
+    error_items = "".join(f"<li><code>{escape(error.path)}</code>: {escape(error.error)}</li>" for error in result.errors)
+    errors_html = "" if not error_items else f"<div class='notice'><strong>Errors</strong><ul class='compact'>{error_items}</ul></div>"
+    mode = "Preview" if result.dry_run else "Applied"
+    return f"""
+    <section class="card">
+      <h3>{escape(title)}</h3>
+      <p class="meta">
+        Mode: <code>{escape(mode)}</code><br>
+        Candidates: <code>{escape(len(result.candidates))}</code><br>
+        Estimated reclaimed: <code>{escape(runtime_storage.format_bytes(sum(candidate.bytes for candidate in result.candidates)))}</code><br>
+        Deleted files: <code>{escape(result.deleted_files)}</code>, deleted dirs: <code>{escape(result.deleted_dirs)}</code>, reclaimed: <code>{escape(runtime_storage.format_bytes(result.reclaimed_bytes))}</code>
+      </p>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Category</th><th>Candidates</th><th>Bytes</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
+      {sample_html}
+      {errors_html}
+    </section>
+    """
+
+
+def storage_cleanup_action_notice_html(status: str) -> str:
+    if status == "policy_saved":
+        return '<div class="notice"><strong>Cleanup policy saved.</strong><br>저장된 policy는 다음 preview/apply에서 사용됩니다.</div>'
+    return ""
+
+
+def storage_cleanup_page_html(
+    *,
+    result: runtime_storage.CleanupResult | None = None,
+    result_title: str = "Cleanup preview",
+    notice_html: str = "",
+    policy_errors: list[str] | None = None,
+    policy_warnings: list[str] | None = None,
+) -> str:
+    policy = load_cleanup_policy(RUNTIME_ROOT)
+    total = runtime_storage.total_storage(RUNTIME_ROOT)
+    entries = runtime_storage.storage_summary(RUNTIME_ROOT)
+    counts = storage_cleanup_history_counts(RUNTIME_ROOT)
+    default_include = "1" if bool(policy.get("include_backups_by_default")) else "0"
+    result_block = cleanup_result_html(result, title=result_title) if result is not None else ""
+    return f"""
+    <div class="stack">
+      <div class="section-title">
+        <h2>{escape(SERVER_TAB_LABELS['storage_cleanup'])} <span class="meta">Storage Cleanup</span></h2>
+        <p class="meta">런타임 저장소 사용량, history 개수, cleanup policy, preview/apply 작업을 한 곳에서 관리합니다.</p>
+      </div>
+      {notice_html}
+      <section class="card">
+        <h3>Runtime storage summary</h3>
+        <div class="kv">
+          {kv_row_html("Runtime root", str(RUNTIME_ROOT), code_value=True)}
+          {kv_row_html("Total", f"{runtime_storage.format_bytes(total.bytes)} ({total.files} files, {total.dirs} dirs)")}
+          {kv_row_html("Policy file", str(cleanup_policy_file(RUNTIME_ROOT)), code_value=True)}
+        </div>
+        {storage_summary_table_html(entries)}
+      </section>
+      <section class="card">
+        <h3>History counts</h3>
+        <p class="meta">pending bundles are protected and are not ordinary cleanup or clear-history candidates.</p>
+        {storage_history_counts_table_html(counts, policy)}
+      </section>
+      <section class="card">
+        <h3>Cleanup policy settings</h3>
+        {cleanup_policy_form_html(policy, errors=policy_errors, warnings=policy_warnings)}
+      </section>
+      <section class="card">
+        <h3>Preview and apply</h3>
+        <p class="meta">Ordinary cleanup uses the current runtime_storage cleanup helper. Count-based policy fields are saved here and will be used directly after the core cleanup API lands.</p>
+        <div class="button-row">
+          <form class="inline" method="post" action="/servers/storage-cleanup/preview">
+            <input type="hidden" name="include_backups" value="{default_include}">
+            <button class="secondary" type="submit">Preview default cleanup</button>
+          </form>
+          <form class="inline" method="post" action="/servers/storage-cleanup/preview">
+            <input type="hidden" name="include_backups" value="1">
+            <button class="secondary" type="submit">Preview cleanup including backups</button>
+          </form>
+        </div>
+        <div class="notice">
+          <strong>Ordinary cleanup confirmation</strong><br>
+          This will delete eligible runtime cleanup candidates. Pending bundles, session config, secrets, and active pid files are preserved.
+        </div>
+        <div class="button-row">
+          <form class="inline" method="post" action="/servers/storage-cleanup/apply">
+            <input type="hidden" name="include_backups" value="{default_include}">
+            <label class="meta"><input type="checkbox" name="confirm" value="1" required> Confirm ordinary cleanup</label>
+            <button class="approve" type="submit">Run default cleanup</button>
+          </form>
+          <form class="inline" method="post" action="/servers/storage-cleanup/apply-with-backups">
+            <input type="hidden" name="include_backups" value="1">
+            <label class="meta"><input type="checkbox" name="confirm" value="1" required> Confirm backup-inclusive cleanup</label>
+            <button class="approve" type="submit">Run cleanup including backups</button>
+          </form>
+        </div>
+      </section>
+      <section class="card is-failed">
+        <h3>Dangerous actions</h3>
+        <p class="meta">Clear eligible history ignores keep counts but still preserves pending bundles, session config, secrets, and active pid files.</p>
+        <div class="button-row">
+          <form class="inline" method="post" action="/servers/storage-cleanup/preview">
+            <input type="hidden" name="clear_history" value="1">
+            <button class="secondary" type="submit">Preview clear eligible history</button>
+          </form>
+        </div>
+        <form method="post" action="/servers/storage-cleanup/clear-history">
+          <p><label>Type <code>{escape(CLEAR_HISTORY_CONFIRMATION)}</code> to continue<br>
+          <input name="confirm" autocomplete="off" placeholder="DELETE HISTORY"></label></p>
+          <p><label><input type="checkbox" name="include_backups" value="1"> Include backups and command bundle file backups</label></p>
+          <button class="reject" type="submit">Clear eligible history</button>
+        </form>
+      </section>
+      {result_block}
+    </div>
+    """
+
+
 def server_tab_content_html(tab: str, state: dict[str, object], action_notice_html: str = "") -> str:
     tab = normalize_server_tab(tab)
     review_server = state.get("review_server") if isinstance(state.get("review_server"), dict) else {}
@@ -2664,6 +3175,9 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
         </div>
         """
 
+    if tab == "storage_cleanup":
+        return storage_cleanup_page_html(notice_html=action_notice_html)
+
     if tab == "tools":
         notifier_installed = bool(tools.get("terminal_notifier", False))
         notification_available = any(tools.get(name, False) for name in ("terminal_notifier", "osascript", "notify_send", "powershell"))
@@ -2814,6 +3328,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(audit_state())
             return
 
+        if parsed.path == "/api/storage-cleanup-state":
+            self.send_json(storage_cleanup_state())
+            return
+
+        if parsed.path == "/servers/storage-cleanup":
+            self.redirect("/servers?tab=storage_cleanup")
+            return
+
         if parsed.path == "/handoffs/latest":
             self.send_json(latest_handoff_payload())
             return
@@ -2936,6 +3458,8 @@ class Handler(BaseHTTPRequestHandler):
                     params.get("service", [""])[0],
                     params.get("action_status", [""])[0],
                 )
+            elif current_tab == "storage_cleanup":
+                action_notice_html = storage_cleanup_action_notice_html(params.get("storage_status", [""])[0])
             self.send_html(
                 "관리",
                 server_state_html(server_state(), current_tab, action_notice_html=action_notice_html),
@@ -3018,6 +3542,96 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         parts = [part for part in parsed.path.split("/") if part]
+
+        if parts[:2] == ["servers", "storage-cleanup"]:
+            if not is_local_client_address(str(self.client_address[0])):
+                self.send_html(
+                    "Forbidden",
+                    "<p>Local requests only.</p>",
+                    status=403,
+                    active_nav="servers",
+                    server_tab="storage_cleanup",
+                )
+                return
+
+            form = self.read_form()
+            include_backups = str(form.get("include_backups", [""])[0]).strip().lower() in {"1", "true", "yes", "on"}
+
+            if parts == ["servers", "storage-cleanup", "policy"]:
+                policy, errors, warnings = cleanup_policy_from_form(form)
+                if errors:
+                    self.send_html(
+                        "Cleanup policy validation failed",
+                        storage_cleanup_page_html(policy_errors=errors, policy_warnings=warnings),
+                        status=400,
+                        active_nav="servers",
+                        subtitle="저장소 정리 policy 값을 다시 확인하세요.",
+                        server_tab="storage_cleanup",
+                    )
+                    return
+                save_cleanup_policy(policy, RUNTIME_ROOT)
+                self.redirect("/servers?tab=storage_cleanup&storage_status=policy_saved")
+                return
+
+            if parts == ["servers", "storage-cleanup", "preview"]:
+                clear_history = str(form.get("clear_history", [""])[0]).strip().lower() in {"1", "true", "yes", "on"}
+                result = run_storage_cleanup(dry_run=True, include_backups=include_backups, clear_history=clear_history)
+                title = "Clear eligible history preview" if clear_history else "Cleanup preview"
+                self.send_html(
+                    "저장소 정리 미리보기",
+                    storage_cleanup_page_html(result=result, result_title=title),
+                    active_nav="servers",
+                    subtitle="삭제 전 후보 목록과 예상 회수 용량을 확인합니다.",
+                    server_tab="storage_cleanup",
+                )
+                return
+
+            if parts in (["servers", "storage-cleanup", "apply"], ["servers", "storage-cleanup", "apply-with-backups"]):
+                include_backups = include_backups or parts == ["servers", "storage-cleanup", "apply-with-backups"]
+                if str(form.get("confirm", [""])[0]).strip() != "1":
+                    self.send_html(
+                        "Cleanup confirmation required",
+                        storage_cleanup_page_html(
+                            notice_html='<div class="notice"><strong>Cleanup confirmation required.</strong><br>체크박스로 ordinary cleanup 실행을 확인하세요.</div>'
+                        ),
+                        status=400,
+                        active_nav="servers",
+                        subtitle="저장소 정리 실행 확인이 필요합니다.",
+                        server_tab="storage_cleanup",
+                    )
+                    return
+                result = run_storage_cleanup(dry_run=False, include_backups=include_backups)
+                self.send_html(
+                    "저장소 정리 실행 결과",
+                    storage_cleanup_page_html(result=result, result_title="Cleanup apply result"),
+                    active_nav="servers",
+                    subtitle="런타임 cleanup 실행 결과입니다.",
+                    server_tab="storage_cleanup",
+                )
+                return
+
+            if parts == ["servers", "storage-cleanup", "clear-history"]:
+                if str(form.get("confirm", [""])[0]).strip() != CLEAR_HISTORY_CONFIRMATION:
+                    self.send_html(
+                        "Clear history confirmation required",
+                        storage_cleanup_page_html(
+                            notice_html=f'<div class="notice"><strong>Clear-history confirmation required.</strong><br>정확히 <code>{escape(CLEAR_HISTORY_CONFIRMATION)}</code> 를 입력해야 합니다.</div>'
+                        ),
+                        status=400,
+                        active_nav="servers",
+                        subtitle="위험 작업 실행 확인이 필요합니다.",
+                        server_tab="storage_cleanup",
+                    )
+                    return
+                result = run_storage_cleanup(dry_run=False, include_backups=include_backups, clear_history=True)
+                self.send_html(
+                    "이력 정리 실행 결과",
+                    storage_cleanup_page_html(result=result, result_title="Clear eligible history result"),
+                    active_nav="servers",
+                    subtitle="clear-history 실행 결과입니다.",
+                    server_tab="storage_cleanup",
+                )
+                return
 
         if parts == ["intents", "import"]:
             if not is_local_client_address(str(self.client_address[0])):

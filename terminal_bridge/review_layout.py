@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import html
 
-VALID_SERVER_TABS = {"overview", "services", "processes", "connection", "environment", "tools", "diagnostics"}
+VALID_SERVER_TABS = {
+    "overview",
+    "services",
+    "processes",
+    "connection",
+    "environment",
+    "tools",
+    "storage_cleanup",
+    "diagnostics",
+}
 SERVER_TAB_LABELS = {
     "overview": "개요",
     "services": "서버",
@@ -10,6 +19,7 @@ SERVER_TAB_LABELS = {
     "connection": "연결",
     "environment": "환경",
     "tools": "로컬 도구",
+    "storage_cleanup": "저장소 정리",
     "diagnostics": "진단",
 }
 
@@ -47,7 +57,7 @@ def primary_nav_html(active: str) -> str:
 def management_nav_html(current_tab: str) -> str:
     current_tab = normalize_server_tab(current_tab)
     links: list[str] = []
-    for tab in ("overview", "services", "processes", "connection", "environment", "tools", "diagnostics"):
+    for tab in ("overview", "services", "processes", "connection", "environment", "tools", "storage_cleanup", "diagnostics"):
         classes = ["side-link"]
         aria = ""
         if tab == current_tab:

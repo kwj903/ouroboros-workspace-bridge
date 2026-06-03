@@ -1703,6 +1703,74 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("overflow-wrap: anywhere", html)
         self.assertIn("max-width: 100%", html)
 
+    def test_management_nav_html_contains_storage_cleanup_tab(self) -> None:
+        html = review_layout.management_nav_html("storage_cleanup")
+
+        self.assertIn("저장소 정리", html)
+        self.assertIn("tab=storage_cleanup", html)
+        self.assertIn('aria-current="page"', html)
+
+    def test_storage_cleanup_page_renders_sections_and_actions(self) -> None:
+        root = Path(self.tmp.name) / "runtime"
+        review.RUNTIME_ROOT = root
+        html = review.server_tab_content_html("storage_cleanup", review.server_state())
+
+        self.assertIn("Storage Cleanup", html)
+        self.assertIn("Runtime storage summary", html)
+        self.assertIn("History counts", html)
+        self.assertIn("cleanup_policy.json", html)
+        self.assertIn('/servers/storage-cleanup/policy', html)
+        self.assertIn('/servers/storage-cleanup/preview', html)
+        self.assertIn('/servers/storage-cleanup/apply', html)
+        self.assertIn('/servers/storage-cleanup/apply-with-backups', html)
+        self.assertIn('/servers/storage-cleanup/clear-history', html)
+        self.assertIn("DELETE HISTORY", html)
+
+    def test_cleanup_policy_from_form_validates_zero_and_negative_values(self) -> None:
+        form = {key: ["1"] for key in review.CLEANUP_POLICY_INT_FIELDS}
+        form["keep_applied"] = ["0"]
+        form["keep_failed"] = ["-1"]
+
+        _policy, errors, _warnings = review.cleanup_policy_from_form(form)
+
+        joined = " ".join(errors)
+        self.assertIn("0", joined)
+        self.assertIn("음수", joined)
+
+    def test_cleanup_policy_from_form_empty_resets_to_defaults(self) -> None:
+        form = {key: [""] for key in review.CLEANUP_POLICY_INT_FIELDS}
+
+        policy, errors, _warnings = review.cleanup_policy_from_form(form)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(policy["keep_applied"], review.CLEANUP_POLICY_DEFAULTS["keep_applied"])
+        self.assertEqual(policy["older_than_text_payload_days"], review.CLEANUP_POLICY_DEFAULTS["older_than_text_payload_days"])
+
+    def test_clear_history_candidates_preserve_pending_and_protected_files(self) -> None:
+        root = Path(self.tmp.name) / "runtime"
+        applied_dir = root / "command_bundles" / "applied"
+        pending_dir = root / "command_bundles" / "pending"
+        processes_dir = root / "processes"
+        applied_dir.mkdir(parents=True)
+        pending_dir.mkdir(parents=True)
+        processes_dir.mkdir(parents=True)
+        applied = applied_dir / "cmd-applied.json"
+        pending = pending_dir / "cmd-pending.json"
+        session = root / "session.json"
+        pid_file = processes_dir / "review.pid"
+        applied.write_text("{}", encoding="utf-8")
+        pending.write_text("{}", encoding="utf-8")
+        session.write_text("{}", encoding="utf-8")
+        pid_file.write_text("123", encoding="utf-8")
+
+        candidates = review.clear_history_cleanup_candidates(root)
+        names = {candidate.path.name for candidate in candidates}
+
+        self.assertIn(applied.name, names)
+        self.assertNotIn(pending.name, names)
+        self.assertNotIn(session.name, names)
+        self.assertNotIn(pid_file.name, names)
+
 
 class WatcherHelperTests(unittest.TestCase):
     def test_embedded_watcher_config_defaults(self) -> None:
