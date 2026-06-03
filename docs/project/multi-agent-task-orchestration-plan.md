@@ -465,6 +465,7 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - Phase 3-O3는 `/pending` task orchestration dashboard에 `workspace_task_cleanup_preview` 결과를 read-only로 연결해 cleanup readiness, risk, blocker, recommended action, validation, queue, workspace 상태를 표시한다. Dashboard 버튼으로 cleanup proposal을 직접 실행하지 않는다.
 - Phase 3-P1은 `workspace_propose_task_validation_command_and_wait`로 `merged` task의 source-level validation command를 local `/pending` 승인 대상으로 제안하는 foundation을 추가했다. 결과 해석과 `validation_status` 기록은 operator가 `workspace_record_task_validation`으로 별도 수행한다.
 - Phase 3-P2는 `workspace_task_validation_result_hint`로 validation command bundle 결과를 read-only로 요약하고 conservative `inferred_status` 후보와 `workspace_record_task_validation(...)` 제안값을 제공한다. 실제 validation record write는 operator가 별도로 수행한다.
+- Phase 3-P3는 `/pending` task orchestration dashboard에 validation result hint를 read-only로 연결해 latest validation bundle id, inferred status candidate, recommended next action, suggested record 안내를 표시한다. Dashboard는 validation record를 자동으로 쓰지 않는다.
 
 성공 기준:
 
@@ -642,3 +643,7 @@ Phase 3-P1 adds a public proposal wrapper, `workspace_propose_task_validation_co
 ## Phase 3-P2 Update
 
 Phase 3-P2 adds a public read-only helper, `workspace_task_validation_result_hint`, for guided validation result recording. The helper can summarize a specific validation command bundle by `bundle_id` or find the latest validation command bundle linked to a task/project/source cwd by proposal metadata. It reports command argv/summary, bundle status, command exit code when available, stdout/stderr previews, a conservative `inferred_status` candidate, recommended next action, and suggested `workspace_record_task_validation(...)` inputs. `exit_code=0` yields only a `passed` candidate, non-zero exit yields only a `failed` candidate, and pending/missing/no-exit-code results remain `unknown`. The helper never executes commands, modifies source files, updates runtime worktrees, or writes merge queue validation records. Direct mode defaults and source merge/apply/archive/cleanup execution behavior remain unchanged.
+
+## Phase 3-P3 Update
+
+Phase 3-P3 connects Phase 3-P2 validation result hints to the `/pending` task orchestration dashboard as read-only guided recording UX. Each dashboard entry keeps the recorded `validation_status` and, when a hint is available, adds the latest validation bundle id, conservative inferred status candidate, recommended next action, and whether a suggested manual record input exists. Missing or unavailable hints fall back to compact neutral/warn badges so the dashboard continues rendering. This phase does not add public MCP tools, does not execute validation commands, does not write `validation_status`, and does not modify source projects, runtime worktrees, merge queue records, merge/apply/archive behavior, or cleanup execution behavior.

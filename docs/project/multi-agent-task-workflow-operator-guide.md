@@ -26,6 +26,7 @@ Implemented:
 - Read-only physical cleanup candidate preview through `workspace_task_cleanup_preview`.
 - Locally approved task worktree cleanup proposal and execution through `workspace_propose_task_cleanup_and_wait`.
 - Cleanup readiness, risk, blockers, validation, queue, and workspace status badges in the `/pending` task orchestration dashboard.
+- Validation result hint badges in the `/pending` task orchestration dashboard.
 
 Not implemented:
 
@@ -38,6 +39,7 @@ Not implemented:
 - Manual runtime directory deletion outside the recorded cleanup path.
 - A full interactive merge queue UI with conflict resolution.
 - A dashboard button that directly creates cleanup proposals.
+- A dashboard button that records validation status.
 
 ## Roles
 
@@ -232,6 +234,16 @@ Recommended statuses:
 - `failed`: validation completed and found a problem.
 
 Use `workspace_task_validation_status(task_id, cwd, project_id)` to read the latest validation metadata. Recording validation only updates runtime metadata; it does not run commands, edit source files, apply patches, archive records, or create commits.
+
+The `/pending` task orchestration dashboard also shows a compact read-only validation hint for each task when available:
+
+- recorded `validation_status`
+- latest validation command bundle id
+- conservative inferred status candidate
+- recommended next action
+- whether a suggested manual record input is available
+
+Use the dashboard as a guide only. The guided flow is: approve/run the validation command, inspect `workspace_task_validation_result_hint(...)`, call `workspace_record_task_validation(...)` manually with the operator-reviewed outcome, then refresh `/pending` to confirm the recorded validation status. The dashboard does not record validation status and does not run validation commands.
 
 ### 11. Orchestrator Archives Runtime Records
 
@@ -497,5 +509,6 @@ After approved source integration:
 - Phase 3-O3: `/pending` cleanup readiness dashboard and operator UX guidance.
 - Phase 3-P1: merged task source-level validation command proposal foundation.
 - Phase 3-P2: read-only validation command result hint and guided recording foundation.
+- Phase 3-P3: `/pending` validation result hint dashboard and guided recording UX foundation.
 
 Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, automatic validation status recording, automatic validation command execution, and commit flow integration.

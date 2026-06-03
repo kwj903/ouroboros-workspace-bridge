@@ -59,6 +59,7 @@ from terminal_bridge.review_layout import (
 )
 from terminal_bridge.task_cleanup_preview import task_cleanup_preview
 from terminal_bridge.task_orchestration_summary import task_orchestration_summary
+from terminal_bridge.task_validation_result import task_validation_result_hint
 from terminal_bridge.task_workspaces import inspect_task_worktree, resolve_task_workspace_for_bundle
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -1107,6 +1108,60 @@ def _cleanup_preview_entries_by_key(cleanup_preview: Mapping[str, object] | None
     return entries
 
 
+def _validation_result_hint_entries_by_key(
+    validation_result_hints: Mapping[str, object] | None,
+) -> dict[tuple[str, str, str], Mapping[str, object]]:
+    if not validation_result_hints:
+        return {}
+    raw_entries = validation_result_hints.get("entries")
+    if not isinstance(raw_entries, list):
+        return {}
+    entries: dict[tuple[str, str, str], Mapping[str, object]] = {}
+    for raw_entry in raw_entries:
+        if isinstance(raw_entry, Mapping):
+            entries[_task_orchestration_key(raw_entry)] = raw_entry
+    return entries
+
+
+def _validation_result_hint_error(entry: Mapping[str, object], exc: Exception) -> dict[str, object]:
+    return {
+        "task_id": str(entry.get("task_id") or ""),
+        "project_id": str(entry.get("project_id") or ""),
+        "source_cwd": str(entry.get("source_cwd") or "."),
+        "bundle_id": None,
+        "bundle_status": "unavailable",
+        "inferred_status": "unknown",
+        "recommended_next_action": "inspect_validation_result_hint_error",
+        "hint_error": f"{type(exc).__name__}: {short_error(exc, 160)}",
+    }
+
+
+def _load_validation_result_hints_by_key(entries: list[object]) -> dict[tuple[str, str, str], Mapping[str, object]]:
+    hints: dict[tuple[str, str, str], Mapping[str, object]] = {}
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        task_id = str(entry.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        source_cwd = str(entry.get("source_cwd") or ".").strip() or "."
+        project_id = str(entry.get("project_id") or "").strip() or None
+        key = _task_orchestration_key(entry)
+        try:
+            hint = task_validation_result_hint(
+                task_id=task_id,
+                cwd=source_cwd,
+                project_id=project_id,
+                runtime_root=RUNTIME_ROOT,
+            )
+        except Exception as exc:
+            hints[key] = _validation_result_hint_error(entry, exc)
+            continue
+        if isinstance(hint, Mapping):
+            hints[key] = hint
+    return hints
+
+
 def _cleanup_blockers_label(value: object) -> str:
     if not isinstance(value, list):
         return "cleanup blockers: 0"
@@ -1142,9 +1197,54 @@ def _cleanup_readiness_badges(cleanup_entry: Mapping[str, object] | None) -> str
     return "".join(badges)
 
 
+def _validation_next_action_tone(action: object) -> str:
+    value = str(action or "").strip()
+    if value == "record_passed_validation":
+        return "ok"
+    if value == "record_failed_validation":
+        return "danger"
+    if value == "wait_for_validation_command_bundle":
+        return "warn"
+    return "neutral"
+
+
+def _validation_result_hint_badges(validation_result_hint: Mapping[str, object] | None) -> str:
+    if not validation_result_hint:
+        return status_badge("validation hint: not loaded", "neutral")
+    if validation_result_hint.get("hint_error"):
+        return status_badge("validation hint: unavailable", "warn")
+
+    bundle_id = str(validation_result_hint.get("bundle_id") or "").strip()
+    inferred_status = str(validation_result_hint.get("inferred_status") or "unknown").strip() or "unknown"
+    recommended_next_action = (
+        str(validation_result_hint.get("recommended_next_action") or "none").strip() or "none"
+    )
+    suggested_record_input = validation_result_hint.get("suggested_record_input")
+    suggestion_available = isinstance(suggested_record_input, Mapping) and bool(bundle_id)
+
+    return "".join(
+        [
+            status_badge(f"validation bundle: {bundle_id or 'none'}", "neutral"),
+            status_badge(
+                f"validation inferred: {inferred_status}",
+                _validation_status_tone(inferred_status),
+            ),
+            status_badge(
+                f"validation next: {recommended_next_action}",
+                _validation_next_action_tone(recommended_next_action),
+            ),
+            status_badge(
+                f"record suggestion: {'available' if suggestion_available else 'none'}",
+                "warn" if suggestion_available else "neutral",
+            ),
+        ]
+    )
+
+
 def _task_orchestration_entry_html(
     entry: Mapping[str, object],
     cleanup_entry: Mapping[str, object] | None = None,
+    validation_result_hint: Mapping[str, object] | None = None,
 ) -> str:
     relation_label, relation_tone = _task_orchestration_relation(entry)
     task_id = str(entry.get("task_id") or "missing")
@@ -1174,6 +1274,7 @@ def _task_orchestration_entry_html(
     validated_by = str(entry.get("validated_by") or "").strip()
     if validated_by:
         validation_badges.append(status_badge(f"validated by: {validated_by}", "neutral"))
+    validation_badges.append(_validation_result_hint_badges(validation_result_hint))
 
     return f"""
     <tr>
@@ -1222,6 +1323,7 @@ def task_orchestration_summary_html(
     *,
     project_id: str | None = None,
     cleanup_preview: Mapping[str, object] | None = None,
+    validation_result_hints: Mapping[str, object] | None = None,
 ) -> str:
     try:
         resolved_summary = summary or task_orchestration_summary(project_id=project_id, runtime_root=RUNTIME_ROOT)
@@ -1249,6 +1351,11 @@ def task_orchestration_summary_html(
         _cleanup_preview_entries_by_key(resolved_cleanup_preview)
         if isinstance(resolved_cleanup_preview, Mapping)
         else {}
+    )
+    validation_result_hints_by_key = (
+        _load_validation_result_hints_by_key(entries)
+        if validation_result_hints is None and summary is None
+        else _validation_result_hint_entries_by_key(validation_result_hints)
     )
     project_label = str(resolved_summary.get("project_id") or project_id or "").strip()
     project_badge = status_badge(f"project: {project_label}", "neutral") if project_label else ""
@@ -1287,7 +1394,11 @@ def task_orchestration_summary_html(
         body = '<p class="meta">No task orchestration records.</p>'
     else:
         rows = "\n".join(
-            _task_orchestration_entry_html(entry, cleanup_entries_by_key.get(_task_orchestration_key(entry)))
+            _task_orchestration_entry_html(
+                entry,
+                cleanup_entries_by_key.get(_task_orchestration_key(entry)),
+                validation_result_hints_by_key.get(_task_orchestration_key(entry)),
+            )
             for entry in entries
             if isinstance(entry, Mapping)
         )
