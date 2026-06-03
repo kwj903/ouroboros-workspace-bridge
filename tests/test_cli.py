@@ -85,6 +85,9 @@ class CliCommandTests(unittest.TestCase):
         self.assertTrue(cleanup.dry_run)
         self.assertFalse(cleanup.apply)
         self.assertEqual(cleanup.older_than_days, 7)
+        self.assertFalse(cleanup.prune_all_history)
+        prune = parser.parse_args(["cleanup", "--prune-all-history"])
+        self.assertTrue(prune.prune_all_history)
 
     def test_runtime_storage_commands_call_supervisor(self) -> None:
         calls: list[tuple[str, object]] = []
@@ -97,8 +100,14 @@ class CliCommandTests(unittest.TestCase):
             calls.append(("storage", None))
             return 0
 
-        def fake_cleanup_storage(*, apply: bool, older_than_days: int | None = None, include_backups: bool = False) -> int:
-            calls.append(("cleanup", (apply, older_than_days, include_backups)))
+        def fake_cleanup_storage(
+            *,
+            apply: bool,
+            older_than_days: int | None = None,
+            include_backups: bool = False,
+            prune_all_history: bool = False,
+        ) -> int:
+            calls.append(("cleanup", (apply, older_than_days, include_backups, prune_all_history)))
             return 0
 
         cli.supervisor.print_paths = fake_paths
@@ -107,13 +116,19 @@ class CliCommandTests(unittest.TestCase):
 
         self.assertEqual(cli.main(["paths"]), 0)
         self.assertEqual(cli.main(["storage"]), 0)
-        self.assertEqual(cli.main(["cleanup", "--apply", "--older-than-days", "3", "--include-backups"]), 0)
-        self.assertEqual(calls, [("paths", None), ("storage", None), ("cleanup", (True, 3, True))])
+        self.assertEqual(cli.main(["cleanup", "--apply", "--older-than-days", "3", "--include-backups", "--prune-all-history"]), 0)
+        self.assertEqual(calls, [("paths", None), ("storage", None), ("cleanup", (True, 3, True, True))])
 
     def test_cleanup_rejects_non_positive_older_than_days(self) -> None:
         called = False
 
-        def fake_cleanup_storage(*, apply: bool, older_than_days: int | None = None, include_backups: bool = False) -> int:
+        def fake_cleanup_storage(
+            *,
+            apply: bool,
+            older_than_days: int | None = None,
+            include_backups: bool = False,
+            prune_all_history: bool = False,
+        ) -> int:
             nonlocal called
             called = True
             return 0

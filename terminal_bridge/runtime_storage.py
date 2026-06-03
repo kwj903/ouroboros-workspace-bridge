@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import json
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 PROTECTED_ROOT_FILES = {"session.json", "session.env", "intent_hmac_secret"}
 PROTECTED_PID_GLOB = "processes/*.pid"
 
 LOG_SIZE_LIMIT_BYTES = 10 * 1024 * 1024
+DEFAULT_OLDER_THAN_BUNDLE_DAYS = 60
+CLEANUP_POLICY_FILENAME = "cleanup_policy.json"
 
 
 @dataclass(frozen=True)
@@ -19,6 +24,23 @@ class StorageEntry:
     bytes: int
     files: int
     dirs: int
+
+
+@dataclass(frozen=True)
+class CleanupPolicy:
+    keep_applied: int = 1000
+    keep_failed: int = 500
+    keep_rejected: int = 200
+    keep_tool_calls: int = 2000
+    keep_handoffs: int = 1000
+    keep_text_payloads: int = 500
+    older_than_text_payload_days: int = 14
+    older_than_operations_days: int = 30
+    older_than_backups_days: int = 30
+    include_backups_by_default: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -46,6 +68,100 @@ class CleanupResult:
     errors: list[CleanupError]
 
 
+class CleanupPolicyValidationError(ValueError):
+    """Raised when a runtime cleanup policy cannot be validated."""
+
+
+_POLICY_INT_FIELDS = (
+    "keep_applied",
+    "keep_failed",
+    "keep_rejected",
+    "keep_tool_calls",
+    "keep_handoffs",
+    "keep_text_payloads",
+    "older_than_text_payload_days",
+    "older_than_operations_days",
+    "older_than_backups_days",
+)
+_POLICY_BOOL_FIELDS = ("include_backups_by_default",)
+
+
+def default_cleanup_policy() -> CleanupPolicy:
+    return CleanupPolicy()
+
+
+def cleanup_policy_path(root: Path) -> Path:
+    return root.expanduser().resolve(strict=False) / CLEANUP_POLICY_FILENAME
+
+
+def _coerce_policy_int(name: str, value: object, default: int, *, allow_zero: bool) -> int:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        raise CleanupPolicyValidationError(f"{name} must be an integer")
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError) as exc:
+        raise CleanupPolicyValidationError(f"{name} must be an integer") from exc
+    if coerced < 0:
+        raise CleanupPolicyValidationError(f"{name} must not be negative")
+    if coerced == 0 and not allow_zero:
+        raise CleanupPolicyValidationError(f"{name} must be greater than zero")
+    return coerced
+
+
+def _coerce_policy_bool(name: str, value: object, default: bool) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    raise CleanupPolicyValidationError(f"{name} must be a boolean")
+
+
+def validate_cleanup_policy(data: CleanupPolicy | dict[str, object] | None, *, allow_zero: bool = False) -> CleanupPolicy:
+    if data is None:
+        return default_cleanup_policy()
+    if isinstance(data, CleanupPolicy):
+        data = data.as_dict()
+    if not isinstance(data, dict):
+        raise CleanupPolicyValidationError("cleanup policy must be a mapping")
+
+    defaults = default_cleanup_policy().as_dict()
+    values: dict[str, object] = {}
+    for name in _POLICY_INT_FIELDS:
+        values[name] = _coerce_policy_int(name, data.get(name, defaults[name]), int(defaults[name]), allow_zero=allow_zero)
+    for name in _POLICY_BOOL_FIELDS:
+        values[name] = _coerce_policy_bool(name, data.get(name, defaults[name]), bool(defaults[name]))
+    return CleanupPolicy(**values)
+
+
+def load_cleanup_policy(root: Path) -> CleanupPolicy:
+    path = cleanup_policy_path(root)
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        return validate_cleanup_policy(data)
+    except (OSError, json.JSONDecodeError, CleanupPolicyValidationError):
+        return default_cleanup_policy()
+
+
+def save_cleanup_policy(root: Path, policy: CleanupPolicy | dict[str, object]) -> CleanupPolicy:
+    validated = validate_cleanup_policy(policy)
+    path = cleanup_policy_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(validated.as_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(payload, encoding="utf-8")
+    tmp_path.replace(path)
+    return validated
+
+
 def runtime_paths(root: Path, workspace_root: Path) -> list[tuple[str, Path]]:
     return [
         ("Project checkout", Path(__file__).resolve().parent.parent),
@@ -53,6 +169,7 @@ def runtime_paths(root: Path, workspace_root: Path) -> list[tuple[str, Path]]:
         ("Session config", root / "session.json"),
         ("Legacy session env", root / "session.env"),
         ("Intent HMAC secret", root / "intent_hmac_secret"),
+        ("Cleanup policy", cleanup_policy_path(root)),
         ("Process/log directory", root / "processes"),
         ("Command bundles directory", root / "command_bundles"),
         ("Backups directory", root / "backups"),
@@ -157,6 +274,23 @@ def _path_size(path: Path) -> int:
     return _entry_size(path)[0]
 
 
+def _candidate_kind(path: Path) -> str:
+    return "dir" if path.is_dir() and not path.is_symlink() else "file"
+
+
+def _add_candidate(candidates: list[CleanupCandidate], root: Path, child: Path, reason: str) -> None:
+    if child.is_symlink() or not _safe_child(child, root):
+        return
+    candidates.append(
+        CleanupCandidate(
+            path=child,
+            kind=_candidate_kind(child),
+            bytes=_path_size(child),
+            reason=reason,
+        )
+    )
+
+
 def _add_children_older_than(
     candidates: list[CleanupCandidate],
     root: Path,
@@ -168,28 +302,124 @@ def _add_children_older_than(
         return
     cutoff = time.time() - (days * 86400)
     for child in directory.iterdir():
-        if child.is_symlink() or not _safe_child(child, root):
-            continue
         if child.name in PROTECTED_ROOT_FILES:
             continue
         if _mtime_older_than(child, cutoff):
-            candidates.append(
-                CleanupCandidate(
-                    path=child,
-                    kind="dir" if child.is_dir() else "file",
-                    bytes=_path_size(child),
-                    reason=reason,
-                )
-            )
+            _add_candidate(candidates, root, child, reason)
 
 
-def cleanup_candidates(root: Path, *, older_than_days: int | None = None, include_backups: bool = False) -> list[CleanupCandidate]:
+def _timestamp_from_value(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def _metadata_timestamp(path: Path) -> float | None:
+    if not path.is_file() or path.suffix.lower() != ".json":
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key in ("updated_at", "completed_at", "created_at", "started_at", "timestamp", "archived_at"):
+        timestamp = _timestamp_from_value(data.get(key))
+        if timestamp is not None:
+            return timestamp
+    return None
+
+
+def _record_timestamp(path: Path) -> float:
+    metadata_time = _metadata_timestamp(path)
+    if metadata_time is not None:
+        return metadata_time
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _sorted_record_children(root: Path, directory: Path) -> list[Path]:
+    if not directory.exists() or directory.is_symlink() or not directory.is_dir():
+        return []
+    children: list[Path] = []
+    for child in directory.iterdir():
+        if child.is_symlink() or not _safe_child(child, root):
+            continue
+        children.append(child)
+    return sorted(children, key=_record_timestamp, reverse=True)
+
+
+def _add_count_candidates(
+    candidates: list[CleanupCandidate],
+    root: Path,
+    directory: Path,
+    keep_count: int,
+    reason: str,
+) -> None:
+    children = _sorted_record_children(root, directory)
+    for child in children[keep_count:]:
+        _add_candidate(candidates, root, child, reason)
+
+
+def _add_all_children(candidates: list[CleanupCandidate], root: Path, directory: Path, reason: str) -> None:
+    for child in _sorted_record_children(root, directory):
+        _add_candidate(candidates, root, child, reason)
+
+
+def _dedupe_candidates(candidates: list[CleanupCandidate], root: Path) -> list[CleanupCandidate]:
+    deduped: dict[Path, CleanupCandidate] = {}
+    for candidate in candidates:
+        if not is_deletable_candidate(candidate, root):
+            continue
+        key = candidate.path.resolve(strict=False)
+        if key not in deduped:
+            deduped[key] = candidate
+    return list(deduped.values())
+
+
+def cleanup_candidates(
+    root: Path,
+    *,
+    older_than_days: int | None = None,
+    include_backups: bool | None = None,
+    policy: CleanupPolicy | dict[str, object] | None = None,
+    prune_all_history: bool = False,
+) -> list[CleanupCandidate]:
     candidates: list[CleanupCandidate] = []
     root = root.expanduser().resolve(strict=False)
-    operational_days = older_than_days or 30
-    bundle_days = older_than_days or 60
-    payload_days = older_than_days or 14
-    backup_days = older_than_days or 30
+    resolved_policy = validate_cleanup_policy(policy) if policy is not None else load_cleanup_policy(root)
+    include_backup_candidates = resolved_policy.include_backups_by_default if include_backups is None else include_backups
+
+    if prune_all_history:
+        for state in ("applied", "failed", "rejected"):
+            _add_all_children(
+                candidates,
+                root,
+                root / "command_bundles" / state,
+                f"clear-history command bundle {state}",
+            )
+        for name in ("tool_calls", "handoffs", "operations", "text_payloads", "intent_imports", "trash"):
+            _add_all_children(candidates, root, root / name, "clear-history eligible record")
+        if include_backup_candidates:
+            for name in ("backups", "command_bundle_file_backups"):
+                _add_all_children(candidates, root, root / name, "clear-history backup/trash eligible record")
+        return _dedupe_candidates(candidates, root)
+
+    operational_days = older_than_days or resolved_policy.older_than_operations_days
+    bundle_days = older_than_days or DEFAULT_OLDER_THAN_BUNDLE_DAYS
+    payload_days = older_than_days or resolved_policy.older_than_text_payload_days
+    backup_days = older_than_days or resolved_policy.older_than_backups_days
 
     for name in ("tool_calls", "operations", "handoffs", "intent_imports"):
         _add_children_older_than(candidates, root, root / name, operational_days, f"older than {operational_days} days")
@@ -205,7 +435,50 @@ def cleanup_candidates(root: Path, *, older_than_days: int | None = None, includ
 
     _add_children_older_than(candidates, root, root / "text_payloads", payload_days, f"older than {payload_days} days")
 
-    if include_backups:
+    _add_count_candidates(
+        candidates,
+        root,
+        root / "command_bundles" / "applied",
+        resolved_policy.keep_applied,
+        f"older than newest {resolved_policy.keep_applied} applied bundle records",
+    )
+    _add_count_candidates(
+        candidates,
+        root,
+        root / "command_bundles" / "failed",
+        resolved_policy.keep_failed,
+        f"older than newest {resolved_policy.keep_failed} failed bundle records",
+    )
+    _add_count_candidates(
+        candidates,
+        root,
+        root / "command_bundles" / "rejected",
+        resolved_policy.keep_rejected,
+        f"older than newest {resolved_policy.keep_rejected} rejected bundle records",
+    )
+    _add_count_candidates(
+        candidates,
+        root,
+        root / "tool_calls",
+        resolved_policy.keep_tool_calls,
+        f"older than newest {resolved_policy.keep_tool_calls} tool call records",
+    )
+    _add_count_candidates(
+        candidates,
+        root,
+        root / "handoffs",
+        resolved_policy.keep_handoffs,
+        f"older than newest {resolved_policy.keep_handoffs} handoff records",
+    )
+    _add_count_candidates(
+        candidates,
+        root,
+        root / "text_payloads",
+        resolved_policy.keep_text_payloads,
+        f"older than newest {resolved_policy.keep_text_payloads} text payload records",
+    )
+
+    if include_backup_candidates:
         for name in ("backups", "command_bundle_file_backups", "trash"):
             _add_children_older_than(candidates, root, root / name, backup_days, f"backup/trash older than {backup_days} days")
 
@@ -230,7 +503,7 @@ def cleanup_candidates(root: Path, *, older_than_days: int | None = None, includ
         if size > LOG_SIZE_LIMIT_BYTES:
             candidates.append(CleanupCandidate(path=audit_log, kind="file", bytes=size, reason="audit log exceeds 10 MB", action="candidate"))
 
-    return [candidate for candidate in candidates if is_deletable_candidate(candidate, root)]
+    return _dedupe_candidates(candidates, root)
 
 
 def is_deletable_candidate(candidate: CleanupCandidate, root: Path) -> bool:
@@ -278,10 +551,18 @@ def cleanup_runtime(
     *,
     dry_run: bool = True,
     older_than_days: int | None = None,
-    include_backups: bool = False,
+    include_backups: bool | None = None,
+    policy: CleanupPolicy | dict[str, object] | None = None,
+    prune_all_history: bool = False,
 ) -> CleanupResult:
     root = root.expanduser().resolve(strict=False)
-    candidates = cleanup_candidates(root, older_than_days=older_than_days, include_backups=include_backups)
+    candidates = cleanup_candidates(
+        root,
+        older_than_days=older_than_days,
+        include_backups=include_backups,
+        policy=policy,
+        prune_all_history=prune_all_history,
+    )
     if dry_run:
         return CleanupResult(True, candidates, 0, 0, 0, [])
 
