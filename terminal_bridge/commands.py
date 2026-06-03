@@ -85,7 +85,10 @@ def _validate_command_args(cwd: Path, args: list[str]) -> list[str]:
         if "://" in arg:
             raise ValueError(f"URL-like arguments are not allowed: {arg}")
 
-        candidate = (cwd / arg).resolve(strict=False)
+        # Keep workspace-relative development paths lexical. CI virtualenv
+        # entries such as `.venv/bin/python` may be symlinks outside the repo,
+        # but the user supplied path itself still stays under WORKSPACE_ROOT.
+        candidate = (cwd / arg).absolute()
         if candidate != WORKSPACE_ROOT and not candidate.is_relative_to(WORKSPACE_ROOT):
             raise ValueError(f"Argument escapes workspace: {arg}")
 
@@ -159,10 +162,13 @@ def _classify_exec_command(
         if not looks_pathish:
             return _is_blocked_name(arg)
 
+        if ".." in path.parts:
+            return True
+
         if path.is_absolute():
             candidate = path.resolve(strict=False)
         else:
-            candidate = (cwd / path).resolve(strict=False)
+            candidate = (cwd / path).absolute()
 
         if candidate != WORKSPACE_ROOT and not candidate.is_relative_to(WORKSPACE_ROOT):
             return True
