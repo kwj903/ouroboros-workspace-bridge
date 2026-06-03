@@ -466,6 +466,7 @@ Phase 2-A에서 metadata 입력을 지원하는 public proposal wrappers:
 - Phase 3-P1은 `workspace_propose_task_validation_command_and_wait`로 `merged` task의 source-level validation command를 local `/pending` 승인 대상으로 제안하는 foundation을 추가했다. 결과 해석과 `validation_status` 기록은 operator가 `workspace_record_task_validation`으로 별도 수행한다.
 - Phase 3-P2는 `workspace_task_validation_result_hint`로 validation command bundle 결과를 read-only로 요약하고 conservative `inferred_status` 후보와 `workspace_record_task_validation(...)` 제안값을 제공한다. 실제 validation record write는 operator가 별도로 수행한다.
 - Phase 3-P3는 `/pending` task orchestration dashboard에 validation result hint를 read-only로 연결해 latest validation bundle id, inferred status candidate, recommended next action, suggested record 안내를 표시한다. Dashboard는 validation record를 자동으로 쓰지 않는다.
+- Phase 3-Q1은 `workspace_prepare_safe_task_merge_and_wait`로 inspect, merge preflight, merge queue refresh, `/pending` source merge proposal 생성을 하나의 high-level safe wrapper로 묶는다. Blocker가 있으면 queue/proposal을 만들지 않고 반환하며, 실제 source apply는 여전히 local `/pending` 승인 후에만 실행된다.
 
 성공 기준:
 
@@ -647,3 +648,7 @@ Phase 3-P2 adds a public read-only helper, `workspace_task_validation_result_hin
 ## Phase 3-P3 Update
 
 Phase 3-P3 connects Phase 3-P2 validation result hints to the `/pending` task orchestration dashboard as read-only guided recording UX. Each dashboard entry keeps the recorded `validation_status` and, when a hint is available, adds the latest validation bundle id, conservative inferred status candidate, recommended next action, and whether a suggested manual record input exists. Missing or unavailable hints fall back to compact neutral/warn badges so the dashboard continues rendering. This phase does not add public MCP tools, does not execute validation commands, does not write `validation_status`, and does not modify source projects, runtime worktrees, merge queue records, merge/apply/archive behavior, or cleanup execution behavior.
+
+## Phase 3-Q1 Update
+
+Phase 3-Q1 adds a public high-level wrapper, `workspace_prepare_safe_task_merge_and_wait`, for safe task merge orchestration. The wrapper runs task worktree inspect and merge preflight, returns blockers without creating queue/proposal records when the task is not safe, creates or refreshes a queued merge queue record when safe, and then stages the existing source merge command proposal for `/pending` approval. It blocks proposal creation for missing task workspace records, no task changes, dirty source workspace, source `HEAD` drift, overlapping files, and non-queued existing merge queue records. It does not directly apply source changes in ChatGPT; source apply remains gated by the existing approved `/pending` merge command and its source `HEAD`, clean workspace, task diff, and `git apply --check` safeguards. Existing low-level tools remain available, direct mode defaults remain unchanged, and validation/cleanup behavior is unchanged.

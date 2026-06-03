@@ -15,6 +15,7 @@ Implemented:
 - Read-only worktree inspection.
 - Read-only merge preflight.
 - Merge queue record storage.
+- High-level safe merge preparation through `workspace_prepare_safe_task_merge_and_wait`.
 - Approved source integration staging through `workspace_propose_task_worktree_merge_and_wait`.
 - Non-destructive archive helpers for task workspace and merge queue records.
 - Read-only orchestrator summary through `workspace_task_orchestration_summary`.
@@ -166,6 +167,20 @@ Use these fields:
 - `overlapping_files`: files changed by both source and task worktree.
 
 If `source_dirty=true`, clean the source workspace first. If `overlapping_files` is non-empty, do manual conflict review before enqueueing.
+
+### Preferred High-Level Safe Merge Preparation
+
+For ordinary orchestration, prefer the high-level wrapper:
+
+```text
+workspace_prepare_safe_task_merge_and_wait(task_id, cwd, project_id)
+```
+
+This tool runs task worktree inspect and merge preflight first. If it finds blockers, it returns them without creating a merge queue record or `/pending` proposal. If the task is safe to stage, it creates or refreshes the merge queue record and then creates the existing source-merge `/pending` proposal.
+
+The wrapper blocks proposal creation for conditions such as missing task workspace record, no task changes, dirty source workspace, source `HEAD` drift, overlapping source/task files, or an existing merge queue record that is no longer `queued`. Existing `queued` records are treated idempotently and refreshed through the normal merge queue path.
+
+The wrapper still does not apply source changes in ChatGPT. Actual source apply happens only after the local operator approves the generated `/pending` proposal, and the approved command still runs the existing source `HEAD`, clean workspace, task diff, and `git apply --check` safeguards.
 
 ### 7. Orchestrator Enqueues A Merge
 

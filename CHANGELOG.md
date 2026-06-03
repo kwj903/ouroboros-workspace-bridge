@@ -30,6 +30,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Public MCP helper `workspace_propose_task_cleanup_and_wait` for staging a locally approved task worktree cleanup command for ready archived task workspaces.
 - Public MCP helper `workspace_propose_task_validation_command_and_wait` for staging a locally approved source-level validation command for merged task worktree results.
 - Public MCP helper `workspace_task_validation_result_hint` for read-only validation command bundle result summaries and suggested manual validation record inputs.
+- Public MCP helper `workspace_prepare_safe_task_merge_and_wait` for inspect/preflight/queue/proposal safe task merge orchestration without direct source apply.
 
 ### Changed
 

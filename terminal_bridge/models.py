@@ -158,6 +158,23 @@ class CommandBundleListResult(BaseModel):
     count: int
 
 
+class SafeTaskMergePreparationResult(BaseModel):
+    task_id: str
+    project_id: str
+    source_cwd: str
+    inspect_summary: dict[str, object] = Field(default_factory=dict)
+    preflight_result: dict[str, object] = Field(default_factory=dict)
+    ready_to_merge: bool
+    conflict_risk: str
+    recommended_action: str
+    blockers: list[str] = Field(default_factory=list)
+    merge_queue_status: str | None = None
+    merge_queue_record: dict[str, object] | None = None
+    proposal_bundle_id: str | None = None
+    proposal_status: str | None = None
+    proposal: dict[str, object] | None = None
+
+
 class TaskValidationRecordSuggestion(BaseModel):
     task_id: str
     cwd: str

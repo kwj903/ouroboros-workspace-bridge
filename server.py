@@ -103,6 +103,7 @@ from terminal_bridge.models import (
     ReadManyFilesResult,
     ReplaceTextResult,
     RestoreResult,
+    SafeTaskMergePreparationResult,
     SearchTextResult,
     TaskListResult,
     TaskCleanupPreviewResult,
@@ -226,6 +227,7 @@ from terminal_bridge.task_workspaces import (
 )
 from terminal_bridge.task_cleanup_preview import task_cleanup_preview as _task_cleanup_preview
 from terminal_bridge.task_orchestration_summary import task_orchestration_summary as _task_orchestration_summary
+from terminal_bridge.task_merge_orchestration import prepare_safe_task_merge_and_wait as _prepare_safe_task_merge_and_wait
 from terminal_bridge.task_validation_proposal import (
     prepare_task_validation_command_proposal as _prepare_task_validation_command_proposal,
 )
@@ -999,6 +1001,7 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_propose_task_validation_command_and_wait",
     "workspace_propose_task_cleanup_and_wait",
     "workspace_task_validation_status",
+    "workspace_prepare_safe_task_merge_and_wait",
     "workspace_propose_task_worktree_merge_and_wait",
     "workspace_archive_task_workspace",
     "workspace_archive_merge_queue_entry",
@@ -2578,42 +2581,109 @@ def workspace_propose_task_worktree_merge_and_wait(
 
     The merge does not run in ChatGPT. It runs only after local /pending approval.
     """
-    def action() -> CommandBundleStatusResult:
-        queued = _read_merge_queue_entry(task_id, cwd=cwd, project_id=project_id)
-        if queued.get("status") != "queued":
-            raise ValueError("merge queue entry must be queued before proposing a source merge.")
-        title = f"Merge task worktree: {task_id}"
-        step = CommandBundleStep(
-            name=title,
-            argv=[
-                "python",
-                str(Path(__file__).resolve().parent / "terminal_bridge" / "merge_queue_apply.py"),
-                "--task-id",
-                task_id,
-                "--cwd",
-                cwd,
-                *(["--project-id", project_id] if project_id else []),
-            ],
-            timeout_seconds=120,
-        )
-        metadata = {
+    return _record_tool_call(
+        "workspace_propose_task_worktree_merge_and_wait",
+        {
             "task_id": task_id,
+            "cwd": cwd,
             "project_id": project_id,
-            "workspace_mode": "direct",
-            "source_cwd": cwd,
-            "effective_cwd": cwd,
-        }
-        return _workspace_stage_command_bundle_and_wait_impl(
-            title,
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
+        lambda: _workspace_propose_task_worktree_merge_and_wait_impl(
+            task_id,
             cwd,
-            [step],
+            project_id,
             timeout_seconds,
             poll_interval_seconds,
-            metadata,
+        ),
+    )
+
+
+def _workspace_propose_task_worktree_merge_and_wait_impl(
+    task_id: str,
+    cwd: str,
+    project_id: str | None,
+    timeout_seconds: int,
+    poll_interval_seconds: float,
+) -> CommandBundleStatusResult:
+    queued = _read_merge_queue_entry(task_id, cwd=cwd, project_id=project_id)
+    if queued.get("status") != "queued":
+        raise ValueError("merge queue entry must be queued before proposing a source merge.")
+    title = f"Merge task worktree: {task_id}"
+    step = CommandBundleStep(
+        name=title,
+        argv=[
+            "python",
+            str(Path(__file__).resolve().parent / "terminal_bridge" / "merge_queue_apply.py"),
+            "--task-id",
+            task_id,
+            "--cwd",
+            cwd,
+            *(["--project-id", project_id] if project_id else []),
+        ],
+        timeout_seconds=120,
+    )
+    metadata = {
+        "task_id": task_id,
+        "project_id": project_id,
+        "workspace_mode": "direct",
+        "source_cwd": cwd,
+        "effective_cwd": cwd,
+    }
+    return _workspace_stage_command_bundle_and_wait_impl(
+        title,
+        cwd,
+        [step],
+        timeout_seconds,
+        poll_interval_seconds,
+        metadata,
+    )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def workspace_prepare_safe_task_merge_and_wait(
+    task_id: Annotated[str, Field(description="Task id for the ready task worktree to inspect, queue, and propose for source merge.")],
+    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
+    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
+    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
+    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+) -> SafeTaskMergePreparationResult:
+    """Safely inspect, preflight, queue, and stage a task merge proposal.
+
+    This high-level wrapper never applies source changes in ChatGPT. If the task is
+    ready, it creates or refreshes the merge queue record and stages the existing
+    source-merge command proposal for local /pending approval. If blockers are
+    found, it returns them without creating a queue record or proposal.
+    """
+
+    def action() -> SafeTaskMergePreparationResult:
+        return SafeTaskMergePreparationResult(
+            **_prepare_safe_task_merge_and_wait(
+                task_id,
+                cwd=cwd,
+                project_id=project_id,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+                proposal_callback=lambda: _workspace_propose_task_worktree_merge_and_wait_impl(
+                    task_id,
+                    cwd,
+                    project_id,
+                    timeout_seconds,
+                    poll_interval_seconds,
+                ),
+            )
         )
 
     return _record_tool_call(
-        "workspace_propose_task_worktree_merge_and_wait",
+        "workspace_prepare_safe_task_merge_and_wait",
         {
             "task_id": task_id,
             "cwd": cwd,
