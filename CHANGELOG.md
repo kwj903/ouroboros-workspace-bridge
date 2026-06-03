@@ -46,6 +46,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Task orchestration summary and `/pending` dashboard now show post-merge validation status from merge queue records.
 - `/pending` task orchestration dashboard now shows cleanup readiness, risk, blockers, recommended cleanup action, validation status, queue status, and workspace status from the read-only cleanup preview.
 - `/pending` task orchestration dashboard now shows read-only validation result hints, including latest validation bundle id, inferred status candidate, next action, and manual record suggestion availability.
+- Operator documentation now includes a primary orchestrator happy path for the task-workspace merge, validation, archive, and cleanup release checkpoint.
 - User documentation now explains help language selection, `WOOJAE_HELP_LANG`, and Korean help usage.
 - Default public MCP tool guidance now favors small proposal wrapper tools while keeping the generic bundle functions internally available.
 - Refactored MCP tool helper implementations out of `server.py` into `terminal_bridge/mcp_tools/` modules while preserving public MCP tool names, wrappers, signatures, schemas, approval flow, and runner behavior.

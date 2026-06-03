@@ -61,6 +61,50 @@ Use stable and explicit identifiers.
 
 Do not reuse the same `task_id` for unrelated work. A task workspace key is derived from `task_id`, `project_id`, and `source_cwd`.
 
+## Primary Orchestrator Happy Path
+
+For normal multi-agent operation, the orchestrator can use this compact path. The lower-level inspect, preflight, enqueue, and merge proposal tools remain available for debugging or manual recovery, but routine source integration should start with the safe merge wrapper.
+
+```text
+1. Create a task worktree:
+   workspace_create_task_worktree(task_id, cwd, project_id)
+
+2. Send the worker a task-scoped prompt:
+   task_id=<TASK_ID>
+   project_id=<PROJECT_ID>
+   source cwd=<CWD>
+   workspace_mode=task-workspace
+
+3. Worker proposes and verifies changes in task-workspace mode.
+
+4. Orchestrator stages a safe source merge proposal:
+   workspace_prepare_safe_task_merge_and_wait(task_id, cwd, project_id)
+
+5. Local operator reviews and approves the generated /pending merge proposal.
+
+6. Orchestrator proposes source-level validation:
+   workspace_propose_task_validation_command_and_wait(task_id, argv, cwd, project_id)
+
+7. Local operator approves the validation command and reviews the result hint:
+   workspace_task_validation_result_hint(task_id, cwd, project_id)
+
+8. Orchestrator records the reviewed validation status:
+   workspace_record_task_validation(...)
+
+9. Orchestrator archives queue/workspace records.
+
+10. After validation is passed and records are archived, orchestrator previews and proposes cleanup:
+    workspace_task_cleanup_preview(project_id)
+    workspace_propose_task_cleanup_and_wait(task_id, cwd, project_id)
+```
+
+Safety boundaries:
+
+- `workspace_prepare_safe_task_merge_and_wait` may create a merge queue record and a pending merge proposal, but it does not apply source changes in ChatGPT.
+- Source changes are applied only after the local operator approves the generated `/pending` merge command.
+- Validation hints are advisory. The operator still decides whether to record `passed`, `failed`, `pending`, or `unknown`.
+- Cleanup is explicit and approval-gated. The dashboard only displays readiness; it does not remove worktrees.
+
 ## End-to-End Runbook
 
 ### 1. Orchestrator Decomposes The Work
@@ -525,5 +569,7 @@ After approved source integration:
 - Phase 3-P1: merged task source-level validation command proposal foundation.
 - Phase 3-P2: read-only validation command result hint and guided recording foundation.
 - Phase 3-P3: `/pending` validation result hint dashboard and guided recording UX foundation.
+- Phase 3-Q1: high-level safe merge orchestration wrapper for inspect/preflight/queue/proposal staging.
+- Phase 3-R1: primary orchestrator happy-path runbook and release checkpoint documentation.
 
-Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, automatic validation status recording, automatic validation command execution, and commit flow integration.
+Remaining future work includes automatic task decomposition, richer interactive merge queue controls, automatic conflict resolution support, optional automatic validation status recording, and commit flow integration.
