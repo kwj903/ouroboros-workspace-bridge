@@ -2,7 +2,9 @@
 
 ## Status
 
-Planned for the `cleanup-update` branch.
+Implemented on the `cleanup-update` branch and pending merge to `main`.
+
+The shipped implementation includes configurable cleanup policy, count-based cleanup, Management > Storage Cleanup, History/Results pagination, and Management > Worktree Task management for actual Git task branch/worktree state versus archived Workspace Bridge records.
 
 This plan defines the durable product and implementation direction for keeping Workspace Terminal Bridge runtime history usable as bundle records, tool call records, handoffs, payloads, and backups accumulate over time.
 

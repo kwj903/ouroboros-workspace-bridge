@@ -30,6 +30,26 @@ ChatGPT request
 
 Most first-time users only need the **Approval** page.
 
+## Storage cleanup
+
+Use **Manage > Storage Cleanup** to inspect and prune runtime data that accumulates during long-running local use.
+
+- Review runtime storage size and history counts.
+- Tune retention counts and age thresholds.
+- Preview cleanup candidates before applying cleanup.
+- Run default cleanup or backup-inclusive cleanup.
+- Clear eligible history through a guarded confirmation flow.
+
+Pending bundles, session settings, secrets, and active pid files are preserved by cleanup actions.
+
+## Worktree Task management
+
+Use **Manage > Worktree Task management** to separate actual Git state from Workspace Bridge task records.
+
+- The actual Git state card reads the current branch, `task/*` branches, and task worktrees directly from the repository.
+- Remaining task branches and task worktrees can be deleted from the management UI after explicit checkbox confirmation.
+- Archived Worktree Task history is audit metadata; it does not necessarily mean a branch or worktree still exists.
+
 ## Approval mode
 
 Start with **Normal** mode.

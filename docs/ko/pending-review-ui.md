@@ -33,6 +33,26 @@ ChatGPT 요청
 
 처음 사용할 때는 대부분 **승인** 화면만 보면 됩니다.
 
+## 관리 화면의 저장소 정리
+
+`관리 > 저장소 정리`에서는 런타임에 쌓이는 bundle 이력, tool call, handoff, payload, backup/trash를 확인하고 정리할 수 있습니다.
+
+- 현재 런타임 저장소 사용량과 이력 개수 확인
+- 보존 개수와 보존 기간 정책 조정
+- 정리 후보 미리보기
+- 기본 정리 또는 백업 포함 정리 실행
+- 정리 가능한 이력 전체 삭제
+
+승인 대기 bundle, session 설정, secret, 실행 중인 pid 파일은 정리 대상에서 제외됩니다.
+
+## Worktree Task 관리
+
+`관리 > Worktree Task 관리`는 실제 Git 상태와 Workspace Bridge 작업 이력을 분리해서 보여줍니다.
+
+- 현재 브랜치, 남아있는 `task/*` 브랜치, 작업용 git worktree를 현재 repo에서 직접 조회합니다.
+- task 브랜치나 작업용 worktree가 남아 있으면 체크박스 확인 후 바로 삭제/제거할 수 있습니다.
+- 과거 Worktree Task 이력은 감사용 record이며, 브랜치나 worktree가 실제로 남았다는 뜻은 아닙니다.
+
 ## Approval mode
 
 Approval mode는 pending bundle을 얼마나 자동으로 처리할지 정하는 설정입니다.

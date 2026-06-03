@@ -23,7 +23,11 @@ def _resolve_workspace_path(path: str) -> Path:
     if raw.is_absolute():
         raise ValueError("Absolute paths are not allowed. Use a path relative to WORKSPACE_ROOT.")
 
-    candidate = (WORKSPACE_ROOT / raw).resolve(strict=False)
+    # Keep containment checks lexical. Development paths such as `.venv/bin/python`
+    # can be symlinks outside the repository on CI runners; resolving symlinks
+    # here would incorrectly classify the user-supplied workspace-relative path
+    # as escaping WORKSPACE_ROOT.
+    candidate = (WORKSPACE_ROOT / raw).absolute()
 
     if candidate != WORKSPACE_ROOT and not candidate.is_relative_to(WORKSPACE_ROOT):
         raise ValueError("Path escapes WORKSPACE_ROOT and is rejected.")

@@ -246,8 +246,8 @@ class ReviewServerHelperTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("Task orchestration", html)
-        self.assertIn("No task orchestration records", html)
+        self.assertIn("Worktree task 현황", html)
+        self.assertIn("worktree task 기록이 없습니다", html)
         self.assertIn("total: 0", html)
 
     def test_task_orchestration_summary_html_renders_entry_types_and_anomalies(self) -> None:
@@ -352,7 +352,7 @@ class ReviewServerHelperTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("Task orchestration", html)
+        self.assertIn("Worktree task 현황", html)
         self.assertIn("project: project-alpha", html)
         self.assertIn("workspace+queue", html)
         self.assertIn("workspace-only", html)
@@ -777,7 +777,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         ):
             html = review.task_orchestration_summary_html(project_id="project-alpha")
 
-        self.assertIn("Task orchestration", html)
+        self.assertIn("Worktree task 현황", html)
         self.assertIn("task-validation-error", html)
         self.assertIn("validation hint: unavailable", html)
 
@@ -1715,9 +1715,9 @@ class ReviewServerHelperTests(unittest.TestCase):
         review.RUNTIME_ROOT = root
         html = review.server_tab_content_html("storage_cleanup", review.server_state())
 
-        self.assertIn("Storage Cleanup", html)
-        self.assertIn("Runtime storage summary", html)
-        self.assertIn("History counts", html)
+        self.assertIn("런타임 이력/백업 관리", html)
+        self.assertIn("런타임 저장소 요약", html)
+        self.assertIn("이력 개수", html)
         self.assertIn("cleanup_policy.json", html)
         self.assertIn('/servers/storage-cleanup/policy', html)
         self.assertIn('/servers/storage-cleanup/preview', html)

@@ -101,15 +101,15 @@ CLEANUP_POLICY_INT_FIELDS = tuple(
     key for key, value in CLEANUP_POLICY_DEFAULTS.items() if isinstance(value, int) and not isinstance(value, bool)
 )
 CLEANUP_POLICY_FIELD_LABELS = {
-    "keep_applied": "Keep newest applied bundles",
-    "keep_failed": "Keep newest failed bundles",
-    "keep_rejected": "Keep newest rejected bundles",
-    "keep_tool_calls": "Keep newest tool call records",
-    "keep_handoffs": "Keep newest handoff records",
-    "keep_text_payloads": "Keep newest text payload records",
-    "older_than_text_payload_days": "Text payload age threshold days",
-    "older_than_operations_days": "Operations age threshold days",
-    "older_than_backups_days": "Backup/trash age threshold days",
+    "keep_applied": "적용 완료 bundle 보존 개수",
+    "keep_failed": "실패 bundle 보존 개수",
+    "keep_rejected": "거절 bundle 보존 개수",
+    "keep_tool_calls": "tool call 기록 보존 개수",
+    "keep_handoffs": "handoff 기록 보존 개수",
+    "keep_text_payloads": "text payload 기록 보존 개수",
+    "older_than_text_payload_days": "text payload 보존 기간(일)",
+    "older_than_operations_days": "operation 기록 보존 기간(일)",
+    "older_than_backups_days": "backup/trash 보존 기간(일)",
 }
 
 
@@ -1346,6 +1346,23 @@ def _task_orchestration_key(entry: Mapping[str, object]) -> tuple[str, str, str]
     )
 
 
+def _task_orchestration_record_is_active(entry: Mapping[str, object]) -> bool:
+    if bool(entry.get("anomaly")) or bool(entry.get("operator_attention")):
+        return True
+    if str(entry.get("validation_status") or "") == "failed":
+        return True
+    task_status = str(entry.get("task_workspace_status") or "").strip()
+    worktree_status = str(entry.get("worktree_status") or "").strip()
+    queue_status = str(entry.get("merge_queue_status") or "").strip()
+    if task_status in {"worktree", "created", "ready"}:
+        return True
+    if worktree_status not in {"", "none", "missing", "removed"}:
+        return True
+    if queue_status in {"queued", "pending", "ready", "failed", "conflict"}:
+        return True
+    return False
+
+
 def _task_status_tone(status: object) -> str:
     value = str(status or "").strip()
     if value in {"worktree", "created", "ready"}:
@@ -1521,10 +1538,20 @@ def _cleanup_readiness_badges(cleanup_entry: Mapping[str, object] | None) -> str
     validation_status = str(cleanup_entry.get("validation_status") or "unknown").strip() or "unknown"
     action = str(cleanup_entry.get("recommended_action") or "none").strip() or "none"
 
+    blockers = cleanup_entry.get("cleanup_blockers")
+    if workspace_status == "cleaned" and isinstance(blockers, list) and "workspace_path_missing" in blockers:
+        return "".join(
+            [
+                status_badge("cleanup: 완료", "ok"),
+                status_badge("worktree: 제거됨", "ok"),
+                status_badge(f"validation: {validation_status}", _validation_status_tone(validation_status)),
+            ]
+        )
+
     badges = [
         status_badge(f"cleanup ready: {'yes' if ready else 'no'}", ready_tone),
         status_badge(f"cleanup risk: {risk}", risk_tone),
-        status_badge(_cleanup_blockers_label(cleanup_entry.get("cleanup_blockers")), "ok" if ready else risk_tone),
+        status_badge(_cleanup_blockers_label(blockers), "ok" if ready else risk_tone),
         status_badge(f"cleanup action: {action}", "ok" if ready else "neutral"),
         status_badge(f"cleanup validation: {validation_status}", _validation_status_tone(validation_status)),
         status_badge(f"cleanup queue: {queue_status}", _queue_status_tone(queue_status)),
@@ -1726,29 +1753,26 @@ def task_orchestration_summary_html(
         ]
     )
 
-    if not entries:
-        body = '<p class="meta">No task orchestration records.</p>'
-    else:
+    def render_table(table_entries: list[Mapping[str, object]]) -> str:
         rows = "\n".join(
             _task_orchestration_entry_html(
                 entry,
                 cleanup_entries_by_key.get(_task_orchestration_key(entry)),
                 validation_result_hints_by_key.get(_task_orchestration_key(entry)),
             )
-            for entry in entries
-            if isinstance(entry, Mapping)
+            for entry in table_entries
         )
-        body = f"""
+        return f"""
         <div class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Task</th>
-                <th>Source</th>
-                <th>Workspace</th>
-                <th>Queue</th>
-                <th>State</th>
-                <th>Cleanup</th>
+                <th>작업</th>
+                <th>원본</th>
+                <th>워크스페이스</th>
+                <th>병합 큐</th>
+                <th>상태</th>
+                <th>정리</th>
               </tr>
             </thead>
             <tbody>
@@ -1758,16 +1782,38 @@ def task_orchestration_summary_html(
         </div>
         """
 
+    typed_entries = [entry for entry in entries if isinstance(entry, Mapping)]
+    active_entries = [entry for entry in typed_entries if _task_orchestration_record_is_active(entry)]
+    archived_entries = [entry for entry in typed_entries if not _task_orchestration_record_is_active(entry)]
+    if not typed_entries:
+        body = '<p class="meta">worktree task 기록이 없습니다.</p>'
+    else:
+        active_body = (
+            render_table(active_entries)
+            if active_entries
+            else '<p class="meta">현재 확인이 필요한 active worktree task가 없습니다. 과거 기록은 아래 접힌 영역에서 확인할 수 있습니다.</p>'
+        )
+        archived_body = ""
+        if archived_entries:
+            archived_body = f"""
+            <details class="card">
+              <summary><strong>과거/보관된 작업 기록 {len(archived_entries)}개 보기</strong></summary>
+              <p class="meta">이미 병합, 보관, 정리된 task record입니다. 브랜치나 worktree가 남아있다는 뜻은 아닙니다.</p>
+              {render_table(archived_entries)}
+            </details>
+            """
+        body = active_body + archived_body
+
     return f"""
-    <details class="card" open>
-      <summary><strong>Task orchestration</strong></summary>
+    <section class="card">
+      <h3>Worktree task 현황</h3>
       <p class="meta">
-        Read-only overview of task workspace, merge queue, validation, and cleanup preview records.
-        It does not merge, apply, enqueue, archive, or clean up task worktrees.
+        task worktree, merge queue, validation, cleanup preview record를 보기 전용으로 확인합니다.
+        실제 브랜치/워크트리 정리와 과거 record 이력은 별개로 관리됩니다.
       </p>
       <div class="subnav">{summary_badges}</div>
       {body}
-    </details>
+    </section>
     """
 
 
@@ -2841,7 +2887,7 @@ def cleanup_policy_form_html(
     <form method="post" action="/servers/storage-cleanup/policy">
       <div class="kv">{''.join(rows)}</div>
       <p class="meta">빈 입력은 기본값으로 저장합니다. 음수와 0은 일반 policy 저장에서 거부됩니다.</p>
-      <button class="approve" type="submit">Save cleanup policy</button>
+      <button class="approve" type="submit">정리 정책 저장</button>
     </form>
     """
 
@@ -2909,75 +2955,332 @@ def storage_cleanup_page_html(
     return f"""
     <div class="stack">
       <div class="section-title">
-        <h2>{escape(SERVER_TAB_LABELS['storage_cleanup'])} <span class="meta">Storage Cleanup</span></h2>
-        <p class="meta">런타임 저장소 사용량, history 개수, cleanup policy, preview/apply 작업을 한 곳에서 관리합니다.</p>
+        <h2>{escape(SERVER_TAB_LABELS['storage_cleanup'])} <span class="meta">런타임 이력/백업 관리</span></h2>
+        <p class="meta">런타임 저장소 사용량, 이력 개수, 정리 정책, 미리보기/실행 작업을 한 곳에서 관리합니다.</p>
       </div>
       {notice_html}
       <section class="card">
-        <h3>Runtime storage summary</h3>
+        <h3>런타임 저장소 요약</h3>
         <div class="kv">
-          {kv_row_html("Runtime root", str(RUNTIME_ROOT), code_value=True)}
-          {kv_row_html("Total", f"{runtime_storage.format_bytes(total.bytes)} ({total.files} files, {total.dirs} dirs)")}
-          {kv_row_html("Policy file", str(cleanup_policy_file(RUNTIME_ROOT)), code_value=True)}
+          {kv_row_html("런타임 루트", str(RUNTIME_ROOT), code_value=True)}
+          {kv_row_html("전체 사용량", f"{runtime_storage.format_bytes(total.bytes)} ({total.files}개 파일, {total.dirs}개 폴더)")}
+          {kv_row_html("정책 파일", str(cleanup_policy_file(RUNTIME_ROOT)), code_value=True)}
         </div>
         {storage_summary_table_html(entries)}
       </section>
       <section class="card">
-        <h3>History counts</h3>
-        <p class="meta">pending bundles are protected and are not ordinary cleanup or clear-history candidates.</p>
+        <h3>이력 개수</h3>
+        <p class="meta">승인 대기 bundle은 항상 보호되며 일반 정리나 이력 전체 삭제 후보에 포함되지 않습니다.</p>
         {storage_history_counts_table_html(counts, policy)}
       </section>
       <section class="card">
-        <h3>Cleanup policy settings</h3>
+        <h3>정리 정책 설정</h3>
         {cleanup_policy_form_html(policy, errors=policy_errors, warnings=policy_warnings)}
       </section>
       <section class="card">
-        <h3>Preview and apply</h3>
-        <p class="meta">Ordinary cleanup uses the current runtime_storage cleanup helper. Count-based policy fields are saved here and will be used directly after the core cleanup API lands.</p>
+        <h3>미리보기 및 실행</h3>
+        <p class="meta">일반 정리는 저장된 정리 정책과 현재 runtime_storage 정리 helper를 사용합니다. 먼저 미리보기로 삭제 후보와 예상 회수 용량을 확인하세요.</p>
         <div class="button-row">
           <form class="inline" method="post" action="/servers/storage-cleanup/preview">
             <input type="hidden" name="include_backups" value="{default_include}">
-            <button class="secondary" type="submit">Preview default cleanup</button>
+            <button class="secondary" type="submit">기본 정리 미리보기</button>
           </form>
           <form class="inline" method="post" action="/servers/storage-cleanup/preview">
             <input type="hidden" name="include_backups" value="1">
-            <button class="secondary" type="submit">Preview cleanup including backups</button>
+            <button class="secondary" type="submit">백업 포함 정리 미리보기</button>
           </form>
         </div>
         <div class="notice">
-          <strong>Ordinary cleanup confirmation</strong><br>
-          This will delete eligible runtime cleanup candidates. Pending bundles, session config, secrets, and active pid files are preserved.
+          <strong>일반 정리 실행 확인</strong><br>
+          정리 후보로 계산된 런타임 이력을 삭제합니다. 승인 대기 bundle, session 설정, secret, 실행 중인 pid 파일은 보존됩니다.
         </div>
         <div class="button-row">
           <form class="inline" method="post" action="/servers/storage-cleanup/apply">
             <input type="hidden" name="include_backups" value="{default_include}">
-            <label class="meta"><input type="checkbox" name="confirm" value="1" required> Confirm ordinary cleanup</label>
-            <button class="approve" type="submit">Run default cleanup</button>
+            <label class="meta"><input type="checkbox" name="confirm" value="1" required> 일반 정리 실행 확인</label>
+            <button class="approve" type="submit">기본 정리 실행</button>
           </form>
           <form class="inline" method="post" action="/servers/storage-cleanup/apply-with-backups">
             <input type="hidden" name="include_backups" value="1">
-            <label class="meta"><input type="checkbox" name="confirm" value="1" required> Confirm backup-inclusive cleanup</label>
-            <button class="approve" type="submit">Run cleanup including backups</button>
+            <label class="meta"><input type="checkbox" name="confirm" value="1" required> 백업 포함 정리 실행 확인</label>
+            <button class="approve" type="submit">백업 포함 정리 실행</button>
           </form>
         </div>
       </section>
       <section class="card is-failed">
-        <h3>Dangerous actions</h3>
-        <p class="meta">Clear eligible history ignores keep counts but still preserves pending bundles, session config, secrets, and active pid files.</p>
+        <h3>위험 작업</h3>
+        <p class="meta">정리 가능한 이력 전체 삭제는 보존 개수를 무시합니다. 그래도 승인 대기 bundle, session 설정, secret, 실행 중인 pid 파일은 보존됩니다.</p>
         <div class="button-row">
           <form class="inline" method="post" action="/servers/storage-cleanup/preview">
             <input type="hidden" name="clear_history" value="1">
-            <button class="secondary" type="submit">Preview clear eligible history</button>
+            <button class="secondary" type="submit">이력 전체 삭제 미리보기</button>
           </form>
         </div>
         <form method="post" action="/servers/storage-cleanup/clear-history">
-          <p><label>Type <code>{escape(CLEAR_HISTORY_CONFIRMATION)}</code> to continue<br>
+          <p><label>계속하려면 <code>{escape(CLEAR_HISTORY_CONFIRMATION)}</code> 를 입력하세요<br>
           <input name="confirm" autocomplete="off" placeholder="DELETE HISTORY"></label></p>
-          <p><label><input type="checkbox" name="include_backups" value="1"> Include backups and command bundle file backups</label></p>
-          <button class="reject" type="submit">Clear eligible history</button>
+          <p><label><input type="checkbox" name="include_backups" value="1"> 백업과 command bundle 파일 백업도 포함</label></p>
+          <button class="reject" type="submit">정리 가능한 이력 전체 삭제</button>
         </form>
       </section>
       {result_block}
+    </div>
+    """
+
+
+def run_project_git(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=PROJECT_ROOT,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        shell=False,
+        check=False,
+        timeout=30,
+    )
+
+
+def actual_task_git_state() -> dict[str, object]:
+    branch_result = run_project_git(["branch", "--format=%(refname:short)", "--list", "task/*"])
+    branches = sorted(line.strip() for line in branch_result.stdout.splitlines() if line.strip().startswith("task/"))
+    current_result = run_project_git(["rev-parse", "--abbrev-ref", "HEAD"])
+    current_branch = current_result.stdout.strip() if current_result.returncode == 0 else "unknown"
+    worktree_result = run_project_git(["worktree", "list", "--porcelain"])
+    worktrees: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for raw_line in worktree_result.stdout.splitlines():
+        if raw_line.startswith("worktree "):
+            if current:
+                worktrees.append(current)
+            current = {"path": raw_line.removeprefix("worktree ")}
+        elif raw_line.startswith("branch "):
+            branch_ref = raw_line.removeprefix("branch ")
+            current["branch_ref"] = branch_ref
+            current["branch"] = branch_ref.removeprefix("refs/heads/")
+        elif raw_line.startswith("HEAD "):
+            current["head"] = raw_line.removeprefix("HEAD ")
+        elif raw_line.strip() == "bare":
+            current["bare"] = "1"
+        elif raw_line.strip() == "detached":
+            current["detached"] = "1"
+    if current:
+        worktrees.append(current)
+
+    task_root = (RUNTIME_ROOT / "task_workspaces").expanduser().resolve(strict=False)
+    task_worktrees: list[dict[str, str]] = []
+    for item in worktrees:
+        branch = item.get("branch", "")
+        path_text = item.get("path", "")
+        try:
+            path = Path(path_text).expanduser().resolve(strict=False)
+        except Exception:
+            path = Path(path_text)
+        under_task_root = path == task_root or path.is_relative_to(task_root)
+        if branch.startswith("task/") or under_task_root:
+            task_worktrees.append(item)
+
+    return {
+        "current_branch": current_branch,
+        "branches": branches,
+        "worktrees": worktrees,
+        "task_worktrees": task_worktrees,
+        "branch_error": branch_result.stderr.strip() if branch_result.returncode else "",
+        "worktree_error": worktree_result.stderr.strip() if worktree_result.returncode else "",
+    }
+
+
+def _task_git_branch_options_html(branches: list[str]) -> str:
+    if not branches:
+        return '<p class="meta">남아있는 <code>task/*</code> 브랜치가 없습니다.</p>'
+    rows = []
+    for branch in branches:
+        rows.append(
+            "<tr>"
+            f"<td><code>{escape(branch)}</code></td>"
+            "<td>"
+            "<form class='inline' method='post' action='/servers/worktree-tasks/delete-branch'>"
+            f"<input type='hidden' name='branch' value='{escape(branch)}'>"
+            "<label class='meta'><input type='checkbox' name='confirm' value='1' required> 삭제 확인</label> "
+            "<button class='reject' type='submit'>브랜치 삭제</button>"
+            "</form>"
+            "</td>"
+            "</tr>"
+        )
+    return "<div class='table-wrap'><table class='data-table'><thead><tr><th>브랜치</th><th>작업</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
+
+
+def _task_git_worktree_options_html(worktrees: list[dict[str, str]]) -> str:
+    if not worktrees:
+        return '<p class="meta">남아있는 작업용 git worktree가 없습니다.</p>'
+    rows = []
+    for item in worktrees:
+        path_text = item.get("path", "")
+        branch = item.get("branch", "detached")
+        rows.append(
+            "<tr>"
+            f"<td><code>{escape(path_text)}</code></td>"
+            f"<td><code>{escape(branch)}</code></td>"
+            "<td>"
+            "<form class='inline' method='post' action='/servers/worktree-tasks/remove-worktree'>"
+            f"<input type='hidden' name='worktree_path' value='{escape(path_text)}'>"
+            "<label class='meta'><input type='checkbox' name='confirm' value='1' required> 제거 확인</label> "
+            "<button class='reject' type='submit'>워크트리 제거</button>"
+            "</form>"
+            "</td>"
+            "</tr>"
+        )
+    return "<div class='table-wrap'><table class='data-table'><thead><tr><th>경로</th><th>브랜치</th><th>작업</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
+
+
+def actual_task_git_state_html(state: Mapping[str, object]) -> str:
+    branches = [str(item) for item in state.get("branches", []) if str(item).strip().startswith("task/")]
+    task_worktrees = [item for item in state.get("task_worktrees", []) if isinstance(item, dict)]
+    clean = not branches and not task_worktrees
+    branch_error = str(state.get("branch_error") or "").strip()
+    worktree_error = str(state.get("worktree_error") or "").strip()
+    error_html = ""
+    if branch_error or worktree_error:
+        error_html = f"<div class='notice'><strong>Git 상태 확인 오류</strong><br>{escape(branch_error or worktree_error)}</div>"
+    return f"""
+    <section class="card">
+      <h3>실제 Git 작업 상태</h3>
+      <p class="meta">아래 내용은 현재 git repository에서 직접 조회한 실제 상태입니다. 과거 Workspace Bridge record와 다를 수 있습니다.</p>
+      {error_html}
+      <div class="kv">
+        {kv_row_html("현재 브랜치", str(state.get("current_branch") or "unknown"), code_value=True)}
+        {kv_row_html("작업용 worktree", status_badge("없음" if not task_worktrees else f"{len(task_worktrees)}개 남음", "ok" if not task_worktrees else "warn"), value_is_html=True)}
+        {kv_row_html("task/* 브랜치", status_badge("없음" if not branches else f"{len(branches)}개 남음", "ok" if not branches else "warn"), value_is_html=True)}
+        {kv_row_html("정리 상태", status_badge("정리 완료" if clean else "정리 필요", "ok" if clean else "warn"), value_is_html=True)}
+      </div>
+    </section>
+    <section class="card">
+      <h3>남아있는 task/* 브랜치</h3>
+      {_task_git_branch_options_html(branches)}
+    </section>
+    <section class="card">
+      <h3>남아있는 작업용 worktree</h3>
+      {_task_git_worktree_options_html(task_worktrees)}
+    </section>
+    """
+
+
+def clear_archived_worktree_task_records() -> dict[str, object]:
+    git_state = actual_task_git_state()
+    branches = {str(item) for item in git_state.get("branches", [])}
+    task_workspace_root = (RUNTIME_ROOT / "task_workspaces").expanduser().resolve(strict=False)
+    merge_queue_root = (RUNTIME_ROOT / "merge_queue").expanduser().resolve(strict=False)
+    removed_workspaces = 0
+    removed_merge_records = 0
+    errors: list[str] = []
+
+    if task_workspace_root.exists():
+        for record_path in sorted(task_workspace_root.glob("*/workspace.json")):
+            workspace_dir = record_path.parent.resolve(strict=False)
+            try:
+                record = read_json(record_path)
+                status = str(record.get("status") or "")
+                branch = str(record.get("worktree_branch") or "")
+                workspace_path_text = str(record.get("workspace_path") or "")
+                workspace_path = Path(workspace_path_text).expanduser().resolve(strict=False) if workspace_path_text else workspace_dir / "repo"
+                if status not in {"archived", "cleaned"}:
+                    continue
+                if branch in branches:
+                    continue
+                if workspace_path.exists() and (workspace_path / ".git").exists():
+                    continue
+                if workspace_dir != task_workspace_root and workspace_dir.is_relative_to(task_workspace_root):
+                    shutil.rmtree(workspace_dir)
+                    removed_workspaces += 1
+            except Exception as exc:
+                errors.append(f"{record_path}: {type(exc).__name__}: {exc}")
+
+    if merge_queue_root.exists():
+        for queue_path in sorted(merge_queue_root.glob("*/queue.json")):
+            queue_dir = queue_path.parent.resolve(strict=False)
+            try:
+                record = read_json(queue_path)
+                status = str(record.get("status") or "")
+                if status != "archived":
+                    continue
+                if queue_dir != merge_queue_root and queue_dir.is_relative_to(merge_queue_root):
+                    shutil.rmtree(queue_dir)
+                    removed_merge_records += 1
+            except Exception as exc:
+                errors.append(f"{queue_path}: {type(exc).__name__}: {exc}")
+
+    return {"removed_workspaces": removed_workspaces, "removed_merge_records": removed_merge_records, "errors": errors}
+
+
+def delete_task_branch_direct(branch: str) -> subprocess.CompletedProcess[str]:
+    normalized = branch.strip()
+    if not normalized.startswith("task/") or normalized != branch or ".." in normalized or " " in normalized:
+        raise ValueError("task/* 브랜치만 삭제할 수 있습니다.")
+    state = actual_task_git_state()
+    branches = {str(item) for item in state.get("branches", [])}
+    if normalized not in branches:
+        raise ValueError("현재 git에 존재하는 task/* 브랜치가 아닙니다.")
+    return run_project_git(["branch", "-D", normalized])
+
+
+def remove_task_worktree_direct(path_text: str) -> subprocess.CompletedProcess[str]:
+    raw = path_text.strip()
+    if not raw:
+        raise ValueError("워크트리 경로가 비어 있습니다.")
+    state = actual_task_git_state()
+    allowed_paths = {str(item.get("path")) for item in state.get("task_worktrees", []) if isinstance(item, dict)}
+    if raw not in allowed_paths:
+        raise ValueError("현재 git worktree list에 있는 작업용 worktree만 제거할 수 있습니다.")
+    path = Path(raw).expanduser().resolve(strict=False)
+    task_root = (RUNTIME_ROOT / "task_workspaces").expanduser().resolve(strict=False)
+    if not (path == task_root or path.is_relative_to(task_root)):
+        raise ValueError("task workspace runtime root 아래 worktree만 제거할 수 있습니다.")
+    return run_project_git(["worktree", "remove", raw])
+
+
+def worktree_task_action_notice_html(status: str, message: str) -> str:
+    if not status:
+        return ""
+    tone = "ok" if status == "ok" else "danger"
+    title = "작업 완료" if status == "ok" else "작업 실패"
+    return f'<div class="notice"><strong>{escape(title)}</strong><br>{status_badge(escape(status), tone)} {escape(message)}</div>'
+
+
+def worktree_task_management_page_html(
+    project_id: str | None = None,
+    *,
+    action_status: str = "",
+    action_message: str = "",
+) -> str:
+    git_state = actual_task_git_state()
+    notice = worktree_task_action_notice_html(action_status, action_message)
+    return f"""
+    <div class="stack">
+      <div class="section-title">
+        <h2>{escape(SERVER_TAB_LABELS['worktree_tasks'])}</h2>
+        <p class="meta">실제 git worktree/task 브랜치와 Workspace Bridge 작업 record를 분리해서 확인합니다.</p>
+      </div>
+      {notice}
+      <div class="notice">
+        <strong>실제 Git 상태가 우선입니다.</strong><br>
+        <code>task/*</code> 브랜치와 작업용 worktree는 상단 카드에서 실제 git 상태로 확인합니다.
+        아래 과거 record는 감사 이력이며 브랜치나 worktree가 남아있다는 뜻은 아닙니다.
+      </div>
+      {actual_task_git_state_html(git_state)}
+      <section class="card is-failed">
+        <h3>과거 record 이력 삭제</h3>
+        <p class="meta">실제 task 브랜치와 git worktree가 남아있지 않은 보관 record만 삭제합니다. 현재 작업 중인 worktree나 branch는 삭제하지 않습니다.</p>
+        <form method="post" action="/servers/worktree-tasks/clear-records">
+          <p><label>계속하려면 <code>CLEAR TASK RECORDS</code> 를 입력하세요<br>
+          <input name="confirm" autocomplete="off" placeholder="CLEAR TASK RECORDS"></label></p>
+          <button class="reject" type="submit">보관된 Worktree Task record 삭제</button>
+        </form>
+      </section>
+      <section class="card">
+        <h3>과거 Worktree Task 이력</h3>
+        {task_orchestration_summary_html(project_id=project_id)}
+      </section>
     </div>
     """
 
@@ -3177,6 +3480,9 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
 
     if tab == "storage_cleanup":
         return storage_cleanup_page_html(notice_html=action_notice_html)
+
+    if tab == "worktree_tasks":
+        return worktree_task_management_page_html()
 
     if tab == "tools":
         notifier_installed = bool(tools.get("terminal_notifier", False))
@@ -3412,8 +3718,7 @@ class Handler(BaseHTTPRequestHandler):
                 + approval_mode_card_html(approval_mode)
                 + scoped_approval_mode_card_html()
                 + saved_scoped_approval_modes_html()
-                + task_orchestration_summary_html(project_id=metadata_filters.get("project_id") or None)
-                + "<p><a href='/history'>전체 이력 보기</a></p>"
+                + "<p><a href='/servers?tab=worktree_tasks'>Worktree Task 관리</a> · <a href='/history'>전체 이력 보기</a></p>"
                 + metadata_filter_form_html("/pending", metadata_filters)
                 + ("\n".join(cards) if cards else "<p>승인 대기 번들이 없습니다.</p>")
                 + latest_handoff_html(metadata_filters)
@@ -3576,7 +3881,7 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["servers", "storage-cleanup", "preview"]:
                 clear_history = str(form.get("clear_history", [""])[0]).strip().lower() in {"1", "true", "yes", "on"}
                 result = run_storage_cleanup(dry_run=True, include_backups=include_backups, clear_history=clear_history)
-                title = "Clear eligible history preview" if clear_history else "Cleanup preview"
+                title = "eligible history preview" if clear_history else "Cleanup preview"
                 self.send_html(
                     "저장소 정리 미리보기",
                     storage_cleanup_page_html(result=result, result_title=title),
@@ -3613,7 +3918,7 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["servers", "storage-cleanup", "clear-history"]:
                 if str(form.get("confirm", [""])[0]).strip() != CLEAR_HISTORY_CONFIRMATION:
                     self.send_html(
-                        "Clear history confirmation required",
+                        "history confirmation required",
                         storage_cleanup_page_html(
                             notice_html=f'<div class="notice"><strong>Clear-history confirmation required.</strong><br>정확히 <code>{escape(CLEAR_HISTORY_CONFIRMATION)}</code> 를 입력해야 합니다.</div>'
                         ),
@@ -3626,12 +3931,77 @@ class Handler(BaseHTTPRequestHandler):
                 result = run_storage_cleanup(dry_run=False, include_backups=include_backups, clear_history=True)
                 self.send_html(
                     "이력 정리 실행 결과",
-                    storage_cleanup_page_html(result=result, result_title="Clear eligible history result"),
+                    storage_cleanup_page_html(result=result, result_title="eligible history result"),
                     active_nav="servers",
                     subtitle="clear-history 실행 결과입니다.",
                     server_tab="storage_cleanup",
                 )
                 return
+
+        if parts and parts[:2] == ["servers", "worktree-tasks"]:
+            if not is_local_client_address(str(self.client_address[0])):
+                self.send_html(
+                    "Forbidden",
+                    "<p>Local requests only.</p>",
+                    status=403,
+                    active_nav="servers",
+                    server_tab="worktree_tasks",
+                )
+                return
+
+            form = self.read_form()
+            try:
+                if parts == ["servers", "worktree-tasks", "delete-branch"]:
+                    if str(form.get("confirm", [""])[0]).strip() != "1":
+                        raise ValueError("브랜치 삭제 확인 체크가 필요합니다.")
+                    branch = str(form.get("branch", [""])[0]).strip()
+                    completed = delete_task_branch_direct(branch)
+                    if completed.returncode != 0:
+                        raise RuntimeError((completed.stderr or completed.stdout or "git branch 삭제 실패").strip())
+                    message = f"{branch} 브랜치를 삭제했습니다."
+                elif parts == ["servers", "worktree-tasks", "remove-worktree"]:
+                    if str(form.get("confirm", [""])[0]).strip() != "1":
+                        raise ValueError("워크트리 제거 확인 체크가 필요합니다.")
+                    path_text = str(form.get("worktree_path", [""])[0]).strip()
+                    completed = remove_task_worktree_direct(path_text)
+                    if completed.returncode != 0:
+                        raise RuntimeError((completed.stderr or completed.stdout or "git worktree 제거 실패").strip())
+                    message = f"작업용 worktree를 제거했습니다: {path_text}"
+                elif parts == ["servers", "worktree-tasks", "clear-records"]:
+                    if str(form.get("confirm", [""])[0]).strip() != "CLEAR TASK RECORDS":
+                        raise ValueError("정확히 CLEAR TASK RECORDS 를 입력해야 합니다.")
+                    result = clear_archived_worktree_task_records()
+                    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+                    if errors:
+                        message = (
+                            f"일부 record를 정리했습니다. task record {result.get('removed_workspaces', 0)}개, "
+                            f"merge queue record {result.get('removed_merge_records', 0)}개 삭제. 오류 {len(errors)}개."
+                        )
+                    else:
+                        message = (
+                            f"보관된 task record {result.get('removed_workspaces', 0)}개와 "
+                            f"merge queue record {result.get('removed_merge_records', 0)}개를 삭제했습니다."
+                        )
+                else:
+                    raise ValueError("지원하지 않는 Worktree Task 관리 작업입니다.")
+            except Exception as exc:
+                self.send_html(
+                    "Worktree Task 관리 실패",
+                    worktree_task_management_page_html(action_status="error", action_message=f"{type(exc).__name__}: {exc}"),
+                    status=400,
+                    active_nav="servers",
+                    server_tab="worktree_tasks",
+                )
+                return
+
+            self.send_html(
+                "Worktree Task 관리 결과",
+                worktree_task_management_page_html(action_status="ok", action_message=message),
+                active_nav="servers",
+                subtitle="Worktree Task 관리 작업이 완료되었습니다.",
+                server_tab="worktree_tasks",
+            )
+            return
 
         if parts == ["intents", "import"]:
             if not is_local_client_address(str(self.client_address[0])):

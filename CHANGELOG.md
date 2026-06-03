@@ -4,6 +4,22 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 ## Unreleased
 
+### Added
+
+- Runtime storage cleanup management UI under Management > Storage Cleanup, including editable cleanup policy, preview/apply actions, backup-inclusive cleanup, and guarded clear-history flow.
+- Count-based cleanup policy support for bundle history, tool calls, handoffs, and text payload records.
+- History/results pagination with bounded default rendering and filter-preserving navigation for large bundle histories.
+- Management > Worktree Task management page that separates actual Git task branch/worktree state from Workspace Bridge task record history, with direct cleanup controls for user-managed task branches, worktrees, and archived records.
+
+### Changed
+
+- Storage cleanup and Worktree Task management UI text is now Korean-first where it is user-facing.
+- Task orchestration history is no longer shown inline on the main pending dashboard; the pending page links to the dedicated Worktree Task management page.
+
+### Fixed
+
+- CI path safety checks now treat workspace-relative development paths lexically so `.venv/bin/python` symlinks on GitHub Actions runners are not incorrectly classified as escaping `WORKSPACE_ROOT`.
+
 ## 0.4.0 - 2026-06-03
 
 ### Added
