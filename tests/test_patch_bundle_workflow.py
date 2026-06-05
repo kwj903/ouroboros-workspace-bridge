@@ -13,6 +13,7 @@ from uuid import uuid4
 import server
 from scripts import command_bundle_runner as runner
 from terminal_bridge import config, payloads, safety, tool_calls
+from terminal_bridge.models import RecoverySnapshotResult, TransportProbeResult
 
 
 DIRECT_RISKY_TOOLS = {
@@ -105,11 +106,11 @@ class ToolSurfaceTests(unittest.TestCase):
 
         result = server.workspace_recover_last_activity(cwd=safety._relative(config.PROJECT_ROOT))
 
-        self.assertIsInstance(result, dict)
-        self.assertIn("git_status", result)
-        self.assertIn("latest_bundles", result)
-        self.assertIn("latest_audit_events", result)
-        self.assertIn("diagnosis", result)
+        self.assertIsInstance(result, RecoverySnapshotResult)
+        self.assertEqual(
+            set(result.model_dump()),
+            {"git_status", "latest_bundles", "latest_audit_events", "diagnosis"},
+        )
 
     def test_transport_probe_returns_compact_snapshot_with_git_status(self) -> None:
         tools = set(server.workspace_info().tools)
@@ -119,21 +120,31 @@ class ToolSurfaceTests(unittest.TestCase):
 
         result = server.workspace_transport_probe(cwd=safety._relative(config.PROJECT_ROOT), include_git_status=True)
 
-        self.assertIs(result["ok"], True)
-        self.assertIn("server_time", result)
-        self.assertIn("pid", result)
-        self.assertIn("workspace_root", result)
-        self.assertIn("runtime_root", result)
-        self.assertIn("latest_tool_call_count", result)
-        self.assertIn("latest_bundle_count", result)
-        self.assertIn("diagnosis", result)
-        self.assertIsInstance(result["git_status"], dict)
+        self.assertIsInstance(result, TransportProbeResult)
+        self.assertIs(result.ok, True)
+        self.assertEqual(
+            set(result.model_dump()),
+            {
+                "ok",
+                "server_time",
+                "pid",
+                "workspace_root",
+                "runtime_root",
+                "latest_tool_call_count",
+                "latest_bundle_count",
+                "git_status",
+                "git_status_summary",
+                "diagnosis",
+            },
+        )
+        self.assertIsNotNone(result.git_status)
 
     def test_transport_probe_can_skip_git_status(self) -> None:
         result = server.workspace_transport_probe(include_git_status=False)
 
-        self.assertIs(result["ok"], True)
-        self.assertIsNone(result["git_status"])
+        self.assertIs(result.ok, True)
+        self.assertIsNone(result.git_status)
+        self.assertIsNone(result.git_status_summary)
 
     def test_intent_tools_are_read_only_public_tools(self) -> None:
         with open(server.__file__, encoding="utf-8") as handle:
@@ -814,7 +825,7 @@ class IntentFlowTests(unittest.TestCase):
         self.assertIn("workspace_wait_command_bundle_status", fallback_html)
 
         recovery = server.workspace_recover_last_activity(cwd=self.project_cwd())
-        latest_ids = {str(item.get("bundle_id")) for item in recovery["latest_bundles"]}
+        latest_ids = {item.bundle_id for item in recovery.latest_bundles}
         self.assertIn(bundle_id, latest_ids)
 
     def test_review_endpoint_is_idempotent_for_same_intent_url(self) -> None:

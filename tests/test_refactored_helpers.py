@@ -245,6 +245,41 @@ class ResultModelSchemaTests(unittest.TestCase):
             getattr(model_types, "ValidationStatus", None),
         )
 
+    def test_recovery_public_wrappers_return_named_result_models(self) -> None:
+        expected_results = {
+            server.workspace_transport_probe: "TransportProbeResult",
+            server.workspace_recover_last_activity: "RecoverySnapshotResult",
+        }
+
+        for function, model_name in expected_results.items():
+            with self.subTest(function=function.__name__):
+                model = getattr(model_types, model_name, None)
+                self.assertIsNotNone(model)
+                self.assertIs(get_type_hints(function)["return"], model)
+
+    def test_recovery_result_model_fields_have_descriptions(self) -> None:
+        model_names = (
+            "TransportGitStatusSummary",
+            "TransportProbeResult",
+            "RecoveryGitStatusResult",
+            "RecoveryCommandBundleEntry",
+            "RecoverySnapshotResult",
+        )
+        missing: list[str] = []
+
+        for model_name in model_names:
+            model = getattr(model_types, model_name, None)
+            if model is None:
+                missing.append(model_name)
+                continue
+            missing.extend(
+                f"{model_name}.{field_name}"
+                for field_name, schema in model.model_json_schema()["properties"].items()
+                if not schema.get("description")
+            )
+
+        self.assertEqual(missing, [])
+
 
 class ConfigWorkspaceRootTests(unittest.TestCase):
     def setUp(self) -> None:

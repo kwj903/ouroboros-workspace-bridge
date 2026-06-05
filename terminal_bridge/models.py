@@ -248,6 +248,63 @@ class GitCommitResult(BaseModel):
     truncated: bool
 
 
+class TransportGitStatusSummary(BaseModel):
+    cwd: str = Field(description="Workspace-relative git directory checked by the probe.")
+    exit_code: int | None = Field(description="Git status exit code, or null when the check could not run.")
+    branch: str = Field(description="Branch summary line returned by git status.")
+    changed_line_count: int | None = Field(description="Number of changed-file lines, or null when unavailable.")
+    stderr: str = Field(description="Compact git status error output, if any.")
+    truncated: bool = Field(description="Whether git status error output was truncated.")
+
+
+class TransportProbeResult(BaseModel):
+    ok: bool = Field(description="Whether the request reached the MCP server.")
+    server_time: str = Field(description="Server timestamp recorded for the probe.")
+    pid: int = Field(description="Process identifier of the MCP server.")
+    workspace_root: str = Field(description="Configured workspace root served by this MCP server.")
+    runtime_root: str = Field(description="Runtime storage root used by this MCP server.")
+    latest_tool_call_count: int = Field(description="Number of recent tool call records observed.")
+    latest_bundle_count: int = Field(description="Number of command bundle records observed.")
+    git_status: TransportGitStatusSummary | None = Field(
+        description="Compact git status summary when requested.",
+    )
+    git_status_summary: TransportGitStatusSummary | None = Field(
+        description="Compatibility alias containing the same compact git status summary.",
+    )
+    diagnosis: str = Field(description="Operational interpretation of the probe result.")
+
+
+class RecoveryGitStatusResult(BaseModel):
+    cwd: str = Field(description="Workspace-relative git directory checked during recovery.")
+    command: list[str] = Field(description="Git status command used for recovery.")
+    exit_code: int | None = Field(description="Git status exit code, or null when the check could not run.")
+    stdout: str = Field(description="Git status output used to assess workspace state.")
+    stderr: str = Field(description="Git status error output, if any.")
+    truncated: bool = Field(description="Whether git status output was truncated.")
+
+
+class RecoveryCommandBundleEntry(BaseModel):
+    bundle_id: str = Field(description="Identifier used to inspect the recovered command bundle.")
+    title: str = Field(description="Human-readable purpose of the command bundle.")
+    cwd: str = Field(description="Workspace-relative directory associated with the command bundle.")
+    status: str = Field(description="Current or final command bundle state.")
+    risk: str = Field(description="Recorded command bundle risk level.")
+    command_count: int = Field(description="Number of command or action steps in the bundle.")
+    updated_at: str = Field(description="Timestamp of the latest command bundle update.")
+    error: str | None = Field(description="Command bundle failure message, if any.")
+
+
+class RecoverySnapshotResult(BaseModel):
+    git_status: RecoveryGitStatusResult = Field(description="Current git status used to assess recovery state.")
+    latest_bundles: list[RecoveryCommandBundleEntry] = Field(
+        description="Recent command bundle entries to inspect before retrying work.",
+    )
+    latest_audit_events: list[dict[str, object]] = Field(
+        description="Recent safe audit event summaries; fields vary across legacy records.",
+    )
+    diagnosis: str = Field(description="Recommended interpretation and next recovery action.")
+
+
 class AuditLogResult(BaseModel):
     entries: list[dict[str, object]]
     count: int

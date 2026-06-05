@@ -15,10 +15,13 @@ from terminal_bridge.models import (
     HandoffListResult,
     OperationListResult,
     OperationStatusResult,
+    RecoverySnapshotResult,
     TaskListEntry,
     TaskListResult,
     TaskStatusResult,
     TaskStepEntry,
+    TransportGitStatusSummary,
+    TransportProbeResult,
     ToolCallListResult,
     ToolCallStatusResult,
     TrashListResult,
@@ -82,7 +85,7 @@ def read_audit_log(
     )
 
 
-def transport_git_status_summary(cwd: str) -> dict[str, object]:
+def transport_git_status_summary(cwd: str) -> TransportGitStatusSummary:
     try:
         target = _resolve_workspace_path(cwd)
         if not target.exists():
@@ -104,23 +107,23 @@ def transport_git_status_summary(cwd: str) -> dict[str, object]:
         )
         stdout_lines = completed.stdout.splitlines()
         stderr = completed.stderr.strip()
-        return {
-            "cwd": _relative(target),
-            "exit_code": completed.returncode,
-            "branch": stdout_lines[0] if stdout_lines else "",
-            "changed_line_count": max(0, len(stdout_lines) - 1),
-            "stderr": stderr[:300],
-            "truncated": len(stderr) > 300,
-        }
+        return TransportGitStatusSummary(
+            cwd=_relative(target),
+            exit_code=completed.returncode,
+            branch=stdout_lines[0] if stdout_lines else "",
+            changed_line_count=max(0, len(stdout_lines) - 1),
+            stderr=stderr[:300],
+            truncated=len(stderr) > 300,
+        )
     except Exception as exc:
-        return {
-            "cwd": cwd,
-            "exit_code": None,
-            "branch": "",
-            "changed_line_count": None,
-            "stderr": f"{type(exc).__name__}: {exc}"[:300],
-            "truncated": False,
-        }
+        return TransportGitStatusSummary(
+            cwd=cwd,
+            exit_code=None,
+            branch="",
+            changed_line_count=None,
+            stderr=f"{type(exc).__name__}: {exc}"[:300],
+            truncated=False,
+        )
 
 
 def transport_probe(
@@ -131,7 +134,7 @@ def transport_probe(
     runtime_root: Path,
     cwd: str,
     include_git_status: bool,
-) -> dict[str, object]:
+) -> TransportProbeResult:
     ensure_runtime_dirs()
     latest_tool_call_count = len(list_tool_call_records(20))
     latest_bundle_count = sum(
@@ -142,18 +145,18 @@ def transport_probe(
     )
     git_status = transport_git_status_summary(cwd) if include_git_status else None
 
-    return {
-        "ok": True,
-        "server_time": _now_iso(),
-        "pid": os.getpid(),
-        "workspace_root": str(workspace_root),
-        "runtime_root": str(runtime_root),
-        "latest_tool_call_count": latest_tool_call_count,
-        "latest_bundle_count": latest_bundle_count,
-        "git_status": git_status,
-        "git_status_summary": git_status,
-        "diagnosis": "Transport probe reached the MCP server.",
-    }
+    return TransportProbeResult(
+        ok=True,
+        server_time=_now_iso(),
+        pid=os.getpid(),
+        workspace_root=str(workspace_root),
+        runtime_root=str(runtime_root),
+        latest_tool_call_count=latest_tool_call_count,
+        latest_bundle_count=latest_bundle_count,
+        git_status=git_status,
+        git_status_summary=git_status,
+        diagnosis="Transport probe reached the MCP server.",
+    )
 
 
 def recover_last_activity(
@@ -165,7 +168,7 @@ def recover_last_activity(
     cwd: str,
     bundle_limit: int,
     audit_limit: int,
-) -> dict[str, object]:
+) -> RecoverySnapshotResult:
     ensure_runtime_dirs()
 
     try:
@@ -236,12 +239,12 @@ def recover_last_activity(
     else:
         diagnosis = "Recent command bundle records and git status are available. Use latest_bundles to decide whether to retry, inspect status, or continue."
 
-    return {
-        "git_status": git_status,
-        "latest_bundles": latest_bundles,
-        "latest_audit_events": audit_entries,
-        "diagnosis": diagnosis,
-    }
+    return RecoverySnapshotResult(
+        git_status=git_status,
+        latest_bundles=latest_bundles,
+        latest_audit_events=audit_entries,
+        diagnosis=diagnosis,
+    )
 
 
 def handoff_entry(record: dict[str, object]) -> HandoffEntry:

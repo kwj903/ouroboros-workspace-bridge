@@ -106,6 +106,7 @@ from terminal_bridge.models import (
     ProjectSnapshotResult,
     ReadFileResult,
     ReadManyFilesResult,
+    RecoverySnapshotResult,
     ReplaceTextResult,
     RestoreResult,
     SafeTaskMergePreparationResult,
@@ -122,6 +123,8 @@ from terminal_bridge.models import (
     TextPayloadStageResult,
     ToolCallListResult,
     ToolCallStatusResult,
+    TransportGitStatusSummary,
+    TransportProbeResult,
     TrashListResult,
     TreeResult,
     WorkspaceExecResult,
@@ -1488,7 +1491,7 @@ def workspace_read_audit_log(
     return _status_read_audit_log(_ensure_runtime_dirs, AUDIT_LOG, limit, event)
 
 
-def _transport_git_status_summary(cwd: str) -> dict[str, object]:
+def _transport_git_status_summary(cwd: str) -> TransportGitStatusSummary:
     return _status_transport_git_status_summary(cwd)
 
 
@@ -1503,7 +1506,7 @@ def _transport_git_status_summary(cwd: str) -> dict[str, object]:
 def workspace_transport_probe(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")] = ".",
     include_git_status: Annotated[bool, Field(description="Whether to include a compact git status summary.")] = True,
-) -> dict[str, object]:
+) -> TransportProbeResult:
     """Quickly confirm that the MCP request reached this server."""
     return _record_tool_call(
         "workspace_transport_probe",
@@ -1512,7 +1515,7 @@ def workspace_transport_probe(
     )
 
 
-def _workspace_transport_probe_impl(cwd: str, include_git_status: bool) -> dict[str, object]:
+def _workspace_transport_probe_impl(cwd: str, include_git_status: bool) -> TransportProbeResult:
     return _status_transport_probe(
         _ensure_runtime_dirs,
         _list_tool_call_records,
@@ -1604,7 +1607,7 @@ def workspace_recover_last_activity(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")] = ".",
     bundle_limit: Annotated[int, Field(ge=1, le=20, description="Maximum recent command bundles to summarize.")] = 5,
     audit_limit: Annotated[int, Field(ge=1, le=50, description="Maximum recent audit events to summarize.")] = 10,
-) -> dict[str, object]:
+) -> RecoverySnapshotResult:
     """Return a compact recovery snapshot after an interrupted ChatGPT tool call."""
     return _record_tool_call(
         "workspace_recover_last_activity",
@@ -1613,7 +1616,7 @@ def workspace_recover_last_activity(
     )
 
 
-def _workspace_recover_last_activity_impl(cwd: str, bundle_limit: int, audit_limit: int) -> dict[str, object]:
+def _workspace_recover_last_activity_impl(cwd: str, bundle_limit: int, audit_limit: int) -> RecoverySnapshotResult:
     return _status_recover_last_activity(
         _ensure_runtime_dirs,
         _run_command,
