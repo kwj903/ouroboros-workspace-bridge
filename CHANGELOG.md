@@ -4,6 +4,8 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 ## Unreleased
 
+## 0.4.1 - 2026-06-06
+
 ### Added
 
 - Runtime storage cleanup management UI under Management > Storage Cleanup, including editable cleanup policy, preview/apply actions, backup-inclusive cleanup, and guarded clear-history flow.

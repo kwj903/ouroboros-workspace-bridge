@@ -1,6 +1,6 @@
 # Update Info
 
-Version: 0.4.0
+Version: 0.4.1
 
 For live local version and git state, run:
 
@@ -12,6 +12,19 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
+- a5f8040 Document Pydantic schema usability improvements
+- 4399287 Add typed preparation result schemas
+- b536e61 Type transport and recovery tool results
+- ecb53f3 Improve Pydantic result schema metadata
+- 2e9e3de refactor: centralize proposal wait config
+- 82700cc fix-ci-path-handling
+- 5c873ed merge cleanup-update
+- cfc17d0 feat: finalize cleanup management UI
+- 5521e88 feat: add storage cleanup management UI
+- 8ea7903 feat: paginate bundle history view
+- ca620f1 feat: add runtime cleanup policy core
+- 1f87c13 docs: plan runtime storage cleanup management
+- c92edcf chore: release v0.4.0
 - e01c213 docs: record task orchestration release checkpoint
 - 64f7d10 feat: orchestrate safe task merge proposals
 - 9260afb feat: surface validation result hints in dashboard
@@ -19,19 +32,6 @@ Recent Commits is a generated snapshot. Run `uv run python scripts/update_versio
 - 0fa580c feat: stage task validation command proposals
 - 61029c8 feat: show cleanup readiness in task dashboard
 - 69f1ebd feat: add approved task worktree cleanup execution
-- 5af49ab feat: preview task workspace cleanup readiness
-- 68d4057 feat: track task validation results
-- 4f6ad76 feat: highlight task orchestration conflict risks
-- 635f57e feat: render task orchestration dashboard
-- 42163ab feat: add task orchestration summary
-- f875e85 docs: add multi-session task workspace operator guide
-- f6a9f82 feat: archive task workspace records
-- f1eef3e feat: add approved task worktree integration staging
-- e99112e feat: add task worktree merge queue records
-- 7e5e202 feat: add task worktree merge preflight
-- 8bddb61 feat: inspect task worktree changes
-- 94bc9a7 feat: route task workspace bundles to worktrees
-- e551757 feat: add task worktree creation foundation
 
 ## How to Update Existing Installation
 
