@@ -280,6 +280,36 @@ class ResultModelSchemaTests(unittest.TestCase):
 
         self.assertEqual(missing, [])
 
+    def test_intent_public_wrappers_return_named_result_model(self) -> None:
+        model = getattr(model_types, "IntentPreparationResult", None)
+        self.assertIsNotNone(model)
+
+        for function in (
+            server.workspace_prepare_check_intent,
+            server.workspace_prepare_commit_current_changes_intent,
+            server.workspace_prepare_dev_session_intent,
+        ):
+            with self.subTest(function=function.__name__):
+                self.assertIs(get_type_hints(function)["return"], model)
+
+    def test_intent_result_model_fields_have_descriptions(self) -> None:
+        model = getattr(model_types, "IntentPreparationResult", None)
+        self.assertIsNotNone(model)
+        if model is None:
+            return
+
+        missing = [
+            field_name
+            for field_name, schema in model.model_json_schema()["properties"].items()
+            if not schema.get("description")
+        ]
+
+        self.assertEqual(missing, [])
+        self.assertIn(
+            "sensitive",
+            model.model_json_schema()["properties"]["local_review_url"]["description"],
+        )
+
 
 class ConfigWorkspaceRootTests(unittest.TestCase):
     def setUp(self) -> None:

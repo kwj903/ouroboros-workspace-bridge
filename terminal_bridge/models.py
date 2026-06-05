@@ -305,6 +305,20 @@ class RecoverySnapshotResult(BaseModel):
     diagnosis: str = Field(description="Recommended interpretation and next recovery action.")
 
 
+class IntentPreparationResult(BaseModel):
+    ok: bool = Field(description="Whether the signed intent was prepared successfully.")
+    intent_type: str = Field(description="Type of local review intent that was prepared.")
+    risk: str = Field(description="Risk level assigned to the action that the intent can import.")
+    summary: str = Field(description="Short description of the action awaiting local review.")
+    local_review_url: str = Field(
+        description="Signed local review URL containing a sensitive short-lived intent token; do not log or share it.",
+        repr=False,
+    )
+    local_pending_url: str = Field(description="Local pending bundle UI URL for reviewing imported intents.")
+    expires_at: str = Field(description="Timestamp after which the signed intent token is rejected.")
+    diagnosis: str = Field(description="Recommended next action for importing and reviewing the intent.")
+
+
 class AuditLogResult(BaseModel):
     entries: list[dict[str, object]]
     count: int

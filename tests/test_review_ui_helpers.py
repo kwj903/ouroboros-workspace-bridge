@@ -1150,10 +1150,10 @@ class ReviewServerHelperTests(unittest.TestCase):
                 message=f"Inbox intent import {uuid4().hex[:8]}",
                 include_untracked=False,
             )
-            token = str(intent["local_review_url"]).split("token=", 1)[1]
+            token = intent.local_review_url.split("token=", 1)[1]
 
             first_bundle_id = intents.import_intent_token(token)
-            second_bundle_id = intents.import_intent_token(str(intent["local_review_url"]))
+            second_bundle_id = intents.import_intent_token(intent.local_review_url)
             redirect_location = review.intent_import_redirect_location(token)
             after_count = sum(
                 1

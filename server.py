@@ -95,6 +95,7 @@ from terminal_bridge.models import (
     GitCommitResult,
     HandoffEntry,
     HandoffListResult,
+    IntentPreparationResult,
     ListResult,
     MergeQueueEntryResult,
     MergeQueueListResult,
@@ -360,7 +361,13 @@ def _local_pending_url(bundle_id: str | None = None) -> str:
     return _intent_local_pending_url(host, port, bundle_id)
 
 
-def _prepare_intent(intent_type: str, cwd: str, params: dict[str, object], risk: str, summary: str) -> dict[str, object]:
+def _prepare_intent(
+    intent_type: str,
+    cwd: str,
+    params: dict[str, object],
+    risk: str,
+    summary: str,
+) -> IntentPreparationResult:
     target = _resolve_workspace_path(cwd)
     if not target.exists():
         raise FileNotFoundError(f"Directory does not exist: {_relative(target)}")
@@ -378,16 +385,16 @@ def _prepare_intent(intent_type: str, cwd: str, params: dict[str, object], risk:
         "nonce": secrets.token_hex(12),
     }
     token = _sign_intent_payload(payload)
-    return {
-        "ok": True,
-        "intent_type": intent_type,
-        "risk": risk,
-        "summary": summary,
-        "local_review_url": _local_review_url(token),
-        "local_pending_url": _local_pending_url(),
-        "expires_at": payload["expires_at"],
-        "diagnosis": "Open the local URL to import this intent into the pending bundle UI.",
-    }
+    return IntentPreparationResult(
+        ok=True,
+        intent_type=intent_type,
+        risk=risk,
+        summary=summary,
+        local_review_url=_local_review_url(token),
+        local_pending_url=_local_pending_url(),
+        expires_at=str(payload["expires_at"]),
+        diagnosis="Open the local URL to import this intent into the pending bundle UI.",
+    )
 
 
 def _intent_command_step_for_check(check: str) -> CommandBundleStep:
@@ -561,7 +568,7 @@ def _intent_response(
     params: dict[str, object],
     risk: str,
     summary: str,
-) -> dict[str, object]:
+) -> IntentPreparationResult:
     return _prepare_intent(intent_type, cwd, params, risk, summary)
 
 
@@ -1538,7 +1545,7 @@ def _workspace_transport_probe_impl(cwd: str, include_git_status: bool) -> Trans
 def workspace_prepare_check_intent(
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     check: Annotated[Literal["git_status", "py_compile", "unit_tests", "check_all"], Field(description="Check bundle to prepare.")],
-) -> dict[str, object]:
+) -> IntentPreparationResult:
     """Prepare a signed local review URL for a check command bundle without creating it."""
     return _record_tool_call(
         "workspace_prepare_check_intent",
@@ -1559,7 +1566,7 @@ def workspace_prepare_commit_current_changes_intent(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
     include_untracked: Annotated[bool, Field(description="Whether approval should include untracked files.")] = False,
-) -> dict[str, object]:
+) -> IntentPreparationResult:
     """Prepare a signed local review URL for committing current changes without creating a bundle."""
     return _record_tool_call(
         "workspace_prepare_commit_current_changes_intent",
@@ -1585,7 +1592,7 @@ def workspace_prepare_commit_current_changes_intent(
 def workspace_prepare_dev_session_intent(
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     action: Annotated[Literal["status", "doctor", "restart_mcp", "restart_session"], Field(description="Dev session action to prepare.")],
-) -> dict[str, object]:
+) -> IntentPreparationResult:
     """Prepare a signed local review URL for a dev-session command bundle without creating it."""
     risk = "low" if action in {"status", "doctor"} else "medium"
     return _record_tool_call(

@@ -13,7 +13,7 @@ from uuid import uuid4
 import server
 from scripts import command_bundle_runner as runner
 from terminal_bridge import config, payloads, safety, tool_calls
-from terminal_bridge.models import RecoverySnapshotResult, TransportProbeResult
+from terminal_bridge.models import IntentPreparationResult, RecoverySnapshotResult, TransportProbeResult
 
 
 DIRECT_RISKY_TOOLS = {
@@ -721,8 +721,8 @@ class IntentFlowTests(unittest.TestCase):
     def project_cwd(self) -> str:
         return safety._relative(config.PROJECT_ROOT)
 
-    def token_from_intent(self, result: dict[str, object]) -> str:
-        return str(result["local_review_url"]).split("token=", 1)[1]
+    def token_from_intent(self, result: IntentPreparationResult) -> str:
+        return result.local_review_url.split("token=", 1)[1]
 
     def test_prepare_intents_do_not_create_command_bundle_files_and_tokens_validate(self) -> None:
         self.use_temp_runtime_bits()
@@ -743,13 +743,23 @@ class IntentFlowTests(unittest.TestCase):
             (commit_intent, "commit_current_changes"),
             (dev_intent, "dev_session"),
         ):
-            self.assertTrue(item["ok"])
-            self.assertEqual(item["intent_type"], intent_type)
-            self.assertIn("local_review_url", item)
-            self.assertIn("local_pending_url", item)
-            self.assertIn("expires_at", item)
-            self.assertIn("diagnosis", item)
-            self.assertIn("pending bundle UI", str(item["diagnosis"]))
+            self.assertIsInstance(item, IntentPreparationResult)
+            self.assertTrue(item.ok)
+            self.assertEqual(item.intent_type, intent_type)
+            self.assertEqual(
+                set(item.model_dump()),
+                {
+                    "ok",
+                    "intent_type",
+                    "risk",
+                    "summary",
+                    "local_review_url",
+                    "local_pending_url",
+                    "expires_at",
+                    "diagnosis",
+                },
+            )
+            self.assertIn("pending bundle UI", item.diagnosis)
             payload = server._validate_intent_token(self.token_from_intent(item))
             self.assertEqual(payload["intent_type"], intent_type)
 
@@ -760,8 +770,8 @@ class IntentFlowTests(unittest.TestCase):
 
         intent = server.workspace_prepare_check_intent(cwd=self.project_cwd(), check="git_status")
 
-        self.assertTrue(str(intent["local_review_url"]).startswith("http://127.0.0.1:"))
-        self.assertTrue(str(intent["local_pending_url"]).startswith("http://127.0.0.1:"))
+        self.assertTrue(intent.local_review_url.startswith("http://127.0.0.1:"))
+        self.assertTrue(intent.local_pending_url.startswith("http://127.0.0.1:"))
 
     def test_invalid_and_expired_intent_tokens_are_rejected(self) -> None:
         self.use_temp_runtime_bits()
