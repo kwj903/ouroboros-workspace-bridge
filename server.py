@@ -29,7 +29,6 @@ from terminal_bridge.browsing import (
 from terminal_bridge.bundles import (
     _command_bundle_dirs,
     _command_bundle_path,
-    _default_command_bundle_metadata,
     _find_command_bundle,
     _merge_command_bundle_metadata,
     _move_command_bundle,
@@ -50,9 +49,15 @@ from terminal_bridge.commands import (
 )
 from terminal_bridge.config import (
     AUDIT_LOG,
+    DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
+    DEFAULT_BUNDLE_WAIT_SECONDS,
     DEFAULT_DIFF_PREVIEW_CHARS,
+    MAX_BUNDLE_POLL_INTERVAL_SECONDS,
+    MAX_BUNDLE_WAIT_SECONDS,
     MAX_COMMAND_TIMEOUT_SECONDS,
     MAX_DIFF_PREVIEW_CHARS,
+    MIN_BUNDLE_POLL_INTERVAL_SECONDS,
+    MIN_BUNDLE_WAIT_SECONDS,
     MAX_EXEC_ARGV_ITEMS,
     MAX_FIND_ENTRIES,
     MAX_READ_CHARS,
@@ -2379,8 +2384,8 @@ def workspace_propose_task_validation_command_and_wait(
         Field(description="Optional display name for the validation command step. Defaults to Run source validation."),
     ] = None,
     command_timeout_seconds: Annotated[int, Field(ge=1, le=MAX_COMMAND_TIMEOUT_SECONDS)] = 60,
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Create one pending source-level validation command proposal for a merged task.
 
@@ -2493,8 +2498,8 @@ def workspace_propose_task_cleanup_and_wait(
     task_id: Annotated[str, Field(description="Task id for the ready archived task worktree cleanup.")],
     cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
     project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Create one pending command proposal to physically clean up a ready archived task worktree.
 
@@ -2574,8 +2579,8 @@ def workspace_propose_task_worktree_merge_and_wait(
     task_id: Annotated[str, Field(description="Task id for the queued task worktree merge.")],
     cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
     project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Create one pending command proposal to apply a queued task worktree merge to the source project.
 
@@ -2653,8 +2658,8 @@ def workspace_prepare_safe_task_merge_and_wait(
     task_id: Annotated[str, Field(description="Task id for the ready task worktree to inspect, queue, and propose for source merge.")],
     cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
     project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> SafeTaskMergePreparationResult:
     """Safely inspect, preflight, queue, and stage a task merge proposal.
 
@@ -3511,8 +3516,8 @@ def _workspace_command_bundle_status_impl(bundle_id: str) -> CommandBundleStatus
 )
 def workspace_wait_command_bundle_status(
     bundle_id: Annotated[str, Field(description="Command bundle id returned by workspace_stage_command_bundle.")],
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Wait briefly for a pending command bundle to be approved, rejected, applied, or failed.
 
@@ -3701,8 +3706,8 @@ def workspace_stage_command_bundle_and_wait(
             ),
         ),
     ],
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Stage exactly one command proposal, then briefly wait for local review UI approval.
 
@@ -3771,8 +3776,8 @@ def workspace_stage_patch_bundle_and_wait(
         ),
     ] = None,
     patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Stage a patch proposal, then briefly wait for local review UI approval.
 
@@ -3847,8 +3852,8 @@ def workspace_stage_action_bundle_and_wait(
             ),
         ),
     ],
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Stage exactly one action proposal, then briefly wait for local review UI approval.
 
@@ -3917,8 +3922,8 @@ def workspace_stage_commit_bundle_and_wait(
         ),
     ],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Stage a commit proposal, then briefly wait for local review UI approval.
 
@@ -4002,8 +4007,8 @@ def workspace_propose_command_and_wait(
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
     workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Create exactly one command proposal in the local pending UI and briefly wait.
 
@@ -4071,8 +4076,8 @@ def workspace_propose_file_write_and_wait(
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
     workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Create exactly one file-write proposal in the local pending UI and briefly wait.
 
@@ -4142,8 +4147,8 @@ def workspace_propose_file_replace_and_wait(
         ),
     ],
     replace_all: Annotated[bool, Field(description="Replace all occurrences instead of only the first.")] = False,
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
     task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
     client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
@@ -4207,8 +4212,8 @@ def workspace_propose_patch_and_wait(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     patch: Annotated[str | None, Field(description="Unified diff patch text. Prefer smaller patches or file-specific wrappers.")] = None,
     patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
     task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
     client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
@@ -4263,8 +4268,8 @@ def workspace_propose_git_commit_and_wait(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     paths: Annotated[list[str], Field(min_length=1, max_length=100, description="Relative paths to stage and commit.")],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
     task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
     client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
@@ -4322,8 +4327,8 @@ def workspace_propose_git_push_and_wait(
     session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
     workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=1, le=45, description="Maximum seconds to wait for pending status to change.")] = 30,
-    poll_interval_seconds: Annotated[float, Field(ge=0.2, le=5.0, description="Seconds between status checks.")] = 1.0,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Create one git push proposal in the local pending UI and briefly wait.
 

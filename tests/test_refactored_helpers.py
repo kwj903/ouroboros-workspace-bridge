@@ -58,6 +58,12 @@ class ConfigLimitTests(unittest.TestCase):
         self.assertEqual(config.MAX_DIFF_PREVIEW_CHARS, 120_000)
         self.assertEqual(config.DEFAULT_DIFF_PREVIEW_CHARS, 20_000)
         self.assertEqual(config.MAX_COMMAND_TIMEOUT_SECONDS, 900)
+        self.assertEqual(config.MIN_BUNDLE_WAIT_SECONDS, 1)
+        self.assertEqual(config.DEFAULT_BUNDLE_WAIT_SECONDS, 300)
+        self.assertEqual(config.MAX_BUNDLE_WAIT_SECONDS, 900)
+        self.assertEqual(config.MIN_BUNDLE_POLL_INTERVAL_SECONDS, 0.2)
+        self.assertEqual(config.DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS, 1.0)
+        self.assertEqual(config.MAX_BUNDLE_POLL_INTERVAL_SECONDS, 5.0)
 
     def test_runner_limit_constants_are_imported_from_config(self) -> None:
         self.assertEqual(command_bundle_runner.MAX_STDOUT_CHARS, config.MAX_STDOUT_CHARS)
@@ -125,6 +131,22 @@ class ServerSchemaLimitTests(unittest.TestCase):
         self.assertEqual(
             _field_metadata_value(server.workspace_propose_command_and_wait, "command_timeout_seconds", "le"),
             config.MAX_COMMAND_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            _field_metadata_value(server.workspace_propose_command_and_wait, "timeout_seconds", "le"),
+            config.MAX_BUNDLE_WAIT_SECONDS,
+        )
+        self.assertEqual(
+            signature(server.workspace_propose_command_and_wait).parameters["timeout_seconds"].default,
+            config.DEFAULT_BUNDLE_WAIT_SECONDS,
+        )
+        self.assertEqual(
+            _field_metadata_value(server.workspace_propose_command_and_wait, "poll_interval_seconds", "le"),
+            config.MAX_BUNDLE_POLL_INTERVAL_SECONDS,
+        )
+        self.assertEqual(
+            signature(server.workspace_propose_command_and_wait).parameters["poll_interval_seconds"].default,
+            config.DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
         )
         self.assertEqual(
             _field_metadata_value(server.workspace_exec, "timeout_seconds", "le"),

@@ -13,6 +13,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 ### Changed
 
+- Public MCP proposal wait defaults are now centralized in `terminal_bridge/config.py`, with the default wait increased to 300 seconds and the maximum wait increased to 900 seconds for long approved local tasks.
 - Storage cleanup and Worktree Task management UI text is now Korean-first where it is user-facing.
 - Task orchestration history is no longer shown inline on the main pending dashboard; the pending page links to the dedicated Worktree Task management page.
 
