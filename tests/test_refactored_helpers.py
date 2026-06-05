@@ -17,13 +17,38 @@ from terminal_bridge import (
     cli,
     commands,
     config,
+    models as model_types,
     operations,
     patches,
     payloads,
     safety,
     tasks,
 )
-from terminal_bridge.models import CommandBundleAction, CommandBundleStep
+from terminal_bridge.models import (
+    CommandBundleAction,
+    CommandBundleListEntry,
+    CommandBundleListResult,
+    CommandBundleStageResult,
+    CommandBundleStatusResult,
+    CommandBundleStep,
+    FindFilesResult,
+    HandoffEntry,
+    MergeQueueEntryResult,
+    ProjectSnapshotResult,
+    ReadManyFilesResult,
+    SafeTaskMergePreparationResult,
+    SearchTextResult,
+    TaskCleanupPreviewResult,
+    TaskOrchestrationSummaryResult,
+    TaskStatusResult,
+    TaskValidationRecordSuggestion,
+    TaskValidationResultHintResult,
+    TaskWorkspaceStatusResult,
+    TaskWorktreeInspectionResult,
+    TaskWorktreeMergePreflightResult,
+    TextPayloadStageResult,
+    ToolCallStatusResult,
+)
 
 
 def _field_metadata_value(function: Any, parameter_name: str, metadata_name: str) -> object:
@@ -163,6 +188,61 @@ class ServerSchemaLimitTests(unittest.TestCase):
         self.assertEqual(
             _field_metadata_value(server.workspace_stage_text_payload, "text", "max_length"),
             config.TEXT_PAYLOAD_CHUNK_MAX_CHARS,
+        )
+
+
+class ResultModelSchemaTests(unittest.TestCase):
+    def test_priority_result_model_fields_have_descriptions(self) -> None:
+        models = (
+            CommandBundleStageResult,
+            CommandBundleStatusResult,
+            CommandBundleListEntry,
+            CommandBundleListResult,
+            SafeTaskMergePreparationResult,
+            TaskValidationResultHintResult,
+            TextPayloadStageResult,
+            ToolCallStatusResult,
+            HandoffEntry,
+            FindFilesResult,
+            SearchTextResult,
+            ReadManyFilesResult,
+            ProjectSnapshotResult,
+            TaskStatusResult,
+            TaskWorkspaceStatusResult,
+            TaskWorktreeInspectionResult,
+            TaskWorktreeMergePreflightResult,
+            MergeQueueEntryResult,
+            TaskOrchestrationSummaryResult,
+            TaskCleanupPreviewResult,
+        )
+
+        missing = [
+            f"{model.__name__}.{field_name}"
+            for model in models
+            for field_name, schema in model.model_json_schema()["properties"].items()
+            if not schema.get("description")
+        ]
+
+        self.assertEqual(missing, [])
+
+    def test_shared_literal_aliases_keep_expected_enum_values(self) -> None:
+        expected_aliases = {
+            "RiskLevel": ("low", "medium", "high", "blocked"),
+            "ValidationStatus": ("unknown", "pending", "passed", "failed"),
+            "WorkspaceMode": ("direct", "task-workspace"),
+        }
+
+        for alias_name, values in expected_aliases.items():
+            with self.subTest(alias=alias_name):
+                self.assertEqual(get_args(getattr(model_types, alias_name, object)), values)
+
+        self.assertEqual(
+            CommandBundleStageResult.model_fields["risk"].annotation,
+            getattr(model_types, "RiskLevel", None),
+        )
+        self.assertEqual(
+            TaskValidationRecordSuggestion.model_fields["validation_status"].annotation,
+            getattr(model_types, "ValidationStatus", None),
         )
 
 

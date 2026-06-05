@@ -5,6 +5,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+RiskLevel = Literal["low", "medium", "high", "blocked"]
+ValidationStatus = Literal["unknown", "pending", "passed", "failed"]
+WorkspaceMode = Literal["direct", "task-workspace"]
+
+
 class WorkspaceInfo(BaseModel):
     root: str
     mode: str
@@ -83,7 +88,7 @@ class CommandResult(BaseModel):
 class WorkspaceExecResult(BaseModel):
     cwd: str
     command: list[str]
-    risk: Literal["low", "medium", "high", "blocked"]
+    risk: RiskLevel
     approval_required: bool
     exit_code: int | None = None
     stdout: str = ""
@@ -116,70 +121,85 @@ class CommandBundleAction(BaseModel):
 
 
 class CommandBundleStageResult(BaseModel):
-    bundle_id: str
-    title: str
-    cwd: str
-    status: str
-    risk: Literal["low", "medium", "high", "blocked"]
-    approval_required: bool
-    path: str
-    review_hint: str
-    command_count: int
+    bundle_id: str = Field(description="Identifier used to check or wait for this bundle.")
+    title: str = Field(description="Human-readable purpose of the staged bundle.")
+    cwd: str = Field(description="Workspace-relative directory where the bundle will run.")
+    status: str = Field(description="Current bundle state after staging.")
+    risk: RiskLevel = Field(description="Highest risk level assigned to the bundle.")
+    approval_required: bool = Field(description="Whether local review approval is required before execution.")
+    path: str = Field(description="Runtime record path for the staged bundle.")
+    review_hint: str = Field(description="Short instruction for reviewing or following up on the bundle.")
+    command_count: int = Field(description="Number of command or action steps in the bundle.")
 
 
 class CommandBundleStatusResult(BaseModel):
-    bundle_id: str
-    title: str
-    cwd: str
-    status: str
-    risk: str
-    approval_required: bool
-    command_count: int
-    created_at: str
-    updated_at: str
-    result: dict[str, object] | None = None
-    error: str | None = None
-    metadata: dict[str, object] = Field(default_factory=dict)
+    bundle_id: str = Field(description="Identifier of the bundle being reported.")
+    title: str = Field(description="Human-readable purpose of the bundle.")
+    cwd: str = Field(description="Workspace-relative directory where the bundle runs.")
+    status: str = Field(description="Current bundle state; use it to decide whether to wait, review, or inspect failure.")
+    risk: str = Field(description="Recorded bundle risk level; legacy records may contain broader values.")
+    approval_required: bool = Field(description="Whether execution still depends on local review approval.")
+    command_count: int = Field(description="Number of command or action steps in the bundle.")
+    created_at: str = Field(description="Timestamp when the bundle was staged.")
+    updated_at: str = Field(description="Timestamp of the latest bundle state change.")
+    result: dict[str, object] | None = Field(default=None, description="Execution result when the bundle has completed.")
+    error: str | None = Field(default=None, description="Failure message when the bundle did not complete successfully.")
+    metadata: dict[str, object] = Field(
+        default_factory=dict,
+        description="Routing and workflow context attached to the bundle.",
+    )
 
 
 class CommandBundleListEntry(BaseModel):
-    bundle_id: str
-    title: str
-    cwd: str
-    status: str
-    risk: str
-    command_count: int
-    updated_at: str
-    metadata: dict[str, object] = Field(default_factory=dict)
+    bundle_id: str = Field(description="Identifier used to inspect this bundle.")
+    title: str = Field(description="Human-readable purpose of the bundle.")
+    cwd: str = Field(description="Workspace-relative directory associated with the bundle.")
+    status: str = Field(description="Current bundle state.")
+    risk: str = Field(description="Recorded bundle risk level; legacy records may contain broader values.")
+    command_count: int = Field(description="Number of command or action steps in the bundle.")
+    updated_at: str = Field(description="Timestamp of the latest bundle state change.")
+    metadata: dict[str, object] = Field(
+        default_factory=dict,
+        description="Routing and workflow context attached to the bundle.",
+    )
 
 
 class CommandBundleListResult(BaseModel):
-    entries: list[CommandBundleListEntry]
-    count: int
+    entries: list[CommandBundleListEntry] = Field(description="Bundles matching the requested filters.")
+    count: int = Field(description="Number of returned bundle entries.")
 
 
 class SafeTaskMergePreparationResult(BaseModel):
-    task_id: str
-    project_id: str
-    source_cwd: str
-    inspect_summary: dict[str, object] = Field(default_factory=dict)
-    preflight_result: dict[str, object] = Field(default_factory=dict)
-    ready_to_merge: bool
-    conflict_risk: str
-    recommended_action: str
-    blockers: list[str] = Field(default_factory=list)
-    merge_queue_status: str | None = None
-    merge_queue_record: dict[str, object] | None = None
-    proposal_bundle_id: str | None = None
-    proposal_status: str | None = None
-    proposal: dict[str, object] | None = None
+    task_id: str = Field(description="Task whose worktree was prepared for merge.")
+    project_id: str = Field(description="Project that owns the task workspace.")
+    source_cwd: str = Field(description="Source workspace directory that would receive the merge.")
+    inspect_summary: dict[str, object] = Field(
+        default_factory=dict,
+        description="Summary of the task worktree inspection.",
+    )
+    preflight_result: dict[str, object] = Field(
+        default_factory=dict,
+        description="Merge preflight evidence used for the readiness decision.",
+    )
+    ready_to_merge: bool = Field(description="Whether preflight found the task safe to propose for merge.")
+    conflict_risk: str = Field(description="Estimated merge conflict risk.")
+    recommended_action: str = Field(description="Recommended next workflow action.")
+    blockers: list[str] = Field(default_factory=list, description="Reasons the merge should not proceed yet.")
+    merge_queue_status: str | None = Field(default=None, description="Current merge queue state, when available.")
+    merge_queue_record: dict[str, object] | None = Field(
+        default=None,
+        description="Merge queue record created or inspected by this preparation.",
+    )
+    proposal_bundle_id: str | None = Field(default=None, description="Identifier of the staged merge proposal, if any.")
+    proposal_status: str | None = Field(default=None, description="Current state of the staged merge proposal, if any.")
+    proposal: dict[str, object] | None = Field(default=None, description="Staged merge proposal details, if any.")
 
 
 class TaskValidationRecordSuggestion(BaseModel):
     task_id: str
     cwd: str
     project_id: str | None = None
-    validation_status: Literal["unknown", "pending", "passed", "failed"]
+    validation_status: ValidationStatus = Field(description="Validation state inferred from the command result.")
     validation_commands: list[str] = Field(default_factory=list)
     validation_summary: str | None = None
     validated_by: str | None = None
@@ -188,32 +208,36 @@ class TaskValidationRecordSuggestion(BaseModel):
 
 
 class TaskValidationResultHintResult(BaseModel):
-    task_id: str | None = None
-    project_id: str | None = None
-    source_cwd: str | None = None
-    bundle_id: str | None = None
-    bundle_status: str
-    command_argv: list[str] = Field(default_factory=list)
-    command_summary: str | None = None
-    exit_code: int | None = None
-    stdout_preview: str = ""
-    stderr_preview: str = ""
-    stdout_truncated: bool = False
-    stderr_truncated: bool = False
-    result_available: bool = False
-    inferred_status: Literal["passed", "failed", "unknown"]
-    recommended_next_action: str
-    suggested_record_input: TaskValidationRecordSuggestion
+    task_id: str | None = Field(default=None, description="Task associated with the validation bundle, when known.")
+    project_id: str | None = Field(default=None, description="Project associated with the validation bundle, when known.")
+    source_cwd: str | None = Field(default=None, description="Source workspace directory associated with the task.")
+    bundle_id: str | None = Field(default=None, description="Validation command bundle identifier.")
+    bundle_status: str = Field(description="Current validation bundle state.")
+    command_argv: list[str] = Field(default_factory=list, description="Validation command arguments that were executed.")
+    command_summary: str | None = Field(default=None, description="Short summary of the validation command.")
+    exit_code: int | None = Field(default=None, description="Validation command exit code, when available.")
+    stdout_preview: str = Field(default="", description="Truncated preview of validation stdout.")
+    stderr_preview: str = Field(default="", description="Truncated preview of validation stderr.")
+    stdout_truncated: bool = Field(default=False, description="Whether the stdout preview omits content.")
+    stderr_truncated: bool = Field(default=False, description="Whether the stderr preview omits content.")
+    result_available: bool = Field(default=False, description="Whether a completed command result was available for inference.")
+    inferred_status: Literal["passed", "failed", "unknown"] = Field(
+        description="Validation status inferred from the available result.",
+    )
+    recommended_next_action: str = Field(description="Recommended next step for recording or rerunning validation.")
+    suggested_record_input: TaskValidationRecordSuggestion = Field(
+        description="Suggested input for recording the inferred validation result.",
+    )
 
 
 class TextPayloadStageResult(BaseModel):
-    payload_id: str
-    chunk_index: int
-    total_chunks: int
-    chunk_chars: int
-    total_chars: int
-    complete: bool
-    path: str
+    payload_id: str = Field(description="Identifier used to reference the staged text payload.")
+    chunk_index: int = Field(description="Zero-based index of the chunk accepted by this call.")
+    total_chunks: int = Field(description="Expected number of chunks in the complete payload.")
+    chunk_chars: int = Field(description="Character count of the accepted chunk.")
+    total_chars: int = Field(description="Character count currently stored for the payload.")
+    complete: bool = Field(description="Whether all expected chunks are now staged.")
+    path: str = Field(description="Runtime record path for the staged payload.")
 
 
 class GitCommitResult(BaseModel):
@@ -281,17 +305,17 @@ class OperationListResult(BaseModel):
 
 
 class ToolCallStatusResult(BaseModel):
-    call_id: str
-    tool_name: str
-    status: str
-    started_at: str | None = None
-    completed_at: str | None = None
-    failed_at: str | None = None
-    duration_ms: int | None = None
-    args_hash: str | None = None
-    args_summary: dict[str, object] | None = None
-    result_summary: dict[str, object] | None = None
-    error: str | None = None
+    call_id: str = Field(description="Identifier of the recorded tool call.")
+    tool_name: str = Field(description="Name of the tool that was called.")
+    status: str = Field(description="Current or final tool call state.")
+    started_at: str | None = Field(default=None, description="Timestamp when the tool call started.")
+    completed_at: str | None = Field(default=None, description="Timestamp when the tool call completed successfully.")
+    failed_at: str | None = Field(default=None, description="Timestamp when the tool call failed.")
+    duration_ms: int | None = Field(default=None, description="Recorded tool call duration in milliseconds.")
+    args_hash: str | None = Field(default=None, description="Hash used to identify the recorded arguments.")
+    args_summary: dict[str, object] | None = Field(default=None, description="Redacted summary of the tool arguments.")
+    result_summary: dict[str, object] | None = Field(default=None, description="Redacted summary of the tool result.")
+    error: str | None = Field(default=None, description="Failure message when the tool call did not complete.")
 
 
 class ToolCallListResult(BaseModel):
@@ -300,19 +324,22 @@ class ToolCallListResult(BaseModel):
 
 
 class HandoffEntry(BaseModel):
-    handoff_id: str
-    bundle_id: str
-    status: str
-    ok: bool | None
-    risk: str
-    title: str
-    cwd: str
-    next: str
-    stdout_tail: str
-    stderr_tail: str
-    created_at: str
-    updated_at: str
-    metadata: dict[str, object] = Field(default_factory=dict)
+    handoff_id: str = Field(description="Identifier of the handoff record.")
+    bundle_id: str = Field(description="Command bundle associated with the handoff.")
+    status: str = Field(description="Current or final bundle state recorded by the handoff.")
+    ok: bool | None = Field(description="Whether the completed handoff succeeded, or null while unresolved.")
+    risk: str = Field(description="Recorded risk level for the handoff.")
+    title: str = Field(description="Human-readable purpose of the handoff.")
+    cwd: str = Field(description="Workspace-relative directory associated with the handoff.")
+    next: str = Field(description="Recommended next action for the receiving agent.")
+    stdout_tail: str = Field(description="Tail of captured stdout for quick inspection.")
+    stderr_tail: str = Field(description="Tail of captured stderr for quick inspection.")
+    created_at: str = Field(description="Timestamp when the handoff was created.")
+    updated_at: str = Field(description="Timestamp of the latest handoff update.")
+    metadata: dict[str, object] = Field(
+        default_factory=dict,
+        description="Routing and workflow context attached to the handoff.",
+    )
 
 
 class HandoffListResult(BaseModel):
@@ -327,11 +354,11 @@ class FileMatchEntry(BaseModel):
 
 
 class FindFilesResult(BaseModel):
-    path: str
-    pattern: str
-    entries: list[FileMatchEntry]
-    count: int
-    truncated: bool
+    path: str = Field(description="Workspace-relative directory that was searched.")
+    pattern: str = Field(description="File name pattern used for the search.")
+    entries: list[FileMatchEntry] = Field(description="Files matching the requested pattern.")
+    count: int = Field(description="Number of returned file matches.")
+    truncated: bool = Field(description="Whether additional file matches were omitted.")
 
 
 class SearchTextMatch(BaseModel):
@@ -341,34 +368,34 @@ class SearchTextMatch(BaseModel):
 
 
 class SearchTextResult(BaseModel):
-    query: str
-    path: str
-    matches: list[SearchTextMatch]
-    count: int
-    truncated: bool
+    query: str = Field(description="Text query used for the search.")
+    path: str = Field(description="Workspace-relative path that was searched.")
+    matches: list[SearchTextMatch] = Field(description="Matching lines returned by the search.")
+    count: int = Field(description="Number of returned text matches.")
+    truncated: bool = Field(description="Whether additional text matches were omitted.")
 
 
 class ReadManyFileEntry(BaseModel):
-    path: str
-    content: str | None = None
-    truncated: bool = False
-    size_bytes: int | None = None
-    sha256: str | None = None
-    error: str | None = None
+    path: str = Field(description="Workspace-relative path requested for reading.")
+    content: str | None = Field(default=None, description="File content when the read succeeded.")
+    truncated: bool = Field(default=False, description="Whether returned content omits part of the file.")
+    size_bytes: int | None = Field(default=None, description="Full file size in bytes, when available.")
+    sha256: str | None = Field(default=None, description="SHA-256 digest of the full file, when available.")
+    error: str | None = Field(default=None, description="Read failure message for this file, if any.")
 
 
 class ReadManyFilesResult(BaseModel):
-    entries: list[ReadManyFileEntry]
-    count: int
-    truncated: bool
+    entries: list[ReadManyFileEntry] = Field(description="Per-file read results in request order.")
+    count: int = Field(description="Number of returned file read entries.")
+    truncated: bool = Field(description="Whether any returned file content or the overall response was truncated.")
 
 
 class ProjectSnapshotResult(BaseModel):
-    path: str
-    tree: list[str]
-    key_files: list[str]
-    git_status: str
-    truncated: bool
+    path: str = Field(description="Workspace-relative project path summarized by the snapshot.")
+    tree: list[str] = Field(description="Compact project tree entries.")
+    key_files: list[str] = Field(description="Detected files that are useful for understanding the project.")
+    git_status: str = Field(description="Current short git status for the project.")
+    truncated: bool = Field(description="Whether the project tree omits additional entries.")
 
 
 class PatchFileEntry(BaseModel):
@@ -405,18 +432,18 @@ class TaskStepEntry(BaseModel):
 
 
 class TaskStatusResult(BaseModel):
-    task_id: str
-    title: str
-    goal: str
-    status: str
-    created_at: str
-    updated_at: str
-    finished_at: str | None = None
-    plan: list[str]
-    steps: list[TaskStepEntry]
-    metadata: dict[str, object]
-    summary: str | None = None
-    next_steps: list[str]
+    task_id: str = Field(description="Identifier of the tracked task.")
+    title: str = Field(description="Short task title.")
+    goal: str = Field(description="Outcome the tracked task is intended to achieve.")
+    status: str = Field(description="Current task lifecycle state.")
+    created_at: str = Field(description="Timestamp when the task record was created.")
+    updated_at: str = Field(description="Timestamp of the latest task update.")
+    finished_at: str | None = Field(default=None, description="Timestamp when the task finished, if applicable.")
+    plan: list[str] = Field(description="Current ordered task plan.")
+    steps: list[TaskStepEntry] = Field(description="Recorded task progress events.")
+    metadata: dict[str, object] = Field(description="Additional routing and workflow context for the task.")
+    summary: str | None = Field(default=None, description="Completion or progress summary, when available.")
+    next_steps: list[str] = Field(description="Recommended next actions for continuing the task.")
 
 
 class TaskListEntry(BaseModel):
@@ -435,24 +462,24 @@ class TaskListResult(BaseModel):
 
 
 class TaskWorkspaceStatusResult(BaseModel):
-    task_id: str
-    project_id: str
-    source_cwd: str
-    source_git_root: str | None = None
-    workspace_mode: str
-    workspace_key: str
-    workspace_path: str
-    record_path: str
-    worktree_branch: str | None = None
-    worktree_status: str | None = None
-    base_ref: str | None = None
-    base_sha: str | None = None
-    status: str
-    exists: bool
-    created_at: str
-    updated_at: str
-    archived_at: str | None = None
-    archive_reason: str | None = None
+    task_id: str = Field(description="Task associated with this workspace record.")
+    project_id: str = Field(description="Project that owns the task workspace.")
+    source_cwd: str = Field(description="Source workspace directory for the task.")
+    source_git_root: str | None = Field(default=None, description="Source git root, when detected.")
+    workspace_mode: str = Field(description="Workspace routing mode; legacy records may contain broader values.")
+    workspace_key: str = Field(description="Stable key used to identify the task workspace.")
+    workspace_path: str = Field(description="Filesystem path of the task workspace.")
+    record_path: str = Field(description="Runtime record path for the task workspace.")
+    worktree_branch: str | None = Field(default=None, description="Git branch used by the task worktree, if any.")
+    worktree_status: str | None = Field(default=None, description="Current git worktree state, when available.")
+    base_ref: str | None = Field(default=None, description="Git reference used as the task workspace base.")
+    base_sha: str | None = Field(default=None, description="Commit SHA recorded as the task workspace base.")
+    status: str = Field(description="Current task workspace lifecycle state.")
+    exists: bool = Field(description="Whether the task workspace currently exists on disk.")
+    created_at: str = Field(description="Timestamp when the task workspace record was created.")
+    updated_at: str = Field(description="Timestamp of the latest task workspace update.")
+    archived_at: str | None = Field(default=None, description="Timestamp when the task workspace was archived.")
+    archive_reason: str | None = Field(default=None, description="Reason the task workspace was archived.")
 
 
 class TaskWorkspaceListResult(BaseModel):
@@ -467,59 +494,71 @@ class TaskWorktreeChangedFile(BaseModel):
 
 
 class TaskWorktreeInspectionResult(TaskWorkspaceStatusResult):
-    dirty: bool
-    changed_file_count: int
-    git_status_short: str
-    diff_stat: str
-    diff_name_status: str
-    changed_files: list[TaskWorktreeChangedFile]
+    dirty: bool = Field(description="Whether the task worktree has uncommitted changes.")
+    changed_file_count: int = Field(description="Number of changed files detected in the task worktree.")
+    git_status_short: str = Field(description="Short git status for the task worktree.")
+    diff_stat: str = Field(description="Git diff statistics for the task worktree.")
+    diff_name_status: str = Field(description="Git diff name-status output for the task worktree.")
+    changed_files: list[TaskWorktreeChangedFile] = Field(description="Changed files detected in the task worktree.")
 
 
 class TaskWorktreeMergePreflightResult(TaskWorktreeInspectionResult):
-    source_head_sha: str
-    source_head_changed: bool
-    source_dirty: bool
-    source_git_status_short: str
-    source_diff_name_status: str
-    source_changed_files: list[TaskWorktreeChangedFile]
-    overlapping_files: list[str]
-    ready_to_merge: bool
-    conflict_risk: str
-    recommended_action: str
+    source_head_sha: str = Field(description="Current source workspace HEAD commit SHA.")
+    source_head_changed: bool = Field(description="Whether source HEAD moved since the task workspace was created.")
+    source_dirty: bool = Field(description="Whether the source workspace has uncommitted changes.")
+    source_git_status_short: str = Field(description="Short git status for the source workspace.")
+    source_diff_name_status: str = Field(description="Git diff name-status output for the source workspace.")
+    source_changed_files: list[TaskWorktreeChangedFile] = Field(description="Changed files detected in the source workspace.")
+    overlapping_files: list[str] = Field(description="Files changed in both source and task workspaces.")
+    ready_to_merge: bool = Field(description="Whether current preflight evidence permits a merge proposal.")
+    conflict_risk: str = Field(description="Estimated conflict risk for merging the task worktree.")
+    recommended_action: str = Field(description="Recommended next merge workflow action.")
 
 
 class MergeQueueEntryResult(BaseModel):
-    queue_key: str
-    task_id: str
-    project_id: str
-    source_cwd: str
-    workspace_path: str | None = None
-    source_git_root: str | None = None
-    worktree_branch: str | None = None
-    base_ref: str | None = None
-    base_sha: str | None = None
-    source_head_sha: str | None = None
-    source_head_changed: bool | None = None
-    source_dirty: bool | None = None
-    changed_file_count: int | None = None
-    changed_files: list[TaskWorktreeChangedFile] = []
-    overlapping_files: list[str] = []
-    conflict_risk: str | None = None
-    recommended_action: str | None = None
-    validation_status: str = "unknown"
-    validation_commands: list[str] = []
-    validation_summary: str | None = None
-    validated_at: str | None = None
-    validated_by: str | None = None
-    validation_client_id: str | None = None
-    validation_session_id: str | None = None
-    status: str
-    exists: bool
-    record_path: str
-    created_at: str
-    updated_at: str
-    archived_at: str | None = None
-    archive_reason: str | None = None
+    queue_key: str = Field(description="Stable key identifying this merge queue entry.")
+    task_id: str = Field(description="Task waiting in the merge queue.")
+    project_id: str = Field(description="Project that owns the queued task.")
+    source_cwd: str = Field(description="Source workspace directory that would receive the merge.")
+    workspace_path: str | None = Field(default=None, description="Task workspace path, when available.")
+    source_git_root: str | None = Field(default=None, description="Source git root, when detected.")
+    worktree_branch: str | None = Field(default=None, description="Git branch used by the task worktree.")
+    base_ref: str | None = Field(default=None, description="Git reference used as the task worktree base.")
+    base_sha: str | None = Field(default=None, description="Commit SHA recorded as the task worktree base.")
+    source_head_sha: str | None = Field(default=None, description="Source HEAD commit observed during preflight.")
+    source_head_changed: bool | None = Field(default=None, description="Whether source HEAD moved since task creation.")
+    source_dirty: bool | None = Field(default=None, description="Whether the source workspace has uncommitted changes.")
+    changed_file_count: int | None = Field(default=None, description="Number of changed files in the task worktree.")
+    changed_files: list[TaskWorktreeChangedFile] = Field(
+        default_factory=list,
+        description="Changed files recorded for the task worktree.",
+    )
+    overlapping_files: list[str] = Field(
+        default_factory=list,
+        description="Files changed in both source and task workspaces.",
+    )
+    conflict_risk: str | None = Field(default=None, description="Estimated merge conflict risk.")
+    recommended_action: str | None = Field(default=None, description="Recommended next merge workflow action.")
+    validation_status: str = Field(
+        default="unknown",
+        description="Recorded task validation state; legacy records may contain broader values.",
+    )
+    validation_commands: list[str] = Field(
+        default_factory=list,
+        description="Commands recorded as validation evidence.",
+    )
+    validation_summary: str | None = Field(default=None, description="Summary of the recorded validation result.")
+    validated_at: str | None = Field(default=None, description="Timestamp when validation was recorded.")
+    validated_by: str | None = Field(default=None, description="Actor that recorded validation.")
+    validation_client_id: str | None = Field(default=None, description="Client identifier associated with validation.")
+    validation_session_id: str | None = Field(default=None, description="Session identifier associated with validation.")
+    status: str = Field(description="Current merge queue lifecycle state.")
+    exists: bool = Field(description="Whether the merge queue record currently exists.")
+    record_path: str = Field(description="Runtime record path for the merge queue entry.")
+    created_at: str = Field(description="Timestamp when the merge queue entry was created.")
+    updated_at: str = Field(description="Timestamp of the latest merge queue update.")
+    archived_at: str | None = Field(default=None, description="Timestamp when the merge queue entry was archived.")
+    archive_reason: str | None = Field(default=None, description="Reason the merge queue entry was archived.")
 
 
 class MergeQueueListResult(BaseModel):
@@ -531,41 +570,50 @@ class TaskOrchestrationSummaryEntry(BaseModel):
     project_id: str
     source_cwd: str
     task_id: str
-    task_workspace_status: str
-    worktree_status: str | None = None
+    task_workspace_status: str = Field(description="Current task workspace lifecycle state.")
+    worktree_status: str | None = Field(default=None, description="Current git worktree state, when available.")
     worktree_branch: str | None = None
     workspace_path: str | None = None
-    merge_queue_status: str | None = None
-    conflict_risk: str | None = None
-    recommended_action: str | None = None
-    changed_file_count: int | None = None
-    source_head_changed: bool | None = None
-    source_dirty: bool | None = None
-    overlapping_files: list[str] = []
-    operator_attention: bool = False
-    operator_attention_reasons: list[str] = []
-    validation_status: str = "unknown"
+    merge_queue_status: str | None = Field(default=None, description="Current merge queue state, when available.")
+    conflict_risk: str | None = Field(default=None, description="Estimated merge conflict risk.")
+    recommended_action: str | None = Field(default=None, description="Recommended next orchestration action.")
+    changed_file_count: int | None = Field(default=None, description="Number of changed files in the task worktree.")
+    source_head_changed: bool | None = Field(default=None, description="Whether source HEAD moved since task creation.")
+    source_dirty: bool | None = Field(default=None, description="Whether the source workspace has uncommitted changes.")
+    overlapping_files: list[str] = Field(
+        default_factory=list,
+        description="Files changed in both source and task workspaces.",
+    )
+    operator_attention: bool = Field(default=False, description="Whether this entry needs operator attention.")
+    operator_attention_reasons: list[str] = Field(
+        default_factory=list,
+        description="Reasons operator attention is required.",
+    )
+    validation_status: str = Field(
+        default="unknown",
+        description="Recorded validation state; legacy records may contain broader values.",
+    )
     validation_commands: list[str] = []
     validation_summary: str | None = None
     validated_at: str | None = None
     validated_by: str | None = None
     validation_client_id: str | None = None
     validation_session_id: str | None = None
-    archived: bool
+    archived: bool = Field(description="Whether the task workspace or merge queue record is archived.")
     has_task_workspace_record: bool
     has_merge_queue_record: bool
-    anomaly: bool
-    anomaly_reasons: list[str] = []
+    anomaly: bool = Field(description="Whether inconsistent orchestration state was detected.")
+    anomaly_reasons: list[str] = Field(default_factory=list, description="Reasons the entry is marked anomalous.")
 
 
 class TaskOrchestrationSummaryResult(BaseModel):
-    project_id: str | None = None
-    entries: list[TaskOrchestrationSummaryEntry]
-    count: int
-    active_count: int
-    archived_count: int
-    anomaly_count: int
-    attention_count: int = 0
+    project_id: str | None = Field(default=None, description="Project filter applied to the summary, if any.")
+    entries: list[TaskOrchestrationSummaryEntry] = Field(description="Task orchestration entries matching the request.")
+    count: int = Field(description="Number of returned orchestration entries.")
+    active_count: int = Field(description="Number of non-archived orchestration entries.")
+    archived_count: int = Field(description="Number of archived orchestration entries.")
+    anomaly_count: int = Field(description="Number of entries with inconsistent state.")
+    attention_count: int = Field(default=0, description="Number of entries requiring operator attention.")
 
 
 class TaskCleanupPreviewEntry(BaseModel):
@@ -574,21 +622,24 @@ class TaskCleanupPreviewEntry(BaseModel):
     source_cwd: str
     workspace_path: str | None = None
     record_path: str | None = None
-    queue_status: str | None = None
-    workspace_status: str
-    validation_status: str = "unknown"
-    cleanup_ready: bool
-    cleanup_risk: str
-    cleanup_blockers: list[str] = []
-    recommended_action: str
-    worktree_dirty: bool | None = None
-    has_task_workspace_record: bool
-    has_merge_queue_record: bool
+    queue_status: str | None = Field(default=None, description="Current merge queue state, when available.")
+    workspace_status: str = Field(description="Current task workspace lifecycle state.")
+    validation_status: str = Field(
+        default="unknown",
+        description="Recorded validation state; legacy records may contain broader values.",
+    )
+    cleanup_ready: bool = Field(description="Whether cleanup can proceed without known blockers.")
+    cleanup_risk: str = Field(description="Estimated risk of cleaning up this task workspace.")
+    cleanup_blockers: list[str] = Field(default_factory=list, description="Reasons cleanup should not proceed yet.")
+    recommended_action: str = Field(description="Recommended next cleanup workflow action.")
+    worktree_dirty: bool | None = Field(default=None, description="Whether the task worktree has uncommitted changes.")
+    has_task_workspace_record: bool = Field(description="Whether a task workspace record exists.")
+    has_merge_queue_record: bool = Field(description="Whether a merge queue record exists.")
 
 
 class TaskCleanupPreviewResult(BaseModel):
-    project_id: str | None = None
-    entries: list[TaskCleanupPreviewEntry]
-    count: int
-    ready_count: int
-    blocked_count: int
+    project_id: str | None = Field(default=None, description="Project filter applied to the cleanup preview, if any.")
+    entries: list[TaskCleanupPreviewEntry] = Field(description="Per-task cleanup readiness entries.")
+    count: int = Field(description="Number of returned cleanup preview entries.")
+    ready_count: int = Field(description="Number of entries currently ready for cleanup.")
+    blocked_count: int = Field(description="Number of entries currently blocked from cleanup.")
