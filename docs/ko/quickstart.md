@@ -6,9 +6,9 @@ Ouroboros Workspace Bridge를 처음 실행해서 ChatGPT에 연결하는 가장
 
 ## 준비물
 
-- macOS: 기본 지원 환경
-- Linux: Python supervisor 흐름 지원. 배포판별 clipboard/notification 동작은 다를 수 있음
-- Windows: PowerShell 기반 Python supervisor 흐름 지원. ngrok, 방화벽, browser, clipboard 동작은 로컬 환경에 맞게 확인 필요
+- macOS: 공용 Python supervisor 흐름 지원
+- Linux: 공용 Python supervisor 흐름 지원. 배포판별 clipboard/notification 동작은 다를 수 있음
+- Windows 10/11: PowerShell과 공용 Python supervisor 흐름 지원. ngrok, 방화벽, browser, clipboard 동작은 로컬 환경에 맞게 확인 필요
 - Python 3.12+
 - `uv`
 - ngrok 계정과 ngrok CLI

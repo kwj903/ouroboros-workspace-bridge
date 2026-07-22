@@ -32,7 +32,7 @@ from terminal_bridge.review_notifications import (
     review_url as notification_review_url,
     send_notification,
 )
-from terminal_bridge import bundle_watcher, runtime_storage
+from terminal_bridge import bundle_watcher, runtime_storage, session_supervisor
 from terminal_bridge.approval_modes import (
     VALID_APPROVAL_MODES,
     delete_scoped_approval_mode,
@@ -947,18 +947,7 @@ def read_supervisor_pid(path: Path) -> int | None:
 
 
 def pid_is_alive(pid: int | None) -> bool:
-    if pid is None or pid < 1:
-        return False
-
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
+    return session_supervisor.is_pid_alive(pid)
 
 
 def supervisor_service_endpoint(service: str) -> tuple[str | None, int | None]:
@@ -1273,7 +1262,7 @@ def compact_task_workspace_path(path: str) -> str:
     try:
         raw = Path(text).expanduser()
         rel = raw.relative_to(RUNTIME_ROOT.expanduser())
-        return f"runtime/{rel}"
+        return f"runtime/{rel.as_posix()}"
     except Exception:
         return text
 
@@ -2250,16 +2239,27 @@ def auto_apply_bundle(bundle_id: str, source: str) -> None:
     bundle_watcher.auto_apply_bundle(bundle_id, RUNNER, PROJECT_ROOT, source, "[review-ui] ")
 
 
+def supervisor_cli_command(*args: str) -> list[str]:
+    return [sys.executable, "-m", "terminal_bridge.cli", *args]
+
+
+def detached_subprocess_kwargs() -> dict[str, object]:
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        creationflags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+        return {"creationflags": creationflags}
+    return {"start_new_session": True}
+
+
 def run_supervisor_control(action: str, service: str) -> subprocess.CompletedProcess[str]:
-    command_by_action = {
-        "start": ["scripts/dev_session.sh", "start-service", service],
-        "stop": ["scripts/dev_session.sh", "stop-service", service],
-        "restart": ["scripts/dev_session.sh", "restart", service],
+    command_args_by_action = {
+        "start": ("start-service", service),
+        "stop": ("stop-service", service),
+        "restart": ("restart", service),
     }
-    command = command_by_action[action]
 
     return subprocess.run(
-        command,
+        supervisor_cli_command(*command_args_by_action[action]),
         cwd=str(PROJECT_ROOT),
         env=os.environ.copy(),
         stdin=subprocess.DEVNULL,
@@ -2279,18 +2279,17 @@ def is_local_client_address(value: str) -> bool:
 def schedule_full_session_stop(delay_seconds: float = 0.6) -> None:
     def run_stop() -> None:
         time.sleep(delay_seconds)
-        subprocess.run(
-            ["scripts/dev_session.sh", "stop"],
-            cwd=str(PROJECT_ROOT),
-            env=os.environ.copy(),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=90,
-            shell=False,
-            check=False,
-        )
+        popen_kwargs: dict[str, object] = {
+            "cwd": str(PROJECT_ROOT),
+            "env": os.environ.copy(),
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "text": True,
+            "shell": False,
+        }
+        popen_kwargs.update(detached_subprocess_kwargs())
+        subprocess.Popen(supervisor_cli_command("stop"), **popen_kwargs)
 
     threading.Thread(target=run_stop, name="delayed-session-stop", daemon=True).start()
 
@@ -2305,8 +2304,8 @@ def full_session_stop_confirm_html() -> str:
       <section class="card">
         <h2>Stop full local session?</h2>
         <p class="meta">
-          실행 명령: <code>scripts/dev_session.sh stop</code><br>
-          다시 시작하려면 터미널에서 <code>scripts/dev_session.sh start</code>를 실행하세요.
+          실행 명령: <code>uv run woojae stop</code><br>
+          다시 시작하려면 터미널에서 <code>uv run woojae start</code>를 실행하세요.
         </p>
         <div class="button-row">
           <form class="inline" method="post" action="/servers/session/stop">
@@ -2332,7 +2331,7 @@ def full_session_stopping_html() -> str:
           이 페이지가 열린 뒤 잠시 후 review UI 연결이 끊기는 것이 정상입니다.<br>
           다시 시작하려면 터미널에서 다음 명령을 실행하세요.
         </p>
-        <pre>scripts/dev_session.sh start</pre>
+        <pre>uv run woojae start</pre>
       </section>
     </div>
     """
@@ -2341,17 +2340,17 @@ def full_session_stopping_html() -> str:
 def schedule_full_session_restart(delay_seconds: float = 0.4) -> None:
     def run_restart() -> None:
         time.sleep(delay_seconds)
-        subprocess.Popen(
-            ["scripts/dev_session.sh", "restart-session"],
-            cwd=str(PROJECT_ROOT),
-            env=os.environ.copy(),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            shell=False,
-            start_new_session=True,
-        )
+        popen_kwargs: dict[str, object] = {
+            "cwd": str(PROJECT_ROOT),
+            "env": os.environ.copy(),
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "text": True,
+            "shell": False,
+        }
+        popen_kwargs.update(detached_subprocess_kwargs())
+        subprocess.Popen(supervisor_cli_command("restart-session"), **popen_kwargs)
 
     threading.Thread(target=run_restart, name="delayed-session-restart", daemon=True).start()
 
@@ -2366,7 +2365,7 @@ def full_session_restart_confirm_html() -> str:
       <section class="card">
         <h2>Restart full local session?</h2>
         <p class="meta">
-          실행 명령: <code>scripts/dev_session.sh restart-session</code><br>
+          실행 명령: <code>uv run woojae restart-session</code><br>
           재시작 후 review UI가 다시 올라오면 <code>/servers?tab=processes</code>를 새로고침하세요.
         </p>
         <div class="button-row">
@@ -3390,7 +3389,7 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
         <div class="stack">
           <div class="section-title">
             <h2>{escape(SERVER_TAB_LABELS[tab])}</h2>
-            <p class="meta">Status and limited controls for services managed by <code>scripts/dev_session.sh start</code>.</p>
+            <p class="meta">Status and limited controls for services managed by <code>uv run woojae start</code>.</p>
           </div>
           <div class="notice">
             <strong>제한된 제어</strong><br>
@@ -3411,11 +3410,11 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
             <h3>CLI controls</h3>
             <p class="meta">전체 session start/stop은 터미널에서 수행합니다. MCP/ngrok start/stop/restart는 아래 표의 버튼으로도 실행할 수 있습니다.</p>
             <ul class="compact">
-              <li>전체 세션 시작: <code>scripts/dev_session.sh start</code></li>
-              <li>상태 확인: <code>scripts/dev_session.sh status</code></li>
-              <li>MCP/ngrok 재시작: <code>scripts/dev_session.sh restart [mcp|ngrok]</code></li>
-              <li>서비스 로그: <code>scripts/dev_session.sh logs [review|mcp|ngrok]</code></li>
-              <li>전체 세션 종료: <code>scripts/dev_session.sh stop</code></li>
+              <li>전체 세션 시작: <code>uv run woojae start</code></li>
+              <li>상태 확인: <code>uv run woojae status</code></li>
+              <li>MCP/ngrok 재시작: <code>uv run woojae restart [mcp|ngrok]</code></li>
+              <li>서비스 로그: <code>uv run woojae logs [review|mcp|ngrok]</code></li>
+              <li>전체 세션 종료: <code>uv run woojae stop</code></li>
               <li>UI 버튼은 MCP/ngrok start/stop/restart만 제공합니다. 전체 session start/stop과 review 제어는 터미널에서 수행합니다.</li>
             </ul>
           </section>
@@ -3527,14 +3526,14 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
       <section class="card">
         <ul class="compact">
           <li><a href="/api/server-state"><code>/api/server-state</code></a> 로 현재 review UI 상태를 JSON으로 확인합니다.</li>
-          <li><a href="/api/supervisor-state"><code>/api/supervisor-state</code></a> 로 <code>scripts/dev_session.sh start</code>가 관리하는 process 상태를 JSON으로 확인합니다.</li>
+          <li><a href="/api/supervisor-state"><code>/api/supervisor-state</code></a> 로 <code>uv run woojae start</code>가 관리하는 process 상태를 JSON으로 확인합니다.</li>
           <li><a href="/api/audit-state"><code>/api/audit-state</code></a> 로 최근 로컬 작업 이벤트 요약을 JSON으로 확인합니다.</li>
           <li>Embedded watcher: {status_chip("enabled" if embedded_watcher.get("enabled") else "disabled", "ok" if embedded_watcher.get("enabled") else "neutral")}</li>
           <li>Watcher open mode: <code>{escape(embedded_watcher.get("open_mode", ""))}</code></li>
           <li>Notification target: <code>{escape(embedded_watcher.get("notification_target", ""))}</code></li>
           <li>Notification click action: <code>{escape(embedded_watcher.get("notification_click_action", ""))}</code></li>
           <li>Watcher poll seconds: <code>{escape(embedded_watcher.get("poll_seconds", ""))}</code></li>
-          <li><code>scripts/dev_session.sh doctor</code> 로 review 세션과 환경 상태를 점검합니다.</li>
+          <li><code>uv run woojae doctor</code> 로 review 세션과 환경 상태를 점검합니다.</li>
           <li><code>server.py</code> 또는 tool schema를 바꾼 경우 MCP server 재시작 후 ChatGPT 앱에서 Refresh가 필요합니다.</li>
           <li>review UI, watcher, README만 바꾼 경우에는 review session만 다시 시작하면 되고 MCP server 재시작은 보통 필요하지 않습니다.</li>
         </ul>

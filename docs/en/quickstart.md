@@ -6,9 +6,9 @@ The official command form is `uv run woojae ...`. `scripts/dev_session.sh` and `
 
 ## Prerequisites
 
-- macOS: primary supported local workflow.
-- Linux: supported for the Python supervisor workflow. Clipboard and notification behavior may vary by distribution.
-- Windows: supported through PowerShell for the Python supervisor workflow. ngrok, firewall, browser, and clipboard behavior may need local adjustment.
+- macOS: supported through the shared Python supervisor workflow.
+- Linux: supported through the shared Python supervisor workflow. Clipboard and notification behavior may vary by distribution.
+- Windows 10/11: supported through PowerShell and the shared Python supervisor workflow. ngrok, firewall, browser, and clipboard behavior may need local adjustment.
 - Python 3.12+
 - `uv`
 - ngrok account and ngrok CLI

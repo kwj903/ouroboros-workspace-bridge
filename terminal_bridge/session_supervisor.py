@@ -132,6 +132,19 @@ def print_ngrok_setup_hint() -> None:
         print(line)
 
 
+def _parse_legacy_session_env_value(raw_value: str) -> str | None:
+    value = raw_value.strip()
+    if not value:
+        return ""
+    if value[0] not in {"'", '"'}:
+        return value
+    try:
+        parts = shlex.split(value, comments=False, posix=True)
+    except ValueError:
+        return None
+    return parts[0] if len(parts) == 1 else None
+
+
 def parse_legacy_session_env(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
@@ -146,14 +159,12 @@ def parse_legacy_session_env(path: Path) -> dict[str, str]:
         if not stripped or stripped.startswith("#"):
             continue
         assignment = stripped.removeprefix("export ")
-        try:
-            parts = shlex.split(assignment, comments=False, posix=True)
-        except ValueError:
+        key, separator, raw_value = assignment.partition("=")
+        if not separator or not key:
             continue
-        if not parts or "=" not in parts[0]:
-            continue
-        key, value = parts[0].split("=", 1)
-        values[key] = value
+        value = _parse_legacy_session_env_value(raw_value)
+        if value is not None:
+            values[key] = value
     return values
 
 
@@ -332,9 +343,44 @@ def tcp_reachable(host: str, port: int, timeout_seconds: float = 0.5) -> bool:
         return False
 
 
+def _windows_pid_is_alive(pid: int) -> bool:
+    # On Windows, os.kill(pid, 0) calls TerminateProcess instead of performing
+    # the harmless existence probe used on POSIX. Query the process handle and
+    # exit code through Win32 APIs so status checks never stop the process.
+    import ctypes
+    from ctypes import wintypes
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+    error_access_denied = 5
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        # Access denied still means a process exists, but this user cannot query it.
+        return ctypes.get_last_error() == error_access_denied
+
+    try:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def is_pid_alive(pid: int | None) -> bool:
     if pid is None or pid < 1:
         return False
+    if is_windows():
+        return _windows_pid_is_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -444,7 +490,10 @@ def start_service(service: str) -> int:
 
 def terminate_pid_tree(pid: int) -> None:
     if is_windows():
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        # Services are launched as direct processes. Avoid /T so a detached
+        # supervisor command that is stopping its parent review service can
+        # finish cleanup and remove the PID file.
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         return
     try:
         os.killpg(pid, signal.SIGTERM)
@@ -864,7 +913,8 @@ def print_checklist() -> int:
 6. Stop when finished:
    woojae stop
 
-Compatibility wrappers:
+Official commands on every platform use `uv run woojae ...`.
+Optional compatibility wrappers:
   - macOS/Linux: scripts/dev_session.sh start
   - Windows PowerShell: scripts/dev_session.ps1 start
 """)

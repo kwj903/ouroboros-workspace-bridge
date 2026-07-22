@@ -20,39 +20,78 @@ from terminal_bridge.config import (
 from terminal_bridge.safety import _is_blocked_name
 
 
+def _fallback_command_path(project_root: Path = PROJECT_ROOT) -> str:
+    entries: list[str] = []
+    if os.name == "nt":
+        entries.append(str(project_root / ".venv" / "Scripts"))
+    else:
+        entries.extend(
+            [
+                str(project_root / ".venv" / "bin"),
+                str(Path.home() / ".local" / "bin"),
+                str(Path.home() / ".local" / "share" / "mise" / "shims"),
+                str(Path.home() / ".local" / "share" / "mise" / "installs" / "python" / "3.12" / "bin"),
+                "/usr/local/bin",
+                "/opt/homebrew/bin",
+                "/usr/bin",
+                "/bin",
+                "/usr/sbin",
+                "/sbin",
+            ]
+        )
+    entries.extend(item for item in os.defpath.split(os.pathsep) if item)
+    return os.pathsep.join(dict.fromkeys(entries))
+
+
+def _safe_home_directory() -> str:
+    for key in ("HOME", "USERPROFILE"):
+        value = os.environ.get(key)
+        if value:
+            return value
+    home_drive = os.environ.get("HOMEDRIVE", "")
+    home_path = os.environ.get("HOMEPATH", "")
+    if home_drive and home_path:
+        return f"{home_drive}{home_path}"
+    try:
+        return str(Path.home())
+    except RuntimeError:
+        return str(PROJECT_ROOT)
+
+
 def _safe_env() -> dict[str, str]:
-    """Return a minimal child-process environment for workspace commands.
+    """Return a minimal cross-platform child-process environment.
 
-    Secret-bearing variables are intentionally not forwarded. PATH is preserved
-    from the server process so uv, mise-managed Python, Homebrew tools, and the
-    project .venv/bin can be resolved when the server was started from the
-    user's private shell environment.
+    Secret-bearing variables are intentionally not forwarded. The current PATH
+    is preserved when available; otherwise an OS-specific virtualenv and system
+    fallback is used. Windows process-launch variables are forwarded because
+    PowerShell, cmd.exe, and executable extension lookup rely on them.
     """
-    project_root = PROJECT_ROOT
-    fallback_path = ":".join(
-        [
-            str(project_root / ".venv/bin"),
-            str(Path.home() / ".local/bin"),
-            str(Path.home() / ".local/share/mise/shims"),
-            str(Path.home() / ".local/share/mise/installs/python/3.12/bin"),
-            "/usr/local/bin",
-            "/opt/homebrew/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin",
-        ]
-    )
-    path_value = os.environ.get("PATH") or fallback_path
-
     safe_env = {
-        "PATH": path_value,
-        "HOME": os.environ.get("HOME", str(Path.home())),
+        "PATH": os.environ.get("PATH") or _fallback_command_path(),
+        "HOME": _safe_home_directory(),
         "LANG": os.environ.get("LANG", "en_US.UTF-8"),
         "LC_ALL": os.environ.get("LC_ALL", "en_US.UTF-8"),
     }
 
-    for key in ("USER", "LOGNAME", "SHELL", "TERM"):
+    passthrough_keys = (
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",
+        "SYSTEMROOT",
+        "WINDIR",
+        "SYSTEMDRIVE",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "APPDATA",
+        "LOCALAPPDATA",
+    )
+    for key in passthrough_keys:
         value = os.environ.get(key)
         if value:
             safe_env[key] = value

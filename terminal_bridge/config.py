@@ -16,6 +16,19 @@ def _runtime_root() -> Path:
     return Path(os.getenv("MCP_TERMINAL_BRIDGE_RUNTIME_ROOT", str(DEFAULT_RUNTIME_ROOT))).expanduser().resolve()
 
 
+def _parse_session_env_value(raw_value: str) -> str | None:
+    value = raw_value.strip()
+    if not value:
+        return ""
+    if value[0] not in {"'", '"'}:
+        return value
+    try:
+        parts = shlex.split(value, comments=False, posix=True)
+    except ValueError:
+        return None
+    return parts[0] if len(parts) == 1 else None
+
+
 def _session_env_value(name: str) -> str | None:
     # 런타임 루트의 session.env에서 저장된 세션 환경변수를 읽습니다.
     # 쉘 환경변수가 없을 때 WORKSPACE_ROOT 같은 값을 복구하는 fallback 용도입니다.
@@ -35,13 +48,12 @@ def _session_env_value(name: str) -> str | None:
             continue
 
         assignment = stripped.removeprefix("export ")
-        try:
-            parts = shlex.split(assignment, comments=False, posix=True)
-        except ValueError:
+        key, separator, raw_value = assignment.partition("=")
+        if not separator or key != name:
             continue
-        if not parts or not parts[0].startswith(f"{name}="):
-            continue
-        return parts[0].split("=", 1)[1]
+        value = _parse_session_env_value(raw_value)
+        if value is not None:
+            return value
 
     return None
 

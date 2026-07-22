@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
 import server
 from terminal_bridge import config, patches
@@ -53,8 +52,14 @@ class PatchPathSafetyTests(unittest.TestCase):
             patches._clean_patch_path("../README.md")
         with self.assertRaises(ValueError):
             patches._clean_patch_path("/tmp/README.md")
+        with self.assertRaises(ValueError):
+            patches._clean_patch_path(r"C:\temp\README.md")
+        with self.assertRaises(ValueError):
+            patches._clean_patch_path(r"..\README.md")
         with self.assertRaises(PermissionError):
             patches._clean_patch_path(".git/config")
+        with self.assertRaises(PermissionError):
+            patches._clean_patch_path(r".git\config")
 
     def test_extract_patch_paths(self) -> None:
         patch = """diff --git a/README.md b/README.md

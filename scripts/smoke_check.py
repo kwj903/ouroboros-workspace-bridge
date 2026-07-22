@@ -119,7 +119,7 @@ print("script entrypoint import OK: {script}")
 
 
 def check_unit_tests() -> None:
-    result = run_command([sys.executable, "-m", "unittest", "discover", "-s", "tests"], timeout=60)
+    result = run_command([sys.executable, "-m", "unittest", "discover", "-s", "tests"], timeout=180)
     require_success("unit tests", result)
 
 

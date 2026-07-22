@@ -136,9 +136,11 @@ ChatGPT
 
 ## Platform support
 
-- macOS: primary supported local workflow.
-- Linux: supported for the Python supervisor workflow; desktop clipboard/notification conveniences may vary by distribution.
-- Windows: supported through PowerShell for the Python supervisor workflow; ngrok, firewall, browser, and clipboard behavior may need local adjustment.
+- macOS: supported through the shared Python supervisor workflow.
+- Linux: supported through the shared Python supervisor workflow; desktop clipboard/notification conveniences may vary by distribution.
+- Windows 10/11: supported through PowerShell and the shared Python supervisor workflow; ngrok, firewall, browser, and clipboard behavior may need local adjustment.
+
+CI runs the unit and smoke suites on GitHub-hosted Ubuntu, macOS, and Windows runners. Platform-specific desktop integrations still require local verification on the target machine.
 
 The official command form on every platform is `uv run woojae ...`. `scripts/dev_session.sh` and `scripts/dev_session.ps1` remain compatibility wrappers.
 

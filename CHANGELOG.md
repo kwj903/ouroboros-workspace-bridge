@@ -4,6 +4,32 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 ## Unreleased
 
+## 0.4.2 - 2026-07-23
+
+### Added
+
+- GitHub Actions coverage for Ubuntu, macOS, and Windows, including platform-specific Bash and PowerShell syntax checks.
+- CI bootstrap actions use current Node 24-based checkout, Python, and uv action releases.
+- Windows regression coverage for non-destructive process status probing and cross-platform supervisor command construction.
+
+### Changed
+
+- Review UI process controls now invoke the shared Python CLI entrypoint instead of a Bash-only wrapper.
+- Approved command execution now uses one shared cross-platform safe environment builder with OS-specific virtualenv paths and Windows process-launch variables.
+- User-facing process-management instructions now use the platform-neutral `uv run woojae ...` command form.
+- The smoke check allows enough time for the expanded cross-platform unit suite to complete on hosted CI runners.
+- Bundle staging and intent tests now isolate runtime storage so a running local watcher cannot apply test bundles.
+
+### Fixed
+
+- Windows status checks no longer call `os.kill(pid, 0)`, which can terminate the target process on Windows; the supervisor now uses a read-only Win32 process query.
+- Full-session stop and restart actions from the review UI now work without requiring Bash on Windows.
+- Detached full-session stop/restart commands can finish PID cleanup after terminating the review service on every platform.
+- PATH fallback construction now uses the current OS path separator and `.venv/Scripts` on Windows.
+- Legacy `session.env` parsing preserves Windows drive paths and backslashes.
+- Patch path validation recognizes unsafe absolute and traversal paths in both POSIX and Windows syntax.
+- Review UI runtime paths use stable forward-slash display formatting across platforms.
+
 ## 0.4.1 - 2026-06-06
 
 ### Added

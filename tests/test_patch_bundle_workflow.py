@@ -5,13 +5,16 @@ import asyncio
 import json
 import os
 import shutil
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import server
 from scripts import command_bundle_runner as runner
+from terminal_bridge import bundles as bundle_store
 from terminal_bridge import config, payloads, safety, tool_calls
 from terminal_bridge.models import IntentPreparationResult, RecoverySnapshotResult, TransportProbeResult
 
@@ -82,6 +85,36 @@ index 0000000..1111111
 
 def command_bundle_file_count() -> int:
     return sum(1 for directory in server._command_bundle_dirs() if directory.exists() for _ in directory.glob("cmd-*.json"))
+
+
+def isolate_runtime_storage(test_case: unittest.TestCase) -> Path:
+    runtime = tempfile.TemporaryDirectory()
+    root = Path(runtime.name)
+    bundle_dirs = {
+        "COMMAND_BUNDLE_PENDING_DIR": root / "command_bundles" / "pending",
+        "COMMAND_BUNDLE_APPLIED_DIR": root / "command_bundles" / "applied",
+        "COMMAND_BUNDLE_REJECTED_DIR": root / "command_bundles" / "rejected",
+        "COMMAND_BUNDLE_FAILED_DIR": root / "command_bundles" / "failed",
+    }
+    original_bundle_dirs = {name: getattr(bundle_store, name) for name in bundle_dirs}
+    original_payload_dir = payloads.TEXT_PAYLOAD_DIR
+    original_tool_call_dir = tool_calls.TOOL_CALL_DIR
+
+    for name, directory in bundle_dirs.items():
+        directory.mkdir(parents=True, exist_ok=True)
+        setattr(bundle_store, name, directory)
+    payloads.TEXT_PAYLOAD_DIR = root / "text_payloads"
+    tool_calls.TOOL_CALL_DIR = root / "tool_calls"
+
+    def restore() -> None:
+        for name, directory in original_bundle_dirs.items():
+            setattr(bundle_store, name, directory)
+        payloads.TEXT_PAYLOAD_DIR = original_payload_dir
+        tool_calls.TOOL_CALL_DIR = original_tool_call_dir
+        runtime.cleanup()
+
+    test_case.addCleanup(restore)
+    return root
 
 
 class ToolSurfaceTests(unittest.TestCase):
@@ -162,6 +195,7 @@ class ToolSurfaceTests(unittest.TestCase):
 
 class PatchBundleStagingTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.runtime_root = isolate_runtime_storage(self)
         self.bundle_ids: list[str] = []
         self.payload_ids: list[str] = []
         self.original_audit = server._audit
@@ -397,6 +431,7 @@ class PatchBundleStagingTests(unittest.TestCase):
 
 class CommitBundleStagingTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.runtime_root = isolate_runtime_storage(self)
         self.bundle_ids: list[str] = []
         self.original_audit = server._audit
         server._audit = lambda *args, **kwargs: None
@@ -474,6 +509,7 @@ class CommitBundleStagingTests(unittest.TestCase):
 
 class CommandBundleDedupeTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.runtime_root = isolate_runtime_storage(self)
         self.bundle_ids: list[str] = []
         self.original_audit = server._audit
         self.original_tool_call_dir = tool_calls.TOOL_CALL_DIR
@@ -494,11 +530,7 @@ class CommandBundleDedupeTests(unittest.TestCase):
         return safety._relative(config.PROJECT_ROOT)
 
     def use_temp_tool_calls(self) -> None:
-        import tempfile
-        from pathlib import Path
-
-        self.tmp_tool_calls = tempfile.TemporaryDirectory()
-        tool_calls.TOOL_CALL_DIR = Path(self.tmp_tool_calls.name)
+        tool_calls.TOOL_CALL_DIR = self.runtime_root / "tool_calls"
 
     def test_command_bundle_duplicate_returns_same_bundle_without_new_file(self) -> None:
         title = f"Dedupe command {uuid4().hex[:8]}"
@@ -658,6 +690,11 @@ class CommandBundleDedupeTests(unittest.TestCase):
         self.assertIsInstance(patch_first, server.CommandBundleStageResult)
         self.assertIsInstance(commit_first, server.CommandBundleStageResult)
         self.assertEqual(command_first.bundle_id, command_second.bundle_id)
+        self.assertFalse((config.PROJECT_ROOT / action_path).exists())
+        self.assertFalse((config.PROJECT_ROOT / patch_path).exists())
+        for bundle_id in (command_first.bundle_id, action_first.bundle_id, patch_first.bundle_id, commit_first.bundle_id):
+            bundle_path, _record = server._find_command_bundle(bundle_id)
+            self.assertTrue(bundle_path.is_relative_to(self.runtime_root))
 
     def test_submit_tool_creates_tool_call_journal_record(self) -> None:
         self.use_temp_tool_calls()
@@ -679,6 +716,7 @@ class CommandBundleDedupeTests(unittest.TestCase):
 
 class IntentFlowTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.runtime_root = isolate_runtime_storage(self)
         self.bundle_ids: list[str] = []
         self.original_audit = server._audit
         self.original_intent_secret_file = server.INTENT_SECRET_FILE
@@ -709,14 +747,9 @@ class IntentFlowTests(unittest.TestCase):
                 server._command_bundle_path(bundle_id, status).unlink(missing_ok=True)
 
     def use_temp_runtime_bits(self) -> None:
-        import tempfile
-        from pathlib import Path
-
-        self.tmp = tempfile.TemporaryDirectory()
-        root = Path(self.tmp.name)
-        server.INTENT_SECRET_FILE = root / "intent_secret"
-        server.INTENT_IMPORT_DIR = root / "intent_imports"
-        tool_calls.TOOL_CALL_DIR = root / "tool_calls"
+        server.INTENT_SECRET_FILE = self.runtime_root / "intent_secret"
+        server.INTENT_IMPORT_DIR = self.runtime_root / "intent_imports"
+        tool_calls.TOOL_CALL_DIR = self.runtime_root / "tool_calls"
 
     def project_cwd(self) -> str:
         return safety._relative(config.PROJECT_ROOT)

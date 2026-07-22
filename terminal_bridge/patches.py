@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from terminal_bridge.commands import _safe_env
 from terminal_bridge.config import BLOCKED_DIR_NAMES, MAX_STDERR_CHARS, MAX_STDOUT_CHARS, WORKSPACE_ROOT
@@ -29,12 +29,12 @@ def _clean_patch_path(raw_path: str) -> str | None:
     if value == "":
         return None
 
-    path = Path(value)
+    path_variants = (PurePosixPath(value), PureWindowsPath(value))
 
-    if path.is_absolute() or value.startswith("~") or ".." in path.parts:
+    if any(path.is_absolute() or ".." in path.parts for path in path_variants) or value.startswith("~"):
         raise ValueError(f"Unsafe patch path: {raw_path}")
 
-    if value.startswith(".git/") or "/.git/" in value:
+    if any(".git" in path.parts for path in path_variants):
         raise PermissionError(f"Patch path touches .git: {raw_path}")
 
     return value

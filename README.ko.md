@@ -136,9 +136,11 @@ ChatGPT
 
 ## 플랫폼 지원
 
-- macOS: 주 지원 로컬 워크플로우입니다.
-- Linux: Python supervisor 워크플로우를 지원합니다. 데스크톱 clipboard/notification 편의 기능은 배포판마다 다를 수 있습니다.
-- Windows: PowerShell을 통해 Python supervisor 워크플로우를 지원합니다. ngrok, firewall, browser, clipboard 동작은 로컬 환경에 따라 조정이 필요할 수 있습니다.
+- macOS: 공용 Python supervisor 워크플로우를 지원합니다.
+- Linux: 공용 Python supervisor 워크플로우를 지원합니다. 데스크톱 clipboard/notification 편의 기능은 배포판마다 다를 수 있습니다.
+- Windows 10/11: PowerShell과 공용 Python supervisor 워크플로우를 지원합니다. ngrok, 방화벽, browser, clipboard 동작은 로컬 환경에 따라 조정이 필요할 수 있습니다.
+
+GitHub-hosted Ubuntu, macOS, Windows runner에서 unit test와 smoke test를 실행합니다. 플랫폼별 데스크톱 연동은 실제 대상 장비에서 추가 확인이 필요합니다.
 
 모든 플랫폼에서 공식 명령은 `uv run woojae ...`입니다. `scripts/dev_session.sh`와 `scripts/dev_session.ps1`은 기존 사용자를 위한 호환 wrapper입니다.
 

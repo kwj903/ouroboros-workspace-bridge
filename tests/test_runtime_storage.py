@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from terminal_bridge import runtime_storage
 
@@ -238,10 +239,8 @@ class RuntimeStorageTests(unittest.TestCase):
         link = self.root / "operations" / "op-link.json"
         link.parent.mkdir(parents=True, exist_ok=True)
         link.symlink_to(outside)
-        old_timestamp = time.time() - (90 * 86400)
-        os.utime(link, (old_timestamp, old_timestamp), follow_symlinks=False)
-
-        result = runtime_storage.cleanup_runtime(self.root, dry_run=False)
+        with mock.patch.object(runtime_storage, "_mtime_older_than", return_value=True):
+            result = runtime_storage.cleanup_runtime(self.root, dry_run=False)
 
         self.assertTrue(link.exists())
         self.assertTrue(outside.exists())

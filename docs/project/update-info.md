@@ -1,6 +1,6 @@
 # Update Info
 
-Version: 0.4.1
+Version: 0.4.2
 
 For live local version and git state, run:
 
@@ -12,6 +12,8 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
+- cdf7a07 Fix cross-platform runtime support
+- ab4bda1 Release version 0.4.1
 - a5f8040 Document Pydantic schema usability improvements
 - 4399287 Add typed preparation result schemas
 - b536e61 Type transport and recovery tool results
@@ -30,8 +32,6 @@ Recent Commits is a generated snapshot. Run `uv run python scripts/update_versio
 - 9260afb feat: surface validation result hints in dashboard
 - dbdd81f feat: add task validation result hints
 - 0fa580c feat: stage task validation command proposals
-- 61029c8 feat: show cleanup readiness in task dashboard
-- 69f1ebd feat: add approved task worktree cleanup execution
 
 ## How to Update Existing Installation
 

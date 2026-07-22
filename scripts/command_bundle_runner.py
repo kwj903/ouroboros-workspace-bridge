@@ -5,7 +5,6 @@ import argparse
 import fnmatch
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -18,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from terminal_bridge.commands import _classify_exec_command, _validate_exec_argv
+from terminal_bridge.commands import _classify_exec_command, _safe_env as safe_env, _validate_exec_argv
 from terminal_bridge.bundles import _normalize_command_bundle_metadata
 from terminal_bridge.config import (
     BLOCKED_DIR_NAMES,
@@ -177,34 +176,6 @@ def truncate(value: str, limit: int) -> tuple[str, bool]:
 
 def is_blocked_name(name: str) -> bool:
     return any(fnmatch.fnmatch(name, pattern) for pattern in BLOCKED_FILE_PATTERNS)
-
-
-def safe_env() -> dict[str, str]:
-    project_root = Path(__file__).resolve().parent.parent
-    fallback_path = ":".join(
-        [
-            str(project_root / ".venv/bin"),
-            str(Path.home() / ".local/bin"),
-            str(Path.home() / ".local/share/mise/shims"),
-            str(Path.home() / ".local/share/mise/installs/python/3.12/bin"),
-            "/usr/local/bin",
-            "/opt/homebrew/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin",
-        ]
-    )
-    return {
-        "PATH": os.environ.get("PATH") or fallback_path,
-        "HOME": os.environ.get("HOME", str(Path.home())),
-        "LANG": os.environ.get("LANG", "en_US.UTF-8"),
-        "LC_ALL": os.environ.get("LC_ALL", "en_US.UTF-8"),
-        "USER": os.environ.get("USER", ""),
-        "LOGNAME": os.environ.get("LOGNAME", ""),
-        "SHELL": os.environ.get("SHELL", ""),
-        "TERM": os.environ.get("TERM", ""),
-    }
 
 
 def _source_relative(path: Path) -> str:

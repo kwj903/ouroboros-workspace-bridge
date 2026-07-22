@@ -9,6 +9,22 @@ from unittest import mock
 from terminal_bridge import session_supervisor as supervisor
 
 
+class SessionSupervisorEnvTests(unittest.TestCase):
+    def test_parse_legacy_session_env_preserves_windows_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session.env"
+            path.write_text(
+                "export WORKSPACE_ROOT=C:\\Users\\Example User\\workspace\n"
+                "export NGROK_HOST='example.ngrok.app'\n",
+                encoding="utf-8",
+            )
+
+            values = supervisor.parse_legacy_session_env(path)
+
+        self.assertEqual(values["WORKSPACE_ROOT"], r"C:\Users\Example User\workspace")
+        self.assertEqual(values["NGROK_HOST"], "example.ngrok.app")
+
+
 class SessionSupervisorLanguageTests(unittest.TestCase):
     def test_normalize_help_language_accepts_supported_values(self) -> None:
         self.assertEqual(supervisor.normalize_help_language("auto"), "auto")
@@ -82,6 +98,43 @@ class SessionSupervisorLanguageTests(unittest.TestCase):
             self.assertIn("mcp", calls)
             self.assertIn("ngrok", calls)
             self.assertIn("status", calls)
+
+
+class SessionSupervisorProcessTests(unittest.TestCase):
+    def test_is_pid_alive_routes_windows_to_non_destructive_probe(self) -> None:
+        with (
+            mock.patch.object(supervisor, "is_windows", return_value=True),
+            mock.patch.object(supervisor, "_windows_pid_is_alive", return_value=True) as windows_probe,
+            mock.patch.object(supervisor.os, "kill") as os_kill,
+        ):
+            self.assertTrue(supervisor.is_pid_alive(1234))
+
+        windows_probe.assert_called_once_with(1234)
+        os_kill.assert_not_called()
+
+    def test_is_pid_alive_keeps_posix_probe(self) -> None:
+        with (
+            mock.patch.object(supervisor, "is_windows", return_value=False),
+            mock.patch.object(supervisor.os, "kill") as os_kill,
+        ):
+            self.assertTrue(supervisor.is_pid_alive(1234))
+
+        os_kill.assert_called_once_with(1234, 0)
+
+    def test_windows_termination_does_not_kill_supervisor_child_tree(self) -> None:
+        with (
+            mock.patch.object(supervisor, "is_windows", return_value=True),
+            mock.patch.object(supervisor.subprocess, "run") as run,
+        ):
+            supervisor.terminate_pid_tree(1234)
+
+        command = run.call_args.args[0]
+        self.assertEqual(command, ["taskkill", "/PID", "1234", "/F"])
+        self.assertNotIn("/T", command)
+
+    @unittest.skipUnless(os.name == "nt", "Windows-only Win32 process probe")
+    def test_windows_probe_reports_current_process_without_terminating_it(self) -> None:
+        self.assertTrue(supervisor._windows_pid_is_alive(os.getpid()))
 
 
 if __name__ == "__main__":

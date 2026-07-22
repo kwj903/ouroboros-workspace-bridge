@@ -4,6 +4,7 @@ import inspect
 import json
 import os
 import socket
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -1521,16 +1522,16 @@ class ReviewServerHelperTests(unittest.TestCase):
         html = review.server_tab_content_html("processes", review.server_state())
 
         self.assertIn("Supervisor processes", html)
-        self.assertIn("scripts/dev_session.sh start", html)
-        self.assertIn("scripts/dev_session.sh status", html)
-        self.assertIn("scripts/dev_session.sh restart [mcp|ngrok]", html)
+        self.assertIn("uv run woojae start", html)
+        self.assertIn("uv run woojae status", html)
+        self.assertIn("uv run woojae restart [mcp|ngrok]", html)
         self.assertIn('/servers/processes/start/mcp', html)
         self.assertIn('/servers/processes/start/ngrok', html)
         self.assertNotIn('/servers/processes/restart/review', html)
         self.assertNotIn('/servers/processes/start/review', html)
         self.assertNotIn('/servers/processes/stop/review', html)
-        self.assertIn("scripts/dev_session.sh logs [review|mcp|ngrok]", html)
-        self.assertIn("scripts/dev_session.sh stop", html)
+        self.assertIn("uv run woojae logs [review|mcp|ngrok]", html)
+        self.assertIn("uv run woojae stop", html)
         self.assertIn(str(root / "processes"), html)
         self.assertIn("/api/supervisor-state", html)
         self.assertIn("data-table process-table", html)
@@ -1548,18 +1549,49 @@ class ReviewServerHelperTests(unittest.TestCase):
 
         self.assertIn("/servers/session/stop", stop_confirm_html)
         self.assertIn("Stop full session", stop_confirm_html)
-        self.assertIn("scripts/dev_session.sh start", stopping_html)
+        self.assertIn("uv run woojae start", stopping_html)
         self.assertIn("Full session stop requested", stopping_html)
         self.assertIn("/servers/session/restart", restart_confirm_html)
         self.assertIn("Restart full session", restart_confirm_html)
-        self.assertIn("scripts/dev_session.sh restart-session", restart_confirm_html)
+        self.assertIn("uv run woojae restart-session", restart_confirm_html)
         self.assertIn("Full session restart requested", restarting_html)
 
-    def test_schedule_full_session_restart_uses_detached_popen(self) -> None:
+    def test_review_pid_probe_uses_shared_supervisor_implementation(self) -> None:
+        with patch.object(review.session_supervisor, "is_pid_alive", return_value=True) as probe:
+            self.assertTrue(review.pid_is_alive(1234))
+
+        probe.assert_called_once_with(1234)
+
+    def test_supervisor_cli_command_is_cross_platform_python_entrypoint(self) -> None:
+        self.assertEqual(
+            review.supervisor_cli_command("restart", "mcp"),
+            [sys.executable, "-m", "terminal_bridge.cli", "restart", "mcp"],
+        )
+
+    def test_detached_subprocess_kwargs_are_platform_specific(self) -> None:
+        with patch.object(review.os, "name", "posix"):
+            self.assertEqual(review.detached_subprocess_kwargs(), {"start_new_session": True})
+
+        with patch.object(review.os, "name", "nt"):
+            windows_kwargs = review.detached_subprocess_kwargs()
+
+        self.assertIn("creationflags", windows_kwargs)
+        self.assertNotIn("start_new_session", windows_kwargs)
+
+    def test_schedule_full_session_stop_uses_detached_python_cli(self) -> None:
+        source = inspect.getsource(review.schedule_full_session_stop)
+
+        self.assertIn("subprocess.Popen", source)
+        self.assertIn("supervisor_cli_command", source)
+        self.assertIn("detached_subprocess_kwargs", source)
+        self.assertNotIn("subprocess.run", source)
+
+    def test_schedule_full_session_restart_uses_detached_python_cli(self) -> None:
         source = inspect.getsource(review.schedule_full_session_restart)
 
         self.assertIn("subprocess.Popen", source)
-        self.assertIn("start_new_session=True", source)
+        self.assertIn("supervisor_cli_command", source)
+        self.assertIn("detached_subprocess_kwargs", source)
         self.assertNotIn("subprocess.run", source)
 
     def test_processes_tab_renders_running_service_controls(self) -> None:
@@ -1872,7 +1904,7 @@ class WatcherHelperTests(unittest.TestCase):
         self.assertEqual(command[0], "terminal-notifier")
         self.assertIn("-execute", command)
         execute_value = command[command.index("-execute") + 1]
-        self.assertIn("scripts/focus_review_url.py", execute_value)
+        self.assertIn(str(notifications.focus_script_path()), execute_value)
         self.assertIn("http://127.0.0.1:8790/bundles/cmd-test", execute_value)
         self.assertIn("http://127.0.0.1:8790", execute_value)
         self.assertIn("-group", command)

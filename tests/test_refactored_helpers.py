@@ -364,6 +364,20 @@ class ConfigWorkspaceRootTests(unittest.TestCase):
 
         self.assertEqual(config._resolve_workspace_root(), session_workspace.resolve())
 
+    def test_session_env_parser_preserves_unquoted_windows_path(self) -> None:
+        root = Path(self.tmp.name)
+        session_root = root / "runtime"
+        session_root.mkdir()
+        windows_path = r"C:\Users\Example User\workspace"
+        (session_root / "session.env").write_text(
+            f"export WORKSPACE_ROOT={windows_path}\n",
+            encoding="utf-8",
+        )
+
+        config.DEFAULT_RUNTIME_ROOT = session_root
+
+        self.assertEqual(config._session_env_value("WORKSPACE_ROOT"), windows_path)
+
     def test_custom_runtime_root_session_env_is_used_as_fallback(self) -> None:
         root = Path(self.tmp.name)
         runtime_root = root / "custom-runtime"
@@ -463,6 +477,32 @@ class RefactoredSafetyHelperTests(unittest.TestCase):
 
 
 class RefactoredCommandHelperTests(unittest.TestCase):
+    def test_safe_env_builds_platform_virtualenv_fallback(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            env = commands._safe_env()
+
+        expected_venv_dir = config.PROJECT_ROOT / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+        self.assertIn(str(expected_venv_dir), env["PATH"].split(os.pathsep))
+        self.assertTrue(env["HOME"])
+
+    def test_safe_env_preserves_windows_process_launch_variables(self) -> None:
+        source = {
+            "PATH": "test-path",
+            "COMSPEC": "cmd.exe",
+            "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+            "SYSTEMROOT": "C:/Windows",
+            "USERPROFILE": "C:/Users/tester",
+            "TEMP": "C:/Temp",
+        }
+        with mock.patch.dict(os.environ, source, clear=True):
+            env = commands._safe_env()
+
+        for key, value in source.items():
+            self.assertEqual(env[key], value)
+
+    def test_runner_uses_shared_safe_environment_builder(self) -> None:
+        self.assertIs(command_bundle_runner.safe_env, commands._safe_env)
+
     def test_validate_exec_argv(self) -> None:
         with self.assertRaises(ValueError):
             commands._validate_exec_argv([])
