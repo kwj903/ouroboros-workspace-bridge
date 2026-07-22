@@ -12,7 +12,8 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
-- cdf7a07 Fix cross-platform runtime support
+- 08901fc Fix clean git status reporting
+- 0241d15 Fix cross-platform runtime support
 - ab4bda1 Release version 0.4.1
 - a5f8040 Document Pydantic schema usability improvements
 - 4399287 Add typed preparation result schemas
@@ -31,7 +32,6 @@ Recent Commits is a generated snapshot. Run `uv run python scripts/update_versio
 - 64f7d10 feat: orchestrate safe task merge proposals
 - 9260afb feat: surface validation result hints in dashboard
 - dbdd81f feat: add task validation result hints
-- 0fa580c feat: stage task validation command proposals
 
 ## How to Update Existing Installation
 

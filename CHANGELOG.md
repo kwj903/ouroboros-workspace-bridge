@@ -29,6 +29,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Legacy `session.env` parsing preserves Windows drive paths and backslashes.
 - Patch path validation recognizes unsafe absolute and traversal paths in both POSIX and Windows syntax.
 - Review UI runtime paths use stable forward-slash display formatting across platforms.
+- `woojae version` now reports a clean Git worktree as `dirty: no` instead of `unknown`.
 
 ## 0.4.1 - 2026-06-06
 

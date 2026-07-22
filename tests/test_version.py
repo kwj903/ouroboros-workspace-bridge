@@ -6,6 +6,24 @@ from terminal_bridge import version
 
 
 class VersionHelperTests(unittest.TestCase):
+    def test_empty_successful_git_status_means_clean(self) -> None:
+        original_git_output = version._git_output
+
+        try:
+            version._git_output = lambda _args: ""
+            self.assertFalse(version.is_git_dirty())
+        finally:
+            version._git_output = original_git_output
+
+    def test_non_empty_git_status_means_dirty(self) -> None:
+        original_git_output = version._git_output
+
+        try:
+            version._git_output = lambda _args: " M README.md"
+            self.assertTrue(version.is_git_dirty())
+        finally:
+            version._git_output = original_git_output
+
     def test_version_summary_handles_unknown_git_data(self) -> None:
         original_git_output = version._git_output
 

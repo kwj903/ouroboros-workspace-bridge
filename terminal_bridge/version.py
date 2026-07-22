@@ -43,8 +43,7 @@ def _git_output(args: list[str]) -> str | None:
     if completed.returncode != 0:
         return None
 
-    value = completed.stdout.strip()
-    return value or None
+    return completed.stdout.strip()
 
 
 def get_git_commit() -> str:
