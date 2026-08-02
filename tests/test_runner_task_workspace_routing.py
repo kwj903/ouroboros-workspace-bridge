@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -196,7 +197,7 @@ class RunnerTaskWorkspaceRoutingTests(unittest.TestCase):
                     "type": "command",
                     "name": "Write command marker",
                     "argv": [
-                        "python3",
+                        sys.executable,
                         "-c",
                         "from pathlib import Path; Path('command-marker.txt').write_text('task\\n')",
                     ],

@@ -21,6 +21,12 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Remote smoke checks now derive their endpoint through the shared public-access helper instead of assuming ngrok.
 - Release version updated to `0.4.3` without changing the public MCP tool schema.
 
+### Fixed
+
+- Windows physical-host tests no longer inherit an existing external public-access session when validating the legacy ngrok URL helper.
+- Task-workspace command routing tests now invoke the active Python interpreter instead of assuming a `python3` launcher exists on Windows.
+- Review and bundle-runner subprocess capture tolerates UTF-8 Korean output on non-UTF-8 Windows system locales without reader-thread decode failures.
+
 ### Security
 
 - External URLs must use HTTPS and cannot contain credentials, query strings, fragments, or access tokens.

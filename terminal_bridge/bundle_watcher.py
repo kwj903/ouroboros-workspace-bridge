@@ -88,6 +88,8 @@ def auto_apply_bundle(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=300,
             shell=False,
             check=False,

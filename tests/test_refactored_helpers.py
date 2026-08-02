@@ -407,6 +407,8 @@ class CliEnvHelperTests(unittest.TestCase):
         self.original_runtime_root = os.environ.get("MCP_TERMINAL_BRIDGE_RUNTIME_ROOT")
         self.original_ngrok_host = os.environ.get("NGROK_HOST")
         self.original_ngrok_base_url = os.environ.get("NGROK_BASE_URL")
+        self.original_public_access_mode = os.environ.get("PUBLIC_ACCESS_MODE")
+        self.original_public_mcp_url = os.environ.get("PUBLIC_MCP_URL")
         self.original_token = os.environ.get("MCP_ACCESS_TOKEN")
 
     def tearDown(self) -> None:
@@ -414,6 +416,8 @@ class CliEnvHelperTests(unittest.TestCase):
             ("MCP_TERMINAL_BRIDGE_RUNTIME_ROOT", self.original_runtime_root),
             ("NGROK_HOST", self.original_ngrok_host),
             ("NGROK_BASE_URL", self.original_ngrok_base_url),
+            ("PUBLIC_ACCESS_MODE", self.original_public_access_mode),
+            ("PUBLIC_MCP_URL", self.original_public_mcp_url),
             ("MCP_ACCESS_TOKEN", self.original_token),
         ):
             if value is None:
@@ -434,6 +438,9 @@ class CliEnvHelperTests(unittest.TestCase):
         self.assertEqual(cli.configured_ngrok_host(), "shell.example.invalid")
 
     def test_cli_mcp_url_redacted_preview_does_not_include_token(self) -> None:
+        os.environ["MCP_TERMINAL_BRIDGE_RUNTIME_ROOT"] = self.tmp.name
+        os.environ["PUBLIC_ACCESS_MODE"] = "ngrok"
+        os.environ.pop("PUBLIC_MCP_URL", None)
         os.environ["NGROK_HOST"] = "example.invalid"
         os.environ["MCP_ACCESS_TOKEN"] = "secret-token-value"
 

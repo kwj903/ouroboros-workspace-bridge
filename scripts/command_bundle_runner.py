@@ -749,6 +749,7 @@ def apply_command(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        errors="replace",
         timeout=timeout,
         shell=False,
         check=False,
