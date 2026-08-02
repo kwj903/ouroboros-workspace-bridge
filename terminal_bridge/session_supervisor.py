@@ -549,13 +549,19 @@ def start_service(service: str) -> int:
     settings.process_dir.mkdir(parents=True, exist_ok=True)
     path = pid_file(settings, service)
     pid = read_pid(path)
+    host, port = service_endpoint(settings, service)
     if is_pid_alive(pid):
-        print(f"[reuse] {service} pid={pid} log={log_file(settings, service)}")
-        return 0
-    if path.exists():
+        if not host or not port or tcp_reachable(host, port, timeout_seconds=0.25):
+            print(f"[reuse] {service} pid={pid} log={log_file(settings, service)}")
+            return 0
+        path.unlink(missing_ok=True)
+        print(
+            f"[warn] {service} pid={pid} is alive but its endpoint is unavailable; "
+            "treating the PID file as stale without terminating that process."
+        )
+    elif path.exists():
         path.unlink(missing_ok=True)
 
-    host, port = service_endpoint(settings, service)
     if host and port and tcp_reachable(host, port, timeout_seconds=0.25):
         print(f"[warn] {service} is reachable but not supervisor-managed; not starting duplicate.")
         return 0
@@ -629,6 +635,14 @@ def stop_service(service: str) -> int:
         path.unlink(missing_ok=True)
         print(f"[stop] {service} stale pid removed")
         return 0
+    host, port = service_endpoint(settings, service)
+    if host and port and not tcp_reachable(host, port, timeout_seconds=0.25):
+        path.unlink(missing_ok=True)
+        print(
+            f"[stop] {service} stale pid removed; endpoint unavailable, "
+            "so the reused PID was not terminated"
+        )
+        return 0
     print(f"[stop] {service} pid={pid}")
     terminate_pid_tree(pid)
     if is_pid_alive(pid):
@@ -642,11 +656,21 @@ def stop_service(service: str) -> int:
 def print_service_status(settings: SessionSettings, service: str) -> None:
     path = pid_file(settings, service)
     pid = read_pid(path)
-    state = "yes" if is_pid_alive(pid) else "stale" if path.exists() else "no"
+    pid_alive = is_pid_alive(pid)
     host, port = service_endpoint(settings, service)
+    reachable: bool | None = None
+    if host and port:
+        reachable = tcp_reachable(host, port, timeout_seconds=0.25)
+    state = (
+        "yes"
+        if pid_alive and (reachable is not False)
+        else "stale"
+        if path.exists()
+        else "no"
+    )
     reach = ""
     if host and port:
-        reach = f" reachable={'yes' if tcp_reachable(host, port, timeout_seconds=0.25) else 'no'} {host}:{port}"
+        reach = f" reachable={'yes' if reachable else 'no'} {host}:{port}"
     print(f"{service} pid={pid or 'none'} alive={state} log={log_file(settings, service)}{reach}")
 
 

@@ -245,6 +245,58 @@ class SessionSupervisorPublicAccessTests(unittest.TestCase):
 
 
 class SessionSupervisorProcessTests(unittest.TestCase):
+    def test_start_service_replaces_reused_pid_when_endpoint_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = supervisor.SessionSettings(
+                runtime_root=Path(tmp) / "runtime",
+                mcp_access_token="test-token",
+                ngrok_host="",
+                workspace_root=Path(tmp) / "workspace",
+                public_access_mode="external",
+                public_mcp_url="https://terminalbridge.woojae.dev/mcp",
+            )
+            settings.process_dir.mkdir(parents=True)
+            pid_path = supervisor.pid_file(settings, "mcp")
+            pid_path.write_text("1234\n", encoding="utf-8")
+            process = mock.Mock(pid=9999)
+            with (
+                mock.patch.object(supervisor, "load_settings", return_value=settings),
+                mock.patch.object(supervisor, "is_pid_alive", return_value=True),
+                mock.patch.object(supervisor, "tcp_reachable", return_value=False),
+                mock.patch.object(supervisor.subprocess, "Popen", return_value=process) as popen,
+                mock.patch.object(supervisor.time, "sleep"),
+            ):
+                result = supervisor.start_service("mcp")
+
+            self.assertEqual(result, 0)
+            self.assertEqual(pid_path.read_text(encoding="utf-8"), "9999\n")
+            popen.assert_called_once()
+
+    def test_stop_service_does_not_terminate_reused_pid_without_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = supervisor.SessionSettings(
+                runtime_root=Path(tmp) / "runtime",
+                mcp_access_token="test-token",
+                ngrok_host="",
+                workspace_root=Path(tmp) / "workspace",
+                public_access_mode="external",
+                public_mcp_url="https://terminalbridge.woojae.dev/mcp",
+            )
+            settings.process_dir.mkdir(parents=True)
+            pid_path = supervisor.pid_file(settings, "mcp")
+            pid_path.write_text("1234\n", encoding="utf-8")
+            with (
+                mock.patch.object(supervisor, "load_settings", return_value=settings),
+                mock.patch.object(supervisor, "is_pid_alive", return_value=True),
+                mock.patch.object(supervisor, "tcp_reachable", return_value=False),
+                mock.patch.object(supervisor, "terminate_pid_tree") as terminate,
+            ):
+                result = supervisor.stop_service("mcp")
+
+            self.assertEqual(result, 0)
+            self.assertFalse(pid_path.exists())
+            terminate.assert_not_called()
+
     def test_is_pid_alive_routes_windows_to_non_destructive_probe(self) -> None:
         with (
             mock.patch.object(supervisor, "is_windows", return_value=True),

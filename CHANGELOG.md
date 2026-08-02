@@ -26,6 +26,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - Windows physical-host tests no longer inherit an existing external public-access session when validating the legacy ngrok URL helper.
 - Task-workspace command routing tests now invoke the active Python interpreter instead of assuming a `python3` launcher exists on Windows.
 - Review, bundle-runner, and Git worktree subprocess capture tolerates mixed UTF-8/local-codepage output on non-UTF-8 Windows system locales without reader-thread decode failures.
+- Review and MCP PID files whose endpoints are no longer reachable are treated as stale, preventing Windows PID reuse from blocking restart or terminating an unrelated process.
 
 ### Security
 
