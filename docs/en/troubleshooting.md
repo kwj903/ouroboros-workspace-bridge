@@ -21,7 +21,7 @@ Expected high-level result:
 
 - `review` has an alive managed process and is reachable.
 - `mcp` has an alive managed process and is reachable.
-- `ngrok` has a managed process and a current log path.
+- In ngrok mode, `ngrok` has a managed process and a current log path. In external mode, it is reported as disabled.
 - `uv` is installed.
 - Token values are not printed.
 
@@ -113,9 +113,27 @@ Then refresh the MCP connection in the ChatGPT app and confirm the connection wi
 
 Recommended operating rule:
 
-- Restart the full MCP/review/ngrok session from a local terminal when possible.
+- Restart the full local session from a terminal when possible; ngrok is included only in ngrok mode.
 - Avoid restarting the server through a ChatGPT tool proposal unless you are intentionally debugging the restart flow.
 - A rejected or failed restart bundle may be an already-processed history item. Check `/history` and the bundle status together.
+
+## External domain is not connected
+
+Symptoms:
+
+- `PUBLIC_ACCESS_MODE=external` is configured, but the public endpoint does not reach the local MCP server.
+- `uv run woojae status` shows review and MCP healthy while ChatGPT cannot connect.
+
+Check:
+
+```bash
+uv run woojae doctor
+uv run woojae status
+uv run woojae logs mcp
+uv run woojae mcp-url
+```
+
+Confirm that the external tunnel or reverse proxy is running on the intended computer and routes the public hostname only to `http://127.0.0.1:8787`. Stop any replica connector on another computer. The bridge does not manage or restart an external tunnel. See [Public access modes](public-access.md).
 
 ## ngrok is not connected
 

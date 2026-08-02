@@ -35,6 +35,8 @@ TEXT = {
         "python": "Python 실행",
         "uv": "uv",
         "ngrok": "ngrok CLI",
+        "access_mode": "PUBLIC_ACCESS_MODE",
+        "public_url": "PUBLIC_MCP_URL",
         "token": "MCP_ACCESS_TOKEN",
         "host": "NGROK_HOST",
         "workspace": "WORKSPACE_ROOT",
@@ -44,6 +46,9 @@ TEXT = {
         "ngrok_title": "ngrok 준비",
         "ngrok_intro": "authtoken은 이 화면에 입력하지 않습니다. ngrok dashboard에서 복사한 뒤 터미널에서 직접 실행하세요.",
         "ngrok_downloads": "ngrok 공식 다운로드 페이지",
+        "external_title": "사용자 도메인 연결",
+        "external_intro": "외부 tunnel 또는 reverse proxy는 이 프로젝트 밖에서 관리합니다. 공개 주소는 로컬 MCP의 127.0.0.1:8787로만 연결하고 review UI는 공개하지 마세요.",
+        "external_single": "같은 공유 도메인의 connector는 한 번에 한 컴퓨터에서만 실행하세요.",
         "linux_fallback": "다른 Linux 배포판은 ngrok 공식 다운로드 페이지의 패키지 또는 zip 설치 방법을 참고하세요.",
         "windows_fallback": "winget이 없거나 Microsoft Store 사용이 막혀 있으면 ngrok 공식 다운로드 페이지에서 Windows용 zip을 받은 뒤 `ngrok.exe`를 PATH에 추가하세요.",
         "workspace_title": "Workspace 설정",
@@ -54,8 +59,8 @@ TEXT = {
         "local_docs": "로컬 checkout 문서 경로",
         "next_title": "다음 단계",
         "next_intro": "상태를 확인한 뒤 아래 순서대로 터미널 명령과 문서를 사용하세요.",
-        "next_setup": "workspace, token, ngrok host 설정 확인",
-        "next_start": "review/MCP/ngrok 세션 시작",
+        "next_setup": "workspace, token, 공개 연결 설정 확인",
+        "next_start": "review/MCP 로컬 세션 시작",
         "next_copy_url": "ChatGPT 앱에 넣을 실제 MCP URL 복사",
         "next_docs": "ChatGPT 앱 연결 문서 열기",
         "next_pending": "pending review UI 열기",
@@ -83,6 +88,8 @@ TEXT = {
         "python": "Python executable",
         "uv": "uv",
         "ngrok": "ngrok CLI",
+        "access_mode": "PUBLIC_ACCESS_MODE",
+        "public_url": "PUBLIC_MCP_URL",
         "token": "MCP_ACCESS_TOKEN",
         "host": "NGROK_HOST",
         "workspace": "WORKSPACE_ROOT",
@@ -92,6 +99,9 @@ TEXT = {
         "ngrok_title": "Prepare ngrok",
         "ngrok_intro": "Do not enter your authtoken in this page. Copy it from the ngrok dashboard and run the command in your terminal.",
         "ngrok_downloads": "official ngrok downloads page",
+        "external_title": "Connect your own domain",
+        "external_intro": "Manage the external tunnel or reverse proxy outside this project. Route only the public hostname to local MCP at 127.0.0.1:8787 and never expose the review UI.",
+        "external_single": "Run the shared-domain connector on only one computer at a time.",
         "linux_fallback": "For other Linux distributions, use the package or zip instructions from the official ngrok downloads page.",
         "windows_fallback": "If winget or Microsoft Store is unavailable, download the Windows zip from the official ngrok downloads page and add `ngrok.exe` to PATH.",
         "workspace_title": "Workspace settings",
@@ -102,8 +112,8 @@ TEXT = {
         "local_docs": "Local checkout docs path",
         "next_title": "Next",
         "next_intro": "After checking the status, use these terminal commands and docs in order.",
-        "next_setup": "Confirm workspace, token, and ngrok host settings",
-        "next_start": "Start the review/MCP/ngrok session",
+        "next_setup": "Confirm workspace, token, and public access settings",
+        "next_start": "Start the local review/MCP session",
         "next_copy_url": "Copy the real MCP URL for the ChatGPT app",
         "next_docs": "Open the ChatGPT app connection guide",
         "next_pending": "Open the pending review UI",
@@ -186,12 +196,26 @@ def _environment_rows(settings: supervisor.SessionSettings, labels: dict[str, st
     rows = [
         (labels["python"], True, sys.executable, False),
         (labels["uv"], uv_path is not None, uv_path or "uv not found", False),
-        (labels["ngrok"], ngrok_path is not None, ngrok_path or "ngrok not found", False),
+        (labels["access_mode"], True, settings.public_access_mode, False),
         (labels["token"], bool(settings.mcp_access_token), "set" if settings.mcp_access_token else "not set", False),
-        (labels["host"], bool(settings.ngrok_host), settings.ngrok_host or "temporary URL mode", True),
-        (labels["workspace"], bool(settings.workspace_root), settings.workspace_root, False),
-        (labels["review"], review_reachable, review_value, False),
     ]
+    if settings.public_access_mode == "ngrok":
+        rows.extend(
+            [
+                (labels["ngrok"], ngrok_path is not None, ngrok_path or "ngrok not found", False),
+                (labels["host"], bool(settings.ngrok_host), settings.ngrok_host or "temporary URL mode", True),
+            ]
+        )
+    else:
+        rows.append(
+            (labels["public_url"], bool(settings.public_mcp_url), settings.public_mcp_url or "not set", False)
+        )
+    rows.extend(
+        [
+            (labels["workspace"], bool(settings.workspace_root), settings.workspace_root, False),
+            (labels["review"], review_reachable, review_value, False),
+        ]
+    )
     html_rows = []
     for name, ok, value, optional in rows:
         html_rows.append(
@@ -231,6 +255,23 @@ def render_setup_page(settings: supervisor.SessionSettings, *, language: str) ->
     setup_url = f"/setup?lang={language}"
     prompt = labels["prompt"]
     review_reachable = _review_ui_reachable(settings)
+    if settings.public_access_mode == "ngrok":
+        public_access_section = f"""
+  <section>
+    <h2>{_escape(labels["ngrok_title"])}</h2>
+    <p class="notice">{_escape(labels["ngrok_intro"])}</p>
+    {_ngrok_commands(labels)}
+  </section>
+"""
+    else:
+        public_access_section = f"""
+  <section>
+    <h2>{_escape(labels["external_title"])}</h2>
+    <p class="notice">{_escape(labels["external_intro"])}</p>
+    <p><strong>PUBLIC_MCP_URL:</strong> <code>{_escape(settings.public_mcp_url)}</code></p>
+    <p><strong>{_escape(labels["external_single"])}</strong></p>
+  </section>
+"""
     return f"""<!doctype html>
 <html lang="{_escape(language)}">
 <head>
@@ -280,11 +321,7 @@ def render_setup_page(settings: supervisor.SessionSettings, *, language: str) ->
     <table>{_environment_rows(settings, labels, review_reachable=review_reachable)}</table>
   </section>
 
-  <section>
-    <h2>{_escape(labels["ngrok_title"])}</h2>
-    <p class="notice">{_escape(labels["ngrok_intro"])}</p>
-    {_ngrok_commands(labels)}
-  </section>
+  {public_access_section}
 
   <section>
     <h2>{_escape(labels["workspace_title"])}</h2>

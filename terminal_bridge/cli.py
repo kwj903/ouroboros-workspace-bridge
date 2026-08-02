@@ -5,6 +5,7 @@ import os
 import sys
 from dataclasses import dataclass
 
+from terminal_bridge import public_access
 from terminal_bridge import session_supervisor as supervisor
 from terminal_bridge import setup_ui
 from terminal_bridge.version import version_summary
@@ -50,9 +51,9 @@ COMMAND_HELP: tuple[CommandHelp, ...] = (
             "로컬 브리지 설정을 구성합니다.",
         ),
         details=LocalizedText(
-            "Runs the setup flow for WORKSPACE_ROOT, ngrok host, access token, and local runtime settings. "
+            "Runs the setup flow for public access mode, public endpoint, WORKSPACE_ROOT, access token, and local runtime settings. "
             "The configure command is kept as an alias for compatibility.",
-            "WORKSPACE_ROOT, ngrok host, access token, 로컬 런타임 설정을 구성하는 설정 흐름을 실행합니다. "
+            "공개 연결 방식과 endpoint, WORKSPACE_ROOT, access token, 로컬 런타임 설정을 구성합니다. "
             "configure 명령은 호환성을 위한 별칭입니다.",
         ),
         examples=("uv run woojae setup", "uv run woojae configure"),
@@ -85,10 +86,10 @@ COMMAND_HELP: tuple[CommandHelp, ...] = (
             "선택형 localhost 설정 마법사를 엽니다.",
         ),
         details=LocalizedText(
-            "Starts a temporary localhost-only onboarding page for checking prerequisites, ngrok setup, "
+            "Starts a temporary localhost-only onboarding page for checking prerequisites, selected public access mode, "
             "workspace meaning, ChatGPT app connection steps, and the first success prompt. "
             "It does not replace uv run woojae setup and does not start or stop the normal review/MCP session.",
-            "필수 도구, ngrok 준비, workspace 개념, ChatGPT 앱 연결 단계, 첫 성공 테스트 문구를 확인하는 "
+            "필수 도구, 선택한 공개 연결 방식, workspace 개념, ChatGPT 앱 연결 단계, 첫 성공 테스트 문구를 확인하는 "
             "일회성 localhost 온보딩 페이지를 엽니다. uv run woojae setup을 대체하지 않으며 "
             "일반 review/MCP 세션을 시작하거나 중지하지 않습니다.",
         ),
@@ -133,8 +134,8 @@ COMMAND_HELP: tuple[CommandHelp, ...] = (
         category=CATEGORY_SESSION,
         usage="uv run woojae start",
         summary=LocalizedText(
-            "Start the local review, MCP, and ngrok session.",
-            "로컬 review, MCP, ngrok 세션을 시작합니다.",
+            "Start the local bridge session for the selected public access mode.",
+            "선택한 공개 연결 방식에 맞는 로컬 브리지 세션을 시작합니다.",
         ),
         details=LocalizedText(
             "Starts the local processes required for ChatGPT to connect through the Workspace Bridge.",
@@ -151,8 +152,8 @@ COMMAND_HELP: tuple[CommandHelp, ...] = (
             "로컬 세션 상태를 표시합니다.",
         ),
         details=LocalizedText(
-            "Checks whether the review UI, MCP server, and ngrok tunnel appear to be running and reachable.",
-            "review UI, MCP 서버, ngrok 터널이 실행 중이고 접근 가능한지 확인합니다.",
+            "Checks review and MCP status plus the selected public access mode. External tunnel lifecycle is reported as operator-managed.",
+            "review와 MCP 상태, 선택된 공개 연결 방식을 확인합니다. external tunnel은 사용자 관리 대상으로 표시합니다.",
         ),
         examples=("uv run woojae status",),
     ),
@@ -207,8 +208,8 @@ COMMAND_HELP: tuple[CommandHelp, ...] = (
             "전체 로컬 세션을 재시작합니다.",
         ),
         details=LocalizedText(
-            "Restarts the review UI, MCP server, and ngrok tunnel together. Use this after code or configuration changes.",
-            "review UI, MCP 서버, ngrok 터널을 함께 재시작합니다. 코드나 설정 변경 후 사용하세요.",
+            "Restarts all managed local services, starting ngrok only when ngrok mode is selected. Use this after code or configuration changes.",
+            "관리 대상 로컬 서비스를 재시작하며 ngrok 모드일 때만 ngrok을 시작합니다. 코드나 설정 변경 후 사용하세요.",
         ),
         examples=("uv run woojae restart-session", "uv run woojae status"),
     ),
@@ -271,8 +272,8 @@ COMMAND_HELP: tuple[CommandHelp, ...] = (
             "관리 대상 서비스 하나를 재시작합니다.",
         ),
         details=LocalizedText(
-            "Restarts only the selected service. For broad recovery, prefer restart-session.",
-            "선택한 서비스만 재시작합니다. 전반적인 복구가 목적이면 restart-session을 우선 사용하세요.",
+            "Restarts only the selected service. ngrok actions are disabled in external mode. For broad recovery, prefer restart-session.",
+            "선택한 서비스만 재시작합니다. external 모드에서는 ngrok 제어가 비활성화됩니다. 전반적인 복구에는 restart-session을 우선 사용하세요.",
         ),
         examples=("uv run woojae restart mcp", "uv run woojae restart ngrok"),
     ),
@@ -565,11 +566,17 @@ def configured_ngrok_host() -> str:
     return supervisor.load_settings().ngrok_host
 
 
+def configured_public_mcp_base_url() -> str | None:
+    return supervisor.load_settings().public_mcp_base_url
+
+
 def mcp_url(token: str) -> str | None:
-    host = configured_ngrok_host()
-    if not host:
+    base_url = configured_public_mcp_base_url()
+    if not base_url:
         return None
-    return f"https://{host}/mcp?access_token={token}"
+    if token == "<redacted>":
+        return public_access.redacted_mcp_url(base_url)
+    return public_access.tokenized_mcp_url(base_url, token)
 
 
 def open_review_dashboard() -> int:
@@ -647,7 +654,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -695,6 +702,14 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.print_help()
     return 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except public_access.PublicAccessConfigError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

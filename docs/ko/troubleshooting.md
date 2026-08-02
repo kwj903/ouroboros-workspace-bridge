@@ -19,7 +19,7 @@ uv run woojae doctor
 
 - `review`가 살아 있고 reachable인지
 - `mcp`가 살아 있고 reachable인지
-- `ngrok` 프로세스와 로그가 있는지
+- ngrok 모드에서는 `ngrok` 프로세스와 로그가 있는지, external 모드에서는 비활성화로 표시되는지
 - `uv`가 설치되어 있는지
 - token 값이 출력되지 않는지
 
@@ -110,9 +110,27 @@ uv run woojae restart-session
 
 권장 운영 방식:
 
-- MCP/review/ngrok 전체 세션 재시작은 가능하면 로컬 터미널에서 직접 실행합니다.
+- 전체 로컬 세션 재시작은 가능하면 터미널에서 직접 실행합니다. ngrok은 ngrok 모드에서만 포함됩니다.
 - ChatGPT tool proposal로 서버 자체를 재시작하는 방식은 연결이 끊겨 상태 반영이 꼬일 수 있으므로 디버깅 목적이 아니면 피합니다.
 - rejected 또는 failed로 남은 재시작 bundle은 이미 처리된 이력일 수 있으므로 `/history`와 bundle status를 함께 확인합니다.
+
+## external 도메인 연결 문제
+
+증상:
+
+- `PUBLIC_ACCESS_MODE=external`인데 공개 endpoint가 로컬 MCP 서버로 연결되지 않음
+- `uv run woojae status`에서는 review와 MCP가 정상인데 ChatGPT 연결이 실패함
+
+확인:
+
+```bash
+uv run woojae doctor
+uv run woojae status
+uv run woojae logs mcp
+uv run woojae mcp-url
+```
+
+external tunnel 또는 reverse proxy가 의도한 컴퓨터에서 실행 중인지, 공개 hostname이 `http://127.0.0.1:8787`에만 연결되는지 확인합니다. 다른 컴퓨터의 replica connector는 종료하세요. Bridge는 external tunnel 자체를 시작하거나 재시작하지 않습니다. 자세한 내용은 [공개 연결 모드](public-access.md)를 확인하세요.
 
 ## ngrok 연결 문제
 

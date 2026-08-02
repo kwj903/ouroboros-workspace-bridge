@@ -8,6 +8,7 @@ Keep these values private:
 
 - `MCP_ACCESS_TOKEN`
 - ngrok authtokens
+- Cloudflare or other external tunnel credentials
 - access tokens
 - bearer tokens
 - `.env` values
@@ -19,7 +20,9 @@ Do not paste real tokens into README files, GitHub issues, logs, screenshots, te
 
 The review UI should remain localhost-only. It is intended for local approval of pending bundles, not for public internet exposure.
 
-The ngrok URL is externally reachable. Token protection is required whenever the MCP server is exposed through ngrok.
+Every public MCP endpoint is externally reachable, whether it uses ngrok or a user-managed domain. Token protection is always required. `PUBLIC_MCP_URL` must not contain an access token, embedded credentials, query string, or fragment.
+
+External tunnels must route only to the local MCP service at `127.0.0.1:8787`. Never route the review UI at `127.0.0.1:8790`. A shared external-domain connector should run on only one computer at a time so related tool calls cannot be distributed across different local workspaces.
 
 Approve only expected small bundles. Reject bundles that:
 

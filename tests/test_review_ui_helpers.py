@@ -1393,6 +1393,21 @@ class ReviewServerHelperTests(unittest.TestCase):
             else:
                 os.environ["NGROK_BASE_URL"] = original_base_url
 
+    def test_public_mcp_endpoint_hint_supports_external_mode(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "PUBLIC_ACCESS_MODE": "external",
+                "PUBLIC_MCP_URL": "https://terminalbridge.woojae.dev/mcp",
+                "NGROK_HOST": "ignored.ngrok.app",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                review.public_mcp_endpoint_hint(),
+                "https://terminalbridge.woojae.dev/mcp",
+            )
+
     def test_normalize_server_tab(self) -> None:
         self.assertEqual(review.normalize_server_tab(None), "overview")
         self.assertEqual(review.normalize_server_tab("services"), "services")
@@ -1540,6 +1555,42 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn(f'title="{root / "processes" / "review.log"}"', html)
         self.assertIn("/servers/session/stop/confirm", html)
         self.assertIn("/servers/session/restart/confirm", html)
+
+    def test_processes_tab_disables_ngrok_controls_in_external_mode(self) -> None:
+        root = Path(self.tmp.name) / "runtime"
+        review.RUNTIME_ROOT = root
+        with patch.dict(
+            os.environ,
+            {
+                "PUBLIC_ACCESS_MODE": "external",
+                "PUBLIC_MCP_URL": "https://terminalbridge.woojae.dev/mcp",
+            },
+            clear=False,
+        ):
+            state = review.server_state()
+            html = review.server_tab_content_html("processes", state)
+            services = {item["name"]: item for item in state["supervisor"]["services"]}
+
+        self.assertFalse(services["ngrok"]["enabled"])
+        self.assertIn("disabled by external mode", html)
+        self.assertNotIn('/servers/processes/start/ngrok', html)
+        self.assertNotIn('/servers/processes/restart/ngrok', html)
+        self.assertIn('/servers/processes/start/mcp', html)
+
+    def test_external_connection_tab_uses_configured_domain_without_token(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "PUBLIC_ACCESS_MODE": "external",
+                "PUBLIC_MCP_URL": "https://terminalbridge.woojae.dev/mcp",
+                "MCP_ACCESS_TOKEN": "secret-token-value",
+            },
+            clear=False,
+        ):
+            html = review.server_tab_content_html("connection", review.server_state())
+
+        self.assertIn("https://terminalbridge.woojae.dev/mcp?access_token=&lt;TOKEN&gt;", html)
+        self.assertNotIn("secret-token-value", html)
 
     def test_full_session_stop_and_restart_pages_render(self) -> None:
         stop_confirm_html = review.full_session_stop_confirm_html()
@@ -1694,6 +1745,15 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn('/servers/processes/start/ngrok', stale_html)
         self.assertNotIn('/servers/processes/stop/ngrok', stale_html)
         self.assertNotIn('/servers/processes/restart/ngrok', stale_html)
+
+    def test_supervisor_control_html_allows_stale_ngrok_cleanup_in_external_mode(self) -> None:
+        running_html = review.supervisor_control_html("ngrok", "yes", enabled=False)
+        stopped_html = review.supervisor_control_html("ngrok", "no", enabled=False)
+
+        self.assertIn('/servers/processes/stop/ngrok', running_html)
+        self.assertNotIn('/servers/processes/start/ngrok', running_html)
+        self.assertNotIn('/servers/processes/restart/ngrok', running_html)
+        self.assertIn("disabled by external mode", stopped_html)
 
     def test_supervisor_control_html_keeps_review_terminal_only(self) -> None:
         html = review.supervisor_control_html("review", "yes")

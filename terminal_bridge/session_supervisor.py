@@ -15,7 +15,7 @@ import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 
-from terminal_bridge import runtime_storage
+from terminal_bridge import public_access, runtime_storage
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -30,6 +30,8 @@ class SessionSettings:
     mcp_access_token: str
     ngrok_host: str
     workspace_root: Path
+    public_access_mode: str = "ngrok"
+    public_mcp_url: str = ""
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8787
     review_host: str = "127.0.0.1"
@@ -48,6 +50,22 @@ class SessionSettings:
     def review_dashboard_url(self) -> str:
         return f"{self.review_base_url}/pending"
 
+    @property
+    def public_mcp_base_url(self) -> str | None:
+        return public_access.public_mcp_base_url(
+            mode=self.public_access_mode,
+            ngrok_host=self.ngrok_host,
+            external_mcp_url=self.public_mcp_url,
+        )
+
+    @property
+    def public_mcp_hostname(self) -> str:
+        return public_access.public_mcp_hostname(
+            mode=self.public_access_mode,
+            ngrok_host=self.ngrok_host,
+            external_mcp_url=self.public_mcp_url,
+        )
+
     def as_env(self) -> dict[str, str]:
         env = os.environ.copy()
         env["MCP_TERMINAL_BRIDGE_RUNTIME_ROOT"] = str(self.runtime_root)
@@ -57,6 +75,8 @@ class SessionSettings:
         env["BUNDLE_REVIEW_HOST"] = self.review_host
         env["BUNDLE_REVIEW_PORT"] = str(self.review_port)
         env["NGROK_HOST"] = self.ngrok_host
+        env["PUBLIC_ACCESS_MODE"] = self.public_access_mode
+        env["PUBLIC_MCP_URL"] = self.public_mcp_url
         env["WOOJAE_HELP_LANG"] = self.help_language
         if self.mcp_access_token:
             env["MCP_ACCESS_TOKEN"] = self.mcp_access_token
@@ -83,12 +103,7 @@ def session_env_path(root: Path | None = None) -> Path:
 
 
 def normalize_ngrok_host(value: str) -> str:
-    host = value.strip()
-    host = host.removeprefix("https://").removeprefix("http://")
-    host = host.split("/", 1)[0]
-    host = host.split("?", 1)[0]
-    host = host.split("#", 1)[0]
-    return host
+    return public_access.normalize_ngrok_host(value)
 
 
 def normalize_help_language(value: str) -> str:
@@ -201,14 +216,31 @@ def int_session_value(env_name: str, json_key: str, default: int) -> int:
         return default
 
 
-def load_settings() -> SessionSettings:
+def load_settings(*, strict_public_access: bool = True) -> SessionSettings:
     root = runtime_root()
     ngrok_host = normalize_ngrok_host(session_value("NGROK_HOST") or session_value("NGROK_BASE_URL", "ngrok_base_url"))
+    raw_public_access_mode = session_value("PUBLIC_ACCESS_MODE", "public_access_mode")
+    try:
+        public_access_mode = public_access.normalize_public_access_mode(
+            raw_public_access_mode
+        )
+    except public_access.PublicAccessConfigError:
+        if strict_public_access:
+            raise
+        public_access_mode = "ngrok"
+    raw_public_mcp_url = session_value("PUBLIC_MCP_URL", "public_mcp_url").strip()
+    public_mcp_url = (
+        public_access.normalize_external_mcp_url(raw_public_mcp_url)
+        if public_access_mode == "external" and strict_public_access
+        else raw_public_mcp_url
+    )
     return SessionSettings(
         runtime_root=root,
         mcp_access_token=session_value("MCP_ACCESS_TOKEN", "mcp_access_token"),
         ngrok_host=ngrok_host,
         workspace_root=Path(session_value("WORKSPACE_ROOT", "workspace_root") or Path.home() / "workspace").expanduser().resolve(strict=False),
+        public_access_mode=public_access_mode,
+        public_mcp_url=public_mcp_url,
         mcp_host=session_value("MCP_HOST", "mcp_host") or "127.0.0.1",
         mcp_port=int_session_value("MCP_PORT", "mcp_port", 8787),
         review_host=session_value("BUNDLE_REVIEW_HOST", "review_host") or "127.0.0.1",
@@ -236,6 +268,8 @@ def write_session_files(settings: SessionSettings) -> None:
             {
                 "mcp_access_token": settings.mcp_access_token,
                 "ngrok_host": settings.ngrok_host,
+                "public_access_mode": settings.public_access_mode,
+                "public_mcp_url": settings.public_mcp_url,
                 "workspace_root": str(settings.workspace_root),
                 "mcp_host": settings.mcp_host,
                 "mcp_port": settings.mcp_port,
@@ -255,6 +289,8 @@ def write_session_files(settings: SessionSettings) -> None:
         "# Stored outside the git repository. Do not commit token values.",
         f"export MCP_ACCESS_TOKEN={shlex.quote(settings.mcp_access_token)}",
         f"export NGROK_HOST={shlex.quote(settings.ngrok_host)}",
+        f"export PUBLIC_ACCESS_MODE={shlex.quote(settings.public_access_mode)}",
+        f"export PUBLIC_MCP_URL={shlex.quote(settings.public_mcp_url)}",
         f"export WORKSPACE_ROOT={shlex.quote(str(settings.workspace_root))}",
         f"export MCP_HOST={shlex.quote(settings.mcp_host)}",
         f"export MCP_PORT={shlex.quote(str(settings.mcp_port))}",
@@ -279,19 +315,46 @@ def prompt_text(prompt: str, default: str = "") -> str:
 
 
 def configure() -> int:
-    current = load_settings()
+    current = load_settings(strict_public_access=False)
     print("Workspace Terminal Bridge session configure")
     print(f"Runtime root: {current.runtime_root}")
     print(f"Session JSON: {session_json_path(current.runtime_root)}")
     print()
 
-    if shutil.which("ngrok"):
-        print("[ok] ngrok CLI: found")
-        print("If this machine is not connected to your ngrok account yet, run:")
-        print("  ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>")
+    try:
+        public_access_mode = public_access.normalize_public_access_mode(
+            prompt_text(
+                "Public access mode [ngrok/external]",
+                current.public_access_mode,
+            )
+        )
+    except public_access.PublicAccessConfigError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 1
+
+    if public_access_mode == "ngrok":
+        if shutil.which("ngrok"):
+            print("[ok] ngrok CLI: found")
+            print("If this machine is not connected to your ngrok account yet, run:")
+            print("  ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>")
+        else:
+            print("[warn] ngrok CLI is not installed or not on PATH.")
+            print_ngrok_setup_hint()
+        ngrok_host = normalize_ngrok_host(
+            prompt_text("NGROK_HOST, fixed domain optional", current.ngrok_host)
+        )
+        public_mcp_url = current.public_mcp_url
     else:
-        print("[warn] ngrok CLI is not installed or not on PATH.")
-        print_ngrok_setup_hint()
+        print("[info] external mode: tunnel or reverse-proxy lifecycle is managed separately.")
+        print("[info] expose only the local MCP service at 127.0.0.1:8787; keep the review UI local-only.")
+        ngrok_host = current.ngrok_host
+        try:
+            public_mcp_url = public_access.normalize_external_mcp_url(
+                prompt_text("PUBLIC_MCP_URL", current.public_mcp_url)
+            )
+        except public_access.PublicAccessConfigError as exc:
+            print(f"[error] {exc}", file=sys.stderr)
+            return 1
     print()
 
     if current.mcp_access_token:
@@ -303,7 +366,6 @@ def configure() -> int:
         token = typed or secrets.token_urlsafe(32)
         token_status = "provided" if typed else "generated"
 
-    ngrok_host = normalize_ngrok_host(prompt_text("NGROK_HOST, fixed domain optional", current.ngrok_host))
     workspace_root = Path(prompt_text("WORKSPACE_ROOT", str(current.workspace_root))).expanduser().resolve(strict=False)
     if is_dangerous_workspace_root(workspace_root):
         print(f"[error] Refusing dangerous WORKSPACE_ROOT: {workspace_root}", file=sys.stderr)
@@ -319,6 +381,8 @@ def configure() -> int:
         mcp_access_token=token,
         ngrok_host=ngrok_host,
         workspace_root=workspace_root,
+        public_access_mode=public_access_mode,
+        public_mcp_url=public_mcp_url,
         mcp_host=prompt_text("MCP_HOST", current.mcp_host),
         mcp_port=int(prompt_text("MCP_PORT", str(current.mcp_port))),
         review_host=prompt_text("BUNDLE_REVIEW_HOST", current.review_host),
@@ -329,7 +393,12 @@ def configure() -> int:
     print()
     print(f"Saved session config: {session_json_path(settings.runtime_root)}")
     print(f"MCP_ACCESS_TOKEN: {token_status}")
-    print(f"NGROK_HOST: {settings.ngrok_host or 'not set; ngrok temporary URL mode will be used'}")
+    print(f"Public access mode: {settings.public_access_mode}")
+    if settings.public_access_mode == "ngrok":
+        print(f"NGROK_HOST: {settings.ngrok_host or 'not set; ngrok temporary URL mode will be used'}")
+    else:
+        print(f"PUBLIC_MCP_URL: {settings.public_mcp_url}")
+        print("External tunnel: managed outside Workspace Terminal Bridge")
     print(f"WORKSPACE_ROOT: {settings.workspace_root}")
     print(f"Help language: {settings.help_language}")
     return 0
@@ -416,12 +485,22 @@ def service_endpoint(settings: SessionSettings, service: str) -> tuple[str | Non
     return None, None
 
 
+def active_services(settings: SessionSettings) -> tuple[str, ...]:
+    if settings.public_access_mode == "external":
+        return ("review", "mcp")
+    return SERVICES
+
+
 def service_command(settings: SessionSettings, service: str) -> list[str]:
     if service == "review":
         return [sys.executable, "scripts/command_bundle_review_server.py"]
     if service == "mcp":
         return [sys.executable, "server.py"]
     if service == "ngrok":
+        if settings.public_access_mode == "external":
+            raise public_access.PublicAccessConfigError(
+                "ngrok is disabled while PUBLIC_ACCESS_MODE=external."
+            )
         if settings.ngrok_host:
             return ["ngrok", "http", f"--url={settings.ngrok_host}", str(settings.mcp_port)]
         return ["ngrok", "http", str(settings.mcp_port)]
@@ -441,6 +520,12 @@ def ensure_restartable(service: str) -> None:
 def start_service(service: str) -> int:
     ensure_service(service)
     settings = load_settings()
+    if service == "ngrok" and settings.public_access_mode == "external":
+        print(
+            "[error] ngrok is disabled while PUBLIC_ACCESS_MODE=external; manage the external tunnel separately.",
+            file=sys.stderr,
+        )
+        return 1
     settings.process_dir.mkdir(parents=True, exist_ok=True)
     path = pid_file(settings, service)
     pid = read_pid(path)
@@ -549,9 +634,18 @@ def status_session() -> int:
     settings = load_settings()
     print("Workspace Terminal Bridge service status")
     print(f"Process directory: {settings.process_dir}")
+    print(f"Public access mode: {settings.public_access_mode}")
+    if settings.public_mcp_base_url:
+        print(f"Public MCP endpoint: {settings.public_mcp_base_url}")
+    elif settings.public_access_mode == "ngrok":
+        print("Public MCP endpoint: dynamic ngrok URL")
+    if settings.public_access_mode == "external":
+        print("External tunnel: managed outside Workspace Terminal Bridge")
     print()
     for service in SERVICES:
         print_service_status(settings, service)
+        if service == "ngrok" and settings.public_access_mode == "external":
+            print("  [disabled] ngrok is not started in external mode")
     return 0
 
 
@@ -562,7 +656,7 @@ def start_session() -> int:
     print(f"Process directory: {settings.process_dir}")
     print()
     code = 0
-    for service in SERVICES:
+    for service in active_services(settings):
         code = max(code, start_service(service))
     print()
     if os.environ.get("WOOJAE_SKIP_OPEN_REVIEW") == "1":
@@ -662,11 +756,16 @@ def doctor() -> int:
     else:
         print("[error] uv: missing")
         code = 1
-    if shutil.which("ngrok"):
-        print("[ok] ngrok: found")
+    print(f"[ok] public access mode: {settings.public_access_mode}")
+    if settings.public_access_mode == "ngrok":
+        if shutil.which("ngrok"):
+            print("[ok] ngrok: found")
+        else:
+            print("[warn] ngrok: missing; ngrok service will fail until ngrok is installed.")
+            print_ngrok_setup_hint()
     else:
-        print("[warn] ngrok: missing; ngrok service will fail until ngrok is installed.")
-        print_ngrok_setup_hint()
+        print(f"[ok] PUBLIC_MCP_URL: {settings.public_mcp_url}")
+        print("[info] external tunnel lifecycle is managed separately")
     if sys.platform == "darwin":
         print("[ok] terminal-notifier: found" if shutil.which("terminal-notifier") else "[warn] terminal-notifier: missing; clickable macOS notifications require it.")
         print("[ok] osascript fallback: found" if shutil.which("osascript") else "[warn] osascript fallback: missing")
@@ -679,7 +778,10 @@ def doctor() -> int:
     else:
         print("[info] desktop notifications: optional and platform-specific")
     print(f"[{'ok' if settings.mcp_access_token else 'warn'}] MCP_ACCESS_TOKEN: {'set' if settings.mcp_access_token else 'not set'}")
-    print(f"[info] NGROK_HOST: {settings.ngrok_host or 'not set; temporary URL mode'}")
+    if settings.public_access_mode == "ngrok":
+        print(f"[info] NGROK_HOST: {settings.ngrok_host or 'not set; temporary URL mode'}")
+    else:
+        print(f"[info] Public MCP endpoint: {settings.public_mcp_base_url}")
     print(f"[info] WORKSPACE_ROOT: {settings.workspace_root}")
     print()
     print("Supervisor services:")
@@ -690,20 +792,26 @@ def doctor() -> int:
 
 def mcp_url_preview() -> int:
     settings = load_settings()
-    if not settings.ngrok_host:
-        print("NGROK_HOST is not configured.")
-        print("Run `woojae configure` to save a fixed NGROK_HOST.")
+    base_url = settings.public_mcp_base_url
+    if not base_url:
+        print("A fixed public MCP endpoint is not configured.")
+        if settings.public_access_mode == "ngrok":
+            print("Run `woojae configure` to save a fixed NGROK_HOST.")
         return 1
-    print(f"https://{settings.ngrok_host}/mcp?access_token=<redacted>")
+    print(public_access.redacted_mcp_url(base_url))
     return 0 if settings.mcp_access_token else 1
 
 
 def copy_mcp_url() -> int:
     settings = load_settings()
-    if not settings.ngrok_host or not settings.mcp_access_token:
-        print("NGROK_HOST and MCP_ACCESS_TOKEN are required for copy-url.", file=sys.stderr)
+    base_url = settings.public_mcp_base_url
+    if not base_url or not settings.mcp_access_token:
+        print(
+            "A fixed public MCP endpoint and MCP_ACCESS_TOKEN are required for copy-url.",
+            file=sys.stderr,
+        )
         return 1
-    url = f"https://{settings.ngrok_host}/mcp?access_token={settings.mcp_access_token}"
+    url = public_access.tokenized_mcp_url(base_url, settings.mcp_access_token)
     if sys.platform == "darwin" and shutil.which("pbcopy"):
         completed = subprocess.run(["pbcopy"], input=url, text=True, check=False)
     elif is_windows() and shutil.which("clip"):
@@ -715,7 +823,7 @@ def copy_mcp_url() -> int:
         return 1
     if completed.returncode != 0:
         return completed.returncode
-    print(f"Copied MCP URL: https://{settings.ngrok_host}/mcp?access_token=<redacted>")
+    print(f"Copied MCP URL: {public_access.redacted_mcp_url(base_url)}")
     return 0
 
 
@@ -909,6 +1017,9 @@ def print_checklist() -> int:
 
 5. Tail logs when debugging:
    woojae logs [review|mcp|ngrok]
+
+   In external mode, manage the public tunnel separately and keep only one
+   shared-domain connector active at a time.
 
 6. Stop when finished:
    woojae stop

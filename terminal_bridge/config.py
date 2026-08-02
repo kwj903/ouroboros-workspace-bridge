@@ -4,6 +4,8 @@ import os
 import shlex
 from pathlib import Path
 
+from terminal_bridge import public_access
+
 
 # 기본 런타임 저장소 위치입니다.
 # 승인 번들, 감사 로그, 백업, 작업 기록 같은 로컬 실행 상태가 이 아래에 저장됩니다.
@@ -84,12 +86,7 @@ def _resolve_workspace_root() -> Path:
 def _normalize_ngrok_host(value: str) -> str:
     # ngrok URL 또는 host 입력에서 scheme/path/query를 제거해 host만 남깁니다.
     # MCP transport 보안 설정의 allowed_hosts/allowed_origins 계산에 사용됩니다.
-    host = value.strip()
-    host = host.removeprefix("https://").removeprefix("http://")
-    host = host.split("/", 1)[0]
-    host = host.split("?", 1)[0]
-    host = host.split("#", 1)[0]
-    return host
+    return public_access.normalize_ngrok_host(value)
 
 
 # 실제 로컬 작업을 허용할 최상위 디렉터리입니다.
@@ -302,9 +299,42 @@ MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
 # MCP 서버 포트입니다. 로컬 connector/ngrok 연결 대상 포트로 사용됩니다.
 MCP_PORT = int(os.getenv("MCP_PORT", "8787"))
 
+# 공개 접근 방식입니다. 기본값은 기존 호환성을 위한 ngrok입니다.
+# external 모드에서는 별도 tunnel/reverse proxy가 PUBLIC_MCP_URL을 로컬 MCP 포트로 전달합니다.
+PUBLIC_ACCESS_MODE = public_access.normalize_public_access_mode(
+    os.getenv("PUBLIC_ACCESS_MODE")
+    or _session_env_value("PUBLIC_ACCESS_MODE")
+    or "ngrok"
+)
+
 # ngrok 고정 도메인 또는 base URL에서 추출한 host입니다.
-# 외부 ChatGPT connector가 로컬 MCP 서버에 접근할 때 transport 보안 허용 목록에 사용됩니다.
-NGROK_HOST = _normalize_ngrok_host(os.getenv("NGROK_HOST") or os.getenv("NGROK_BASE_URL", ""))
+# ngrok 모드의 transport 보안 허용 목록과 ngrok 실행 명령에 사용됩니다.
+NGROK_HOST = _normalize_ngrok_host(
+    os.getenv("NGROK_HOST")
+    or os.getenv("NGROK_BASE_URL")
+    or _session_env_value("NGROK_HOST")
+    or _session_env_value("NGROK_BASE_URL")
+    or ""
+)
+
+# external 모드에서 사용하는 공개 MCP endpoint입니다. 토큰/query는 포함하지 않습니다.
+_raw_public_mcp_url = (
+    os.getenv("PUBLIC_MCP_URL")
+    if os.getenv("PUBLIC_MCP_URL") is not None
+    else (_session_env_value("PUBLIC_MCP_URL") or "")
+)
+PUBLIC_MCP_URL = (
+    public_access.normalize_external_mcp_url(_raw_public_mcp_url)
+    if PUBLIC_ACCESS_MODE == "external"
+    else _raw_public_mcp_url.strip()
+)
+
+# 선택된 공개 endpoint의 host입니다. FastMCP transport host/origin allowlist에 사용됩니다.
+PUBLIC_MCP_HOST = public_access.public_mcp_hostname(
+    mode=PUBLIC_ACCESS_MODE,
+    ngrok_host=NGROK_HOST,
+    external_mcp_url=PUBLIC_MCP_URL,
+)
 
 # MCP 접근 토큰입니다. 외부 connector 요청을 인증할 때 사용되며, 값 자체를 로그/출력에 노출하면 안 됩니다.
 MCP_ACCESS_TOKEN = os.getenv("MCP_ACCESS_TOKEN")

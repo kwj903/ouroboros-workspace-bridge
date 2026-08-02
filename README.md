@@ -24,7 +24,7 @@ Author: KwakWooJae
 
 ## Quick Start
 
-Prerequisites: Python 3.12+, `uv`, ngrok CLI, and a ChatGPT environment that can create a custom MCP app/connector.
+Prerequisites: Python 3.12+, `uv`, and a ChatGPT environment that can create a custom MCP app/connector. Use the ngrok CLI for the default public access mode, or provide an externally managed HTTPS domain/tunnel.
 
 macOS/Linux:
 
@@ -48,7 +48,13 @@ uv run woojae start
 uv run woojae mcp-url
 ```
 
-During setup, choose the `WORKSPACE_ROOT` ChatGPT may access and the default help language. Existing shell environment values such as `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and `WOOJAE_HELP_LANG` are respected.
+During setup, choose the public access mode, the `WORKSPACE_ROOT` ChatGPT may access, and the default help language. Existing shell environment values such as `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and `WOOJAE_HELP_LANG` are respected.
+
+Public access modes:
+
+- `ngrok` (default): the supervisor starts and manages ngrok exactly as before.
+- `external`: configure a fixed endpoint such as `https://terminalbridge.woojae.dev/mcp`; the supervisor starts only review and MCP, while you manage Cloudflare Tunnel or another reverse proxy separately.
+- Keep the review UI local-only and run a shared external-domain connector on only one computer at a time.
 
 Optional browser onboarding:
 
@@ -56,12 +62,13 @@ Optional browser onboarding:
 uv run woojae setup-ui
 ```
 
-`setup-ui` opens a temporary localhost setup wizard for first-time users. It helps with ngrok, workspace concepts, ChatGPT app connection, and the first success test. It does not replace `uv run woojae setup` and does not start, stop, or restart the normal review/MCP session.
+`setup-ui` opens a temporary localhost setup wizard for first-time users. It shows mode-aware ngrok or external-domain guidance, workspace concepts, ChatGPT app connection, and the first success test. It does not replace `uv run woojae setup` and does not start, stop, or restart the normal review/MCP session.
 
-`uv run woojae mcp-url` prints a redacted URL preview for checking configuration without exposing the token. Use `uv run woojae copy-url` when `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and a platform clipboard helper are configured and you are ready to paste the real token-protected MCP URL into ChatGPT.
+`uv run woojae mcp-url` prints a redacted URL preview for checking configuration without exposing the token. Use `uv run woojae copy-url` when a fixed public endpoint, `MCP_ACCESS_TOKEN`, and a platform clipboard helper are configured and you are ready to paste the real token-protected MCP URL into ChatGPT.
 
 Next steps:
 
+- [Choose ngrok or your own public domain](docs/en/public-access.md)
 - [Connect as a ChatGPT custom app](docs/en/chatgpt-app-setup.md)
 - [Use the pending review UI](docs/en/pending-review-ui.md)
 
@@ -132,13 +139,13 @@ ChatGPT
 - Approve only small, expected bundles.
 - Reject bundles that mix unrelated edits, tests, commits, or surprising files.
 - Keep the review UI localhost-only.
-- Treat the ngrok URL as externally reachable and token-protected.
+- Treat every public MCP endpoint, whether ngrok or your own domain, as externally reachable and token-protected.
 
 ## Platform support
 
 - macOS: supported through the shared Python supervisor workflow.
 - Linux: supported through the shared Python supervisor workflow; desktop clipboard/notification conveniences may vary by distribution.
-- Windows 10/11: supported through PowerShell and the shared Python supervisor workflow; ngrok, firewall, browser, and clipboard behavior may need local adjustment.
+- Windows 10/11: supported through PowerShell and the shared Python supervisor workflow; ngrok or external-tunnel setup, firewall, browser, and clipboard behavior may need local adjustment.
 
 CI runs the unit and smoke suites on GitHub-hosted Ubuntu, macOS, and Windows runners. Platform-specific desktop integrations still require local verification on the target machine.
 
@@ -149,6 +156,7 @@ The official command form on every platform is `uv run woojae ...`. `scripts/dev
 English docs:
 
 - [Quickstart](docs/en/quickstart.md)
+- [Public access modes](docs/en/public-access.md)
 - [Connect as a ChatGPT custom app](docs/en/chatgpt-app-setup.md)
 - [Use the pending review UI](docs/en/pending-review-ui.md)
 - [Local session guide](docs/en/local-session.md)
@@ -159,6 +167,7 @@ English docs:
 Korean docs:
 
 - [빠른 시작](docs/ko/quickstart.md)
+- [공개 연결 모드](docs/ko/public-access.md)
 - [ChatGPT 앱으로 연결하기](docs/ko/chatgpt-app-setup.md)
 - [pending review UI 사용하기](docs/ko/pending-review-ui.md)
 - [로컬 세션 운영](docs/ko/local-session.md)

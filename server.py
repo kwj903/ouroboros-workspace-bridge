@@ -73,8 +73,8 @@ from terminal_bridge.config import (
     MCP_EXPOSE_DIRECT_MUTATION_TOOLS,
     MCP_HOST,
     MCP_PORT,
-    NGROK_HOST,
     OPERATION_DIR,
+    PUBLIC_MCP_HOST,
     RUNTIME_ROOT,
     TEXT_PAYLOAD_CHUNK_MAX_CHARS,
     WORKSPACE_ROOT,
@@ -274,9 +274,11 @@ allowed_origins = [
     "http://127.0.0.1:*",
     "http://localhost:*",
 ]
-if NGROK_HOST:
-    allowed_hosts.extend([NGROK_HOST, f"{NGROK_HOST}:*"])
-    allowed_origins.extend([f"https://{NGROK_HOST}", f"https://{NGROK_HOST}:*"])
+if PUBLIC_MCP_HOST:
+    allowed_hosts.extend([PUBLIC_MCP_HOST, f"{PUBLIC_MCP_HOST}:*"])
+    allowed_origins.extend(
+        [f"https://{PUBLIC_MCP_HOST}", f"https://{PUBLIC_MCP_HOST}:*"]
+    )
 
 transport_security = TransportSecuritySettings(
     enable_dns_rebinding_protection=True,

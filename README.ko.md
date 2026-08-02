@@ -24,7 +24,7 @@ Ouroboros by KwakWooJae의 일부입니다.
 
 ## 빠른 시작
 
-준비물: Python 3.12+, `uv`, ngrok CLI, custom MCP app/connector를 만들 수 있는 ChatGPT 환경.
+준비물: Python 3.12+, `uv`, custom MCP app/connector를 만들 수 있는 ChatGPT 환경. 기본 공개 연결 방식에는 ngrok CLI를 사용하고, 직접 관리하는 HTTPS 도메인/tunnel이 있다면 external 모드를 사용할 수 있습니다.
 
 macOS/Linux:
 
@@ -48,7 +48,13 @@ uv run woojae start
 uv run woojae mcp-url
 ```
 
-setup 중에는 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 기본 도움말 언어를 선택합니다. 기존 shell 환경값인 `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, `WOOJAE_HELP_LANG`가 있으면 이를 존중합니다.
+setup 중에는 공개 연결 방식, ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`, 기본 도움말 언어를 선택합니다. 기존 shell 환경값인 `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, `WOOJAE_HELP_LANG`가 있으면 이를 존중합니다.
+
+공개 연결 방식:
+
+- `ngrok`(기본값): 기존과 동일하게 supervisor가 ngrok을 시작하고 관리합니다.
+- `external`: `https://terminalbridge.woojae.dev/mcp` 같은 고정 endpoint를 설정하고, supervisor는 review와 MCP만 시작합니다. Cloudflare Tunnel 또는 reverse proxy는 사용자가 별도로 관리합니다.
+- review UI는 localhost 전용으로 유지하고, 공유 external 도메인의 connector는 한 번에 한 컴퓨터에서만 실행하세요.
 
 선택형 브라우저 온보딩:
 
@@ -56,12 +62,13 @@ setup 중에는 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 기본 도�
 uv run woojae setup-ui
 ```
 
-`setup-ui`는 처음 쓰는 사용자를 위한 임시 localhost 설정 마법사입니다. ngrok 준비, workspace 개념, ChatGPT 앱 연결, 첫 성공 테스트를 한 화면에서 안내합니다. `uv run woojae setup`을 대체하지 않으며, 일반 review/MCP 세션을 시작하거나 중지하거나 재시작하지 않습니다.
+`setup-ui`는 처음 쓰는 사용자를 위한 임시 localhost 설정 마법사입니다. 선택한 모드에 맞는 ngrok 또는 external 도메인 안내, workspace 개념, ChatGPT 앱 연결, 첫 성공 테스트를 한 화면에서 보여줍니다. `uv run woojae setup`을 대체하지 않으며, 일반 review/MCP 세션을 시작하거나 중지하거나 재시작하지 않습니다.
 
-`uv run woojae mcp-url`은 token을 노출하지 않고 redacted URL preview만 보여줍니다. `NGROK_HOST`, `MCP_ACCESS_TOKEN`, 플랫폼 clipboard helper가 준비되어 있고 실제 연결용 URL을 ChatGPT에 붙여넣을 준비가 되었을 때 `uv run woojae copy-url`을 사용하세요.
+`uv run woojae mcp-url`은 token을 노출하지 않고 redacted URL preview만 보여줍니다. 고정 공개 endpoint, `MCP_ACCESS_TOKEN`, 플랫폼 clipboard helper가 준비되어 있고 실제 연결용 URL을 ChatGPT에 붙여넣을 준비가 되었을 때 `uv run woojae copy-url`을 사용하세요.
 
 다음 단계:
 
+- [ngrok 또는 사용자 도메인 선택하기](docs/ko/public-access.md)
 - [ChatGPT 앱으로 연결하기](docs/ko/chatgpt-app-setup.md)
 - [pending review UI 사용하기](docs/ko/pending-review-ui.md)
 
@@ -132,13 +139,13 @@ ChatGPT
 - 작고 예상 가능한 bundle만 승인하세요.
 - 관련 없는 수정, 테스트, 커밋, 예상 밖의 파일이 섞인 bundle은 거절하세요.
 - review UI는 localhost 전용으로 유지하세요.
-- ngrok URL은 외부에서 접근 가능한 token-protected URL로 취급하세요.
+- ngrok이든 사용자 도메인이든 모든 공개 MCP endpoint를 외부에서 접근 가능한 token-protected URL로 취급하세요.
 
 ## 플랫폼 지원
 
 - macOS: 공용 Python supervisor 워크플로우를 지원합니다.
 - Linux: 공용 Python supervisor 워크플로우를 지원합니다. 데스크톱 clipboard/notification 편의 기능은 배포판마다 다를 수 있습니다.
-- Windows 10/11: PowerShell과 공용 Python supervisor 워크플로우를 지원합니다. ngrok, 방화벽, browser, clipboard 동작은 로컬 환경에 따라 조정이 필요할 수 있습니다.
+- Windows 10/11: PowerShell과 공용 Python supervisor 워크플로우를 지원합니다. ngrok 또는 external tunnel, 방화벽, browser, clipboard 동작은 로컬 환경에 따라 조정이 필요할 수 있습니다.
 
 GitHub-hosted Ubuntu, macOS, Windows runner에서 unit test와 smoke test를 실행합니다. 플랫폼별 데스크톱 연동은 실제 대상 장비에서 추가 확인이 필요합니다.
 
@@ -149,6 +156,7 @@ GitHub-hosted Ubuntu, macOS, Windows runner에서 unit test와 smoke test를 실
 한국어 문서:
 
 - [빠른 시작](docs/ko/quickstart.md)
+- [공개 연결 모드](docs/ko/public-access.md)
 - [ChatGPT 앱으로 연결하기](docs/ko/chatgpt-app-setup.md)
 - [pending review UI 사용하기](docs/ko/pending-review-ui.md)
 - [로컬 세션 운영](docs/ko/local-session.md)
@@ -159,6 +167,7 @@ GitHub-hosted Ubuntu, macOS, Windows runner에서 unit test와 smoke test를 실
 영어 문서:
 
 - [Quickstart](docs/en/quickstart.md)
+- [Public access modes](docs/en/public-access.md)
 - [Connect as a ChatGPT custom app](docs/en/chatgpt-app-setup.md)
 - [Use the pending review UI](docs/en/pending-review-ui.md)
 - [Local session guide](docs/en/local-session.md)

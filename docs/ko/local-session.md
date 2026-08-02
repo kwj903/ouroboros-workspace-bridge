@@ -18,7 +18,7 @@ cd ouroboros-workspace-bridge
 uv run woojae setup
 ```
 
-설정 과정에서 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 기본 도움말 언어를 선택합니다. shell에 이미 설정된 `WORKSPACE_ROOT`, `MCP_ACCESS_TOKEN`, `NGROK_HOST`, `WOOJAE_HELP_LANG`은 runtime `session.env`보다 우선합니다.
+설정 과정에서 공개 연결 방식, ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`, 기본 도움말 언어를 선택합니다. shell에 이미 설정된 `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `MCP_ACCESS_TOKEN`, `NGROK_HOST`, `WOOJAE_HELP_LANG`은 runtime `session.env`보다 우선합니다. 자세한 내용은 [공개 연결 모드](public-access.md)를 확인하세요.
 
 프로젝트 명령어 도움말은 `uv run woojae help`로 확인할 수 있습니다. 한국어 도움말을 기본으로 보려면 setup 중 `Help language`를 `ko`로 저장하거나 `uv run woojae help --lang ko`를 사용하세요.
 
@@ -68,7 +68,7 @@ private runtime env 파일은 repository 밖에 저장됩니다.
 
 토큰 값은 문서, 로그, 테스트 fixture, screenshot, ChatGPT 메시지에 넣지 마세요.
 
-`NGROK_HOST`는 선택 사항입니다. 없으면 `uv run woojae start`가 temporary URL mode로 ngrok을 실행합니다. `uv run woojae copy-url`은 `NGROK_HOST`와 `MCP_ACCESS_TOKEN`이 모두 있을 때만 동작합니다.
+`ngrok` 모드에서 `NGROK_HOST`는 선택 사항이며 없으면 temporary URL mode를 사용합니다. `external` 모드에서는 `PUBLIC_MCP_URL`이 필수입니다. `uv run woojae copy-url`은 고정 공개 endpoint와 `MCP_ACCESS_TOKEN`이 모두 있을 때 동작합니다.
 
 ## Runtime 데이터 관리
 
@@ -111,7 +111,7 @@ uv run woojae update
 - `uv run woojae update`는 로컬에 커밋되지 않은 변경사항이 있으면 중단됩니다.
 - 현재 branch를 `--ff-only`로 pull합니다.
 - `uv sync`를 실행합니다.
-- review, MCP, ngrok을 새 코드로 재시작합니다.
+- review와 MCP를 새 코드로 재시작하고, `PUBLIC_ACCESS_MODE=ngrok`일 때만 ngrok도 재시작합니다.
 - 마지막 로컬 세션 상태를 출력합니다.
 - MCP tool 변경이 포함된 업데이트 후에는 ChatGPT app connector를 refresh/reconnect하세요.
 
@@ -140,6 +140,8 @@ uv run woojae logs review
 uv run woojae logs mcp
 uv run woojae logs ngrok
 ```
+
+`restart ngrok`과 `logs ngrok`은 ngrok 모드용입니다. external 모드에서는 ngrok 시작·재시작이 차단되며, 모드 전환 뒤 남아 있는 기존 managed ngrok을 정리할 때만 stop을 사용할 수 있습니다. external tunnel은 별도로 관리하세요.
 
 호환 wrapper도 같은 명령을 전달합니다. 새 문서와 자동화에서는 `uv run woojae ...`를 우선 사용하세요.
 
@@ -189,8 +191,16 @@ uv run woojae copy-url
 
 MCP URL 형식:
 
+ngrok 모드:
+
 ```text
 https://<NGROK_HOST>/mcp?access_token=<TOKEN>
+```
+
+external 모드 예시:
+
+```text
+https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
 ```
 
 실제 token 값은 문서, screenshot, chat, GitHub issue에 붙여넣거나 공유하지 마세요.

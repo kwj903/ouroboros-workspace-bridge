@@ -8,10 +8,17 @@ The official command form is `uv run woojae ...`. `scripts/dev_session.sh` and `
 
 - macOS: supported through the shared Python supervisor workflow.
 - Linux: supported through the shared Python supervisor workflow. Clipboard and notification behavior may vary by distribution.
-- Windows 10/11: supported through PowerShell and the shared Python supervisor workflow. ngrok, firewall, browser, and clipboard behavior may need local adjustment.
+- Windows 10/11: supported through PowerShell and the shared Python supervisor workflow. Public tunnel, firewall, browser, and clipboard behavior may need local adjustment.
 - Python 3.12+
 - `uv`
-- ngrok account and ngrok CLI
+- Either an ngrok account and ngrok CLI, or an externally managed HTTPS domain/tunnel
+
+Choose a public access mode during `uv run woojae setup`:
+
+- `ngrok` is the default and keeps the original managed tunnel workflow.
+- `external` uses a fixed endpoint such as `https://terminalbridge.woojae.dev/mcp` and leaves tunnel lifecycle outside the bridge.
+
+See [Public access modes](public-access.md) for domain handoff and security rules.
 
 ## Prepare ngrok
 
@@ -105,7 +112,7 @@ During setup:
 - keep any existing shell environment values when they are already set
 - save private runtime settings outside the repository
 
-Existing shell values such as `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and `WOOJAE_HELP_LANG` take precedence over runtime `session.env`.
+Existing shell values such as `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and `WOOJAE_HELP_LANG` take precedence over runtime `session.env`.
 
 Project-specific command help is available with `uv run woojae help`. Use `uv run woojae help --lang ko` for Korean help, or save `Help language` as `ko` during setup.
 
@@ -153,8 +160,16 @@ uv run woojae copy-url
 
 `copy-url` copies the real MCP URL to the clipboard. It uses `pbcopy` on macOS, `xclip` on Linux, and `clip` on Windows when available. `uv run woojae mcp-url` prints only a redacted URL preview. It does not print the token. The URL format is:
 
+ngrok mode:
+
 ```text
 https://<NGROK_HOST>/mcp?access_token=<TOKEN>
+```
+
+external mode example:
+
+```text
+https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
 ```
 
 Do not paste or share the real token in docs, screenshots, chats, or GitHub issues.

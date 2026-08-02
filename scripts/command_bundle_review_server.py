@@ -32,7 +32,7 @@ from terminal_bridge.review_notifications import (
     review_url as notification_review_url,
     send_notification,
 )
-from terminal_bridge import bundle_watcher, runtime_storage, session_supervisor
+from terminal_bridge import bundle_watcher, public_access, runtime_storage, session_supervisor
 from terminal_bridge.approval_modes import (
     VALID_APPROVAL_MODES,
     delete_scoped_approval_mode,
@@ -888,24 +888,24 @@ def storage_cleanup_state() -> dict[str, object]:
 
 
 def normalize_ngrok_host(value: str) -> str:
-    host = value.strip()
-    host = host.removeprefix("https://").removeprefix("http://")
-    host = host.split("/", 1)[0]
-    host = host.split("?", 1)[0]
-    host = host.split("#", 1)[0]
-    return host
+    return public_access.normalize_ngrok_host(value)
+
+
+def current_public_access_mode() -> str:
+    return public_access.normalize_public_access_mode(
+        os.environ.get("PUBLIC_ACCESS_MODE", "ngrok")
+    )
 
 
 def public_mcp_endpoint_hint() -> str | None:
-    raw_host = os.environ.get("NGROK_HOST") or os.environ.get("NGROK_BASE_URL")
-    if not raw_host:
-        return None
-
-    host = normalize_ngrok_host(raw_host)
-    if host == "":
-        return None
-
-    return f"https://{host}/mcp"
+    mode = current_public_access_mode()
+    raw_host = os.environ.get("NGROK_HOST") or os.environ.get("NGROK_BASE_URL", "")
+    raw_public_url = os.environ.get("PUBLIC_MCP_URL", "")
+    return public_access.public_mcp_base_url(
+        mode=mode,
+        ngrok_host=raw_host,
+        external_mcp_url=raw_public_url,
+    )
 
 
 def tcp_port_reachable(host: str, port: int, timeout_seconds: float = 0.5) -> bool:
@@ -974,6 +974,9 @@ def supervisor_service_state(service: str) -> dict[str, object]:
 
     return {
         "name": service,
+        "enabled": not (
+            service == "ngrok" and current_public_access_mode() == "external"
+        ),
         "pid": pid,
         "alive": alive,
         "state": state,
@@ -1001,6 +1004,7 @@ def server_state() -> dict[str, object]:
     mcp_port = env_int("MCP_PORT", 8787)
     review_host = os.environ.get("BUNDLE_REVIEW_HOST", HOST)
     review_port = env_int("BUNDLE_REVIEW_PORT", PORT)
+    public_access_mode = current_public_access_mode()
     public_endpoint = public_mcp_endpoint_hint()
     watcher_config = embedded_watcher_config()
 
@@ -1026,6 +1030,8 @@ def server_state() -> dict[str, object]:
         },
         "environment": {
             "mcp_access_token": env_status("MCP_ACCESS_TOKEN"),
+            "public_access_mode": public_access_mode,
+            "public_mcp_url": env_status("PUBLIC_MCP_URL"),
             "ngrok_host": env_any_status(["NGROK_HOST", "NGROK_BASE_URL"]),
             "mcp_host": mcp_host,
             "mcp_port": mcp_port,
@@ -1036,10 +1042,17 @@ def server_state() -> dict[str, object]:
             "reachable": tcp_port_reachable(mcp_host, mcp_port),
             "url": f"http://{mcp_host}:{mcp_port}/mcp",
         },
+        "public_access": {
+            "mode": public_access_mode,
+            "configured": "set" if public_endpoint else "missing",
+            "public_mcp_endpoint_hint": public_endpoint,
+            "externally_managed": public_access_mode == "external",
+        },
         "ngrok": {
+            "enabled": public_access_mode == "ngrok",
             "installed": command_exists("ngrok"),
             "configured": env_any_status(["NGROK_HOST", "NGROK_BASE_URL"]),
-            "public_mcp_endpoint_hint": public_endpoint,
+            "public_mcp_endpoint_hint": public_endpoint if public_access_mode == "ngrok" else None,
         },
         "embedded_watcher": {
             "enabled": watcher_config["enabled"],
@@ -2156,7 +2169,17 @@ def process_path_cell_html(value: object) -> str:
     return f'<code title="{escape(path)}">{escape(label)}</code>'
 
 
-def supervisor_control_html(service: str, state: str) -> str:
+def supervisor_control_html(service: str, state: str, *, enabled: bool = True) -> str:
+    if not enabled:
+        if service == "ngrok" and state == "yes":
+            return (
+                '<div class="service-controls">'
+                '<form class="inline" method="post" action="/servers/processes/stop/ngrok">'
+                '<button class="secondary" type="submit">Stop</button>'
+                '</form>'
+                '</div>'
+            )
+        return '<span class="meta">disabled by external mode</span>'
     if service not in SUPERVISOR_RESTARTABLE_SERVICES:
         return '<span class="meta">terminal only</span>'
 
@@ -2199,7 +2222,7 @@ def supervisor_processes_html(state: dict[str, object]) -> str:
             f"<td><code>{escape(endpoint)}</code></td>"
             f"<td>{process_path_cell_html(item.get('log_file'))}</td>"
             f"<td>{process_path_cell_html(item.get('pid_file'))}</td>"
-            f"<td>{supervisor_control_html(name, alive_state)}</td>"
+            f"<td>{supervisor_control_html(name, alive_state, enabled=bool(item.get('enabled', True)))}</td>"
             "</tr>"
         )
 
@@ -3291,18 +3314,35 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
     tools = state.get("tools") if isinstance(state.get("tools"), dict) else {}
     environment = state.get("environment") if isinstance(state.get("environment"), dict) else {}
     mcp_server = state.get("mcp_server") if isinstance(state.get("mcp_server"), dict) else {}
+    public_access_state = state.get("public_access") if isinstance(state.get("public_access"), dict) else {}
     ngrok = state.get("ngrok") if isinstance(state.get("ngrok"), dict) else {}
     embedded_watcher = state.get("embedded_watcher") if isinstance(state.get("embedded_watcher"), dict) else {}
     supervisor = state.get("supervisor") if isinstance(state.get("supervisor"), dict) else supervisor_state()
 
-    public_hint = ngrok.get("public_mcp_endpoint_hint")
+    public_access_mode = str(public_access_state.get("mode", "ngrok"))
+    public_hint = public_access_state.get("public_mcp_endpoint_hint") or ngrok.get("public_mcp_endpoint_hint")
     public_hint_value = f"<code>{escape(public_hint)}</code>" if public_hint else "없음"
     pending_url = str(review_dashboard.get("pending_url", "/pending"))
     history_url = str(review_dashboard.get("history_url", "/bundles?status=all"))
     review_url = str(review_server.get("url", ""))
     mcp_url = str(mcp_server.get("url", ""))
     mcp_reachable = bool(mcp_server.get("reachable"))
-    token_format = "https://<NGROK_HOST>/mcp?access_token=<TOKEN>"
+    token_format = (
+        f"{public_hint}?access_token=<TOKEN>"
+        if public_access_mode == "external" and public_hint
+        else "https://<NGROK_HOST>/mcp?access_token=<TOKEN>"
+    )
+    public_access_label = "External domain" if public_access_mode == "external" else "ngrok"
+    public_access_description = (
+        "외부 tunnel/reverse proxy는 별도로 관리하며 공유 connector는 한 컴퓨터에서만 실행합니다."
+        if public_access_mode == "external"
+        else "공개 MCP endpoint 구성을 위한 host/base URL 상태"
+    )
+    process_control_description = (
+        "external 모드에서는 MCP 제어만 제공하며 ngrok은 비활성화됩니다. 전체 session과 review 제어는 터미널에서 수행합니다."
+        if public_access_mode == "external"
+        else "이 화면에서는 MCP/ngrok start/stop/restart만 제공합니다. 전체 session start/stop과 review 제어는 터미널에서 수행합니다."
+    )
     read_only_notice = (
         '<div class="notice">'
         "<strong>보기 전용</strong><br>"
@@ -3329,9 +3369,9 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
               <p class="meta">Local MCP endpoint TCP reachability</p>
             </section>
             <section class="metric">
-              <div class="meta">ngrok</div>
-              <h3>{set_missing_chip(ngrok.get("configured", "missing"))}</h3>
-              <p class="meta">공개 MCP endpoint 구성을 위한 host/base URL 상태</p>
+              <div class="meta">{escape(public_access_label)}</div>
+              <h3>{set_missing_chip(public_access_state.get("configured", "missing"))}</h3>
+              <p class="meta">{escape(public_access_description)}</p>
             </section>
             <section class="metric">
               <div class="meta">Desktop notifications</div>
@@ -3355,7 +3395,7 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
         <div class="stack">
           <div class="section-title">
             <h2>{escape(SERVER_TAB_LABELS[tab])}</h2>
-            <p class="meta">Review UI, MCP server, ngrok 노출 정보를 보기 전용으로 확인합니다.</p>
+            <p class="meta">Review UI, MCP server, 공개 연결 정보를 보기 전용으로 확인합니다.</p>
           </div>
           {read_only_notice}
           <section class="card">
@@ -3374,11 +3414,12 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
             </div>
           </section>
           <section class="card">
-            <h3>ngrok</h3>
+            <h3>Public access</h3>
             <div class="kv">
-              {kv_row_html("Installed", bool_chip(ngrok.get("installed", False), "installed", "missing"), value_is_html=True)}
-              {kv_row_html("Configured", set_missing_chip(ngrok.get("configured", "missing")), value_is_html=True)}
+              {kv_row_html("Mode", public_access_mode, code_value=True)}
+              {kv_row_html("Configured", set_missing_chip(public_access_state.get("configured", "missing")), value_is_html=True)}
               {kv_row_html("Public endpoint hint", public_hint_value, value_is_html=True)}
+              {kv_row_html("Tunnel lifecycle", "external / operator-managed" if public_access_mode == "external" else "ngrok / supervisor-managed", code_value=True)}
             </div>
           </section>
         </div>
@@ -3393,7 +3434,7 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
           </div>
           <div class="notice">
             <strong>제한된 제어</strong><br>
-            이 화면에서는 MCP/ngrok start/stop/restart만 제공합니다. 전체 session start/stop과 review 제어는 터미널에서 수행합니다.
+            {escape(process_control_description)}
           </div>
           {action_notice_html}
           <section class="card">
@@ -3467,6 +3508,8 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
           <section class="card">
             <div class="kv">
               {kv_row_html("MCP_ACCESS_TOKEN", set_missing_chip(environment.get("mcp_access_token", "missing")), value_is_html=True)}
+              {kv_row_html("PUBLIC_ACCESS_MODE", str(environment.get("public_access_mode", "ngrok")), code_value=True)}
+              {kv_row_html("PUBLIC_MCP_URL", set_missing_chip(environment.get("public_mcp_url", "missing")), value_is_html=True)}
               {kv_row_html("NGROK_HOST/NGROK_BASE_URL", set_missing_chip(environment.get("ngrok_host", "missing")), value_is_html=True)}
               {kv_row_html("MCP_HOST", str(environment.get("mcp_host", "")), code_value=True)}
               {kv_row_html("MCP_PORT", str(environment.get("mcp_port", "")), code_value=True)}
@@ -4164,6 +4207,20 @@ class Handler(BaseHTTPRequestHandler):
                     "지원하지 않는 서비스",
                     "<p>Start, stop, and restart are supported only for mcp and ngrok.</p>",
                     status=400,
+                    active_nav="servers",
+                    server_tab="processes",
+                )
+                return
+
+            if (
+                service == "ngrok"
+                and action in {"start", "restart"}
+                and current_public_access_mode() == "external"
+            ):
+                self.send_html(
+                    "external 모드에서 ngrok 비활성화",
+                    "<p>PUBLIC_ACCESS_MODE=external에서는 ngrok을 시작하거나 재시작하지 않습니다. 실행 중인 이전 ngrok은 중지할 수 있습니다.</p>",
+                    status=409,
                     active_nav="servers",
                     server_tab="processes",
                 )

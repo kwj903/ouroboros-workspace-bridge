@@ -1,6 +1,6 @@
 # Update Info
 
-Version: 0.4.2
+Version: 0.4.3
 
 For live local version and git state, run:
 
@@ -12,7 +12,7 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
-- 08901fc Fix clean git status reporting
+- 9c1d862 Fix clean git status reporting
 - 0241d15 Fix cross-platform runtime support
 - ab4bda1 Release version 0.4.1
 - a5f8040 Document Pydantic schema usability improvements

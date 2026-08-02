@@ -14,7 +14,7 @@ uv run woojae setup
 uv run woojae start
 ```
 
-During setup, choose the `WORKSPACE_ROOT` ChatGPT may access and the default help language. Existing shell environment values such as `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and `WOOJAE_HELP_LANG` are respected.
+During setup, choose the public access mode, the `WORKSPACE_ROOT` ChatGPT may access, and the default help language. Existing shell environment values such as `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and `WOOJAE_HELP_LANG` are respected. See [Public access modes](public-access.md).
 
 Use this command to copy the real MCP URL for connection:
 
@@ -47,8 +47,16 @@ uv run woojae mcp-url
 
 The MCP server URL is the most important field. It usually has this shape:
 
+ngrok mode:
+
 ```text
 https://<NGROK_HOST>/mcp?access_token=<TOKEN>
+```
+
+external mode example:
+
+```text
+https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
 ```
 
 Treat the real token-bearing URL as a secret.
@@ -58,7 +66,7 @@ Treat the real token-bearing URL as a secret.
 - Do not share it with other people.
 - Be careful with terminal output and clipboard history after connecting.
 
-If `NGROK_HOST` is not configured, a temporary ngrok URL may be used. Temporary URLs can change after restart, which means the MCP server URL in the ChatGPT app may need to be updated.
+If `NGROK_HOST` is not configured in ngrok mode, a temporary URL may be used and can change after restart. External mode uses the fixed `PUBLIC_MCP_URL`, so the ChatGPT connector URL can remain unchanged while the active tunnel is moved between computers.
 
 ## Authentication
 
@@ -150,7 +158,7 @@ uv run woojae status
 Then confirm:
 
 - `uv run woojae start` is still running.
-- the ngrok URL has not changed.
+- the ngrok URL has not changed, or the external tunnel currently targets the intended computer.
 - the ChatGPT app's MCP server URL has been updated to the current URL.
 - `http://127.0.0.1:8790/pending` opens locally.
 

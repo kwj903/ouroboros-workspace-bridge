@@ -100,6 +100,139 @@ class SessionSupervisorLanguageTests(unittest.TestCase):
             self.assertIn("status", calls)
 
 
+class SessionSupervisorPublicAccessTests(unittest.TestCase):
+    def test_write_and_load_settings_preserves_external_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp) / "runtime"
+            workspace_root = Path(tmp) / "workspace"
+            workspace_root.mkdir()
+            settings = supervisor.SessionSettings(
+                runtime_root=runtime_root,
+                mcp_access_token="test-token",
+                ngrok_host="previous.ngrok.app",
+                workspace_root=workspace_root,
+                public_access_mode="external",
+                public_mcp_url="https://terminalbridge.woojae.dev/mcp",
+            )
+
+            supervisor.write_session_files(settings)
+
+            with mock.patch.dict(
+                os.environ,
+                {"MCP_TERMINAL_BRIDGE_RUNTIME_ROOT": str(runtime_root)},
+                clear=True,
+            ):
+                loaded = supervisor.load_settings()
+
+            self.assertEqual(loaded.public_access_mode, "external")
+            self.assertEqual(
+                loaded.public_mcp_base_url,
+                "https://terminalbridge.woojae.dev/mcp",
+            )
+            self.assertEqual(loaded.ngrok_host, "previous.ngrok.app")
+            env_text = supervisor.session_env_path(runtime_root).read_text(encoding="utf-8")
+            self.assertIn("export PUBLIC_ACCESS_MODE=external", env_text)
+            self.assertIn(
+                "export PUBLIC_MCP_URL=https://terminalbridge.woojae.dev/mcp",
+                env_text,
+            )
+
+    def test_lenient_settings_load_allows_repairing_invalid_external_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp) / "runtime"
+            runtime_root.mkdir()
+            supervisor.session_json_path(runtime_root).write_text(
+                '{"public_access_mode":"external","public_mcp_url":"http://invalid.example/mcp"}\n',
+                encoding="utf-8",
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"MCP_TERMINAL_BRIDGE_RUNTIME_ROOT": str(runtime_root)},
+                clear=True,
+            ):
+                with self.assertRaises(supervisor.public_access.PublicAccessConfigError):
+                    supervisor.load_settings()
+                loaded = supervisor.load_settings(strict_public_access=False)
+
+        self.assertEqual(loaded.public_access_mode, "external")
+        self.assertEqual(loaded.public_mcp_url, "http://invalid.example/mcp")
+
+    def test_active_services_follow_public_access_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = dict(
+                runtime_root=Path(tmp) / "runtime",
+                mcp_access_token="test-token",
+                ngrok_host="example.ngrok.app",
+                workspace_root=Path(tmp) / "workspace",
+            )
+            ngrok_settings = supervisor.SessionSettings(**base)
+            external_settings = supervisor.SessionSettings(
+                **base,
+                public_access_mode="external",
+                public_mcp_url="https://terminalbridge.woojae.dev/mcp",
+            )
+
+        self.assertEqual(supervisor.active_services(ngrok_settings), supervisor.SERVICES)
+        self.assertEqual(supervisor.active_services(external_settings), ("review", "mcp"))
+
+    def test_start_session_external_mode_skips_ngrok(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = supervisor.SessionSettings(
+                runtime_root=Path(tmp) / "runtime",
+                mcp_access_token="test-token",
+                ngrok_host="example.ngrok.app",
+                workspace_root=Path(tmp) / "workspace",
+                public_access_mode="external",
+                public_mcp_url="https://terminalbridge.woojae.dev/mcp",
+            )
+            calls: list[str] = []
+            with (
+                mock.patch.object(supervisor, "load_settings", return_value=settings),
+                mock.patch.object(
+                    supervisor,
+                    "start_service",
+                    side_effect=lambda service: calls.append(service) or 0,
+                ),
+                mock.patch.object(supervisor, "status_session", return_value=0),
+                mock.patch.dict(os.environ, {"WOOJAE_SKIP_OPEN_REVIEW": "1"}),
+            ):
+                result = supervisor.start_session()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, ["review", "mcp"])
+
+    def test_stop_session_always_stops_ngrok_for_mode_transitions(self) -> None:
+        calls: list[str] = []
+        with mock.patch.object(
+            supervisor,
+            "stop_service",
+            side_effect=lambda service: calls.append(service) or 0,
+        ):
+            result = supervisor.stop_session()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, ["ngrok", "mcp", "review"])
+
+    def test_starting_ngrok_is_rejected_in_external_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = supervisor.SessionSettings(
+                runtime_root=Path(tmp) / "runtime",
+                mcp_access_token="test-token",
+                ngrok_host="example.ngrok.app",
+                workspace_root=Path(tmp) / "workspace",
+                public_access_mode="external",
+                public_mcp_url="https://terminalbridge.woojae.dev/mcp",
+            )
+            with (
+                mock.patch.object(supervisor, "load_settings", return_value=settings),
+                mock.patch.object(supervisor.subprocess, "Popen") as popen,
+            ):
+                result = supervisor.start_service("ngrok")
+
+        self.assertEqual(result, 1)
+        popen.assert_not_called()
+
+
 class SessionSupervisorProcessTests(unittest.TestCase):
     def test_is_pid_alive_routes_windows_to_non_destructive_probe(self) -> None:
         with (

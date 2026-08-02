@@ -20,7 +20,7 @@ Run the initial setup when configuring a checkout for the first time:
 uv run woojae setup
 ```
 
-This writes private runtime settings outside the repository. During setup, choose the allowed `WORKSPACE_ROOT` and the default help language. Existing shell environment values such as `WORKSPACE_ROOT`, `MCP_ACCESS_TOKEN`, `NGROK_HOST`, and `WOOJAE_HELP_LANG` take precedence over values loaded from runtime `session.env`.
+This writes private runtime settings outside the repository. During setup, choose the public access mode, the allowed `WORKSPACE_ROOT`, and the default help language. Existing shell environment values such as `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `MCP_ACCESS_TOKEN`, `NGROK_HOST`, and `WOOJAE_HELP_LANG` take precedence over values loaded from runtime `session.env`. See [Public access modes](public-access.md).
 
 Use `uv run woojae help` for project-specific command help. Use `uv run woojae help --lang ko` for Korean help, or save `Help language` as `ko` during setup.
 
@@ -36,7 +36,7 @@ Start the full local session:
 uv run woojae start
 ```
 
-This starts the review server, MCP server, and ngrok in the background. Process metadata is stored outside the repository under:
+This always starts the review and MCP servers in the background. In the default `ngrok` mode it also starts ngrok; in `external` mode the public tunnel is managed separately. Process metadata is stored outside the repository under:
 
 ```text
 ~/.mcp_terminal_bridge/my-terminal-tool/processes
@@ -82,7 +82,7 @@ Expected permission:
 
 Token values must not be committed, printed in docs, or pasted into logs.
 
-`NGROK_HOST` is optional. If it is not configured, `uv run woojae start` uses ngrok temporary URL mode. `uv run woojae copy-url` requires both `NGROK_HOST` and `MCP_ACCESS_TOKEN`.
+In `ngrok` mode, `NGROK_HOST` is optional and an unset host uses temporary URL mode. In `external` mode, `PUBLIC_MCP_URL` is required. `uv run woojae copy-url` requires a fixed public endpoint and `MCP_ACCESS_TOKEN`.
 
 ## Runtime data management
 
@@ -130,7 +130,7 @@ uv run woojae update
 - `uv run woojae update` stops if local uncommitted changes are present.
 - It pulls the current branch with `--ff-only`.
 - It runs `uv sync`.
-- It restarts review, MCP, and ngrok with the new code.
+- It restarts review and MCP with the new code, plus ngrok only when `PUBLIC_ACCESS_MODE=ngrok`.
 - It prints the final local session status.
 - After MCP tool changes, refresh or reconnect the ChatGPT app connector.
 
@@ -159,6 +159,8 @@ uv run woojae logs review
 uv run woojae logs mcp
 uv run woojae logs ngrok
 ```
+
+`restart ngrok` and `logs ngrok` apply to ngrok mode. In external mode, ngrok start/restart is disabled; stop remains available only to clean up a stale managed ngrok process after switching modes. Manage the external tunnel separately.
 
 The wrapper scripts pass through to the same CLI and remain available for compatibility. Prefer `uv run woojae ...` in new docs and automation.
 
@@ -202,8 +204,16 @@ uv run woojae copy-url
 
 The ChatGPT app MCP URL format is:
 
+ngrok mode:
+
 ```text
 https://<NGROK_HOST>/mcp?access_token=<TOKEN>
+```
+
+external mode example:
+
+```text
+https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
 ```
 
 Do not write the real token value in README, docs, logs, fixtures, screenshots, chats, or GitHub issues.

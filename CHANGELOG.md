@@ -4,6 +4,29 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 ## Unreleased
 
+## 0.4.3 - 2026-08-02
+
+### Added
+
+- Provider-neutral `external` public access mode for user-managed HTTPS domains and tunnels while keeping ngrok as the default.
+- Validated `PUBLIC_MCP_URL` configuration with safe hostname extraction, token encoding, and redacted URL output.
+- Mode-aware setup UI, review UI status, supervisor controls, diagnostics, and bilingual public access documentation.
+- Regression coverage for external settings persistence, ngrok-to-external lifecycle transitions, UI rendering, URL validation, and shared-domain operation.
+
+### Changed
+
+- The supervisor starts review and MCP only in external mode and continues to manage review, MCP, and ngrok in the default ngrok mode.
+- Full session stop and restart always clean up managed ngrok state before starting the services active for the selected mode.
+- MCP transport host/origin allowlists now use the hostname selected from either `NGROK_HOST` or `PUBLIC_MCP_URL`.
+- Remote smoke checks now derive their endpoint through the shared public-access helper instead of assuming ngrok.
+- Release version updated to `0.4.3` without changing the public MCP tool schema.
+
+### Security
+
+- External URLs must use HTTPS and cannot contain credentials, query strings, fragments, or access tokens.
+- The review UI remains localhost-only, and documentation requires only one shared-domain connector to be active at a time.
+- External tunnel credentials remain outside repository and runtime session configuration.
+
 ## 0.4.2 - 2026-07-23
 
 ### Added

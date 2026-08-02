@@ -8,10 +8,17 @@ Ouroboros Workspace Bridge를 처음 실행해서 ChatGPT에 연결하는 가장
 
 - macOS: 공용 Python supervisor 흐름 지원
 - Linux: 공용 Python supervisor 흐름 지원. 배포판별 clipboard/notification 동작은 다를 수 있음
-- Windows 10/11: PowerShell과 공용 Python supervisor 흐름 지원. ngrok, 방화벽, browser, clipboard 동작은 로컬 환경에 맞게 확인 필요
+- Windows 10/11: PowerShell과 공용 Python supervisor 흐름 지원. 공개 tunnel, 방화벽, browser, clipboard 동작은 로컬 환경에 맞게 확인 필요
 - Python 3.12+
 - `uv`
-- ngrok 계정과 ngrok CLI
+- ngrok 계정과 ngrok CLI 또는 직접 관리하는 HTTPS 도메인/tunnel
+
+`uv run woojae setup`에서 공개 연결 방식을 선택합니다.
+
+- `ngrok`은 기본값이며 기존 managed tunnel 흐름을 유지합니다.
+- `external`은 `https://terminalbridge.woojae.dev/mcp` 같은 고정 endpoint를 사용하고 tunnel lifecycle은 Bridge 밖에서 관리합니다.
+
+도메인 인계와 보안 규칙은 [공개 연결 모드](public-access.md)를 확인하세요.
 
 ## ngrok 준비
 
@@ -96,7 +103,7 @@ uv run woojae setup
 uv run woojae setup
 ```
 
-setup 중에는 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 도움말 언어(`Help language`)를 고릅니다. `Help language`를 `ko`로 저장하면 `uv run woojae help`가 기본적으로 한국어 설명을 표시합니다. 이미 shell에 `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, `WOOJAE_HELP_LANG`이 설정되어 있으면 그 값이 runtime `session.env`보다 우선합니다.
+setup 중에는 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 도움말 언어(`Help language`)를 고릅니다. `Help language`를 `ko`로 저장하면 `uv run woojae help`가 기본적으로 한국어 설명을 표시합니다. 이미 shell에 `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, `WOOJAE_HELP_LANG`이 설정되어 있으면 그 값이 runtime `session.env`보다 우선합니다.
 
 초보자용 브라우저 온보딩을 함께 보고 싶으면 선택적으로 실행할 수 있습니다.
 
@@ -144,8 +151,16 @@ uv run woojae copy-url
 
 URL 형식은 다음과 같습니다.
 
+ngrok 모드:
+
 ```text
 https://<NGROK_HOST>/mcp?access_token=<TOKEN>
+```
+
+external 모드 예시:
+
+```text
+https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
 ```
 
 실제 token을 문서, screenshot, chat, GitHub issue에 붙여넣거나 공유하지 마세요.
