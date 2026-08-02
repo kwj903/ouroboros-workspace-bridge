@@ -216,6 +216,23 @@ def int_session_value(env_name: str, json_key: str, default: int) -> int:
         return default
 
 
+def default_workspace_root() -> Path:
+    for key in ("HOME", "USERPROFILE"):
+        value = os.environ.get(key)
+        if value:
+            return Path(value).expanduser() / "workspace"
+
+    home_drive = os.environ.get("HOMEDRIVE", "")
+    home_path = os.environ.get("HOMEPATH", "")
+    if home_drive and home_path:
+        return Path(f"{home_drive}{home_path}") / "workspace"
+
+    try:
+        return Path.home() / "workspace"
+    except RuntimeError:
+        return PROJECT_ROOT
+
+
 def load_settings(*, strict_public_access: bool = True) -> SessionSettings:
     root = runtime_root()
     ngrok_host = normalize_ngrok_host(session_value("NGROK_HOST") or session_value("NGROK_BASE_URL", "ngrok_base_url"))
@@ -238,7 +255,10 @@ def load_settings(*, strict_public_access: bool = True) -> SessionSettings:
         runtime_root=root,
         mcp_access_token=session_value("MCP_ACCESS_TOKEN", "mcp_access_token"),
         ngrok_host=ngrok_host,
-        workspace_root=Path(session_value("WORKSPACE_ROOT", "workspace_root") or Path.home() / "workspace").expanduser().resolve(strict=False),
+        workspace_root=Path(
+            session_value("WORKSPACE_ROOT", "workspace_root")
+            or default_workspace_root()
+        ).expanduser().resolve(strict=False),
         public_access_mode=public_access_mode,
         public_mcp_url=public_mcp_url,
         mcp_host=session_value("MCP_HOST", "mcp_host") or "127.0.0.1",

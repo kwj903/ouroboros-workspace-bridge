@@ -150,12 +150,23 @@ class SessionSupervisorPublicAccessTests(unittest.TestCase):
                 {"MCP_TERMINAL_BRIDGE_RUNTIME_ROOT": str(runtime_root)},
                 clear=True,
             ):
+                expected_workspace_root = supervisor.default_workspace_root().resolve(
+                    strict=False
+                )
                 with self.assertRaises(supervisor.public_access.PublicAccessConfigError):
                     supervisor.load_settings()
                 loaded = supervisor.load_settings(strict_public_access=False)
 
         self.assertEqual(loaded.public_access_mode, "external")
         self.assertEqual(loaded.public_mcp_url, "http://invalid.example/mcp")
+        self.assertEqual(loaded.workspace_root, expected_workspace_root)
+
+    def test_default_workspace_root_uses_project_when_home_is_unavailable(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(supervisor.Path, "home", side_effect=RuntimeError),
+        ):
+            self.assertEqual(supervisor.default_workspace_root(), supervisor.PROJECT_ROOT)
 
     def test_active_services_follow_public_access_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
