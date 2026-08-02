@@ -25,7 +25,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 - Windows physical-host tests no longer inherit an existing external public-access session when validating the legacy ngrok URL helper.
 - Task-workspace command routing tests now invoke the active Python interpreter instead of assuming a `python3` launcher exists on Windows.
-- Review and bundle-runner subprocess capture tolerates UTF-8 Korean output on non-UTF-8 Windows system locales without reader-thread decode failures.
+- Review, bundle-runner, and Git worktree subprocess capture tolerates mixed UTF-8/local-codepage output on non-UTF-8 Windows system locales without reader-thread decode failures.
 
 ### Security
 

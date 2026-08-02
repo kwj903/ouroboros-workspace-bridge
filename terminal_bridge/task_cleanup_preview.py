@@ -41,6 +41,7 @@ def _git_status_short(path: Path) -> str:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        errors="replace",
         shell=False,
         check=True,
     )

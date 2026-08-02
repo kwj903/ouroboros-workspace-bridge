@@ -30,6 +30,7 @@ class MergeQueueTests(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            errors="replace",
             check=True,
         )
 
