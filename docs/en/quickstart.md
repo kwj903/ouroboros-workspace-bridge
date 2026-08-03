@@ -2,7 +2,7 @@
 
 This is the short first-run path for Ouroboros Workspace Bridge.
 
-The official command form is `uv run woojae ...`. `scripts/dev_session.sh` and `scripts/dev_session.ps1` are compatibility wrappers for older workflows.
+Use `uv run terminalbridge ...` for normal setup and complete connection-stack operation. `uv run woojae ...` and the legacy `scripts/dev_session.*` wrappers remain available for low-level Bridge diagnostics and compatibility.
 
 ## Prerequisites
 
@@ -11,12 +11,15 @@ The official command form is `uv run woojae ...`. `scripts/dev_session.sh` and `
 - Windows 10/11: supported through PowerShell and the shared Python supervisor workflow. Public tunnel, firewall, browser, and clipboard behavior may need local adjustment.
 - Python 3.12+
 - `uv`
-- Either an ngrok account and ngrok CLI, or an externally managed HTTPS domain/tunnel
+- The user's own ngrok account and CLI, the user's own Cloudflare account and named tunnel, or another externally managed HTTPS connector
 
-Choose a public access mode during `uv run woojae setup`:
+Choose a public connection mode during `uv run terminalbridge setup`:
 
-- `ngrok` is the default and keeps the original managed tunnel workflow.
-- `external` uses a fixed endpoint such as `https://terminalbridge.woojae.dev/mcp` and leaves tunnel lifecycle outside the bridge.
+- `ngrok` is the default and keeps the original managed connector workflow.
+- `cloudflare` starts the user's configured `cloudflared` tunnel together with review and MCP.
+- `external` uses a fixed endpoint such as `https://terminalbridge.example.com/mcp` while another proxy or tunnel remains manually managed.
+
+No maintainer domain, token, tunnel ID, or credential is used as a working default.
 
 See [Public access modes](public-access.md) for domain handoff and security rules.
 
@@ -26,7 +29,7 @@ See [Public access modes](public-access.md) for domain handoff and security rule
 2. Open the ngrok dashboard authtoken page and copy your authtoken.
 3. Install the ngrok CLI for your OS and verify it with `ngrok help`.
 4. Save the authtoken locally with `ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>`.
-5. A reserved ngrok domain is optional. Temporary URL mode works for a first run, but `woojae copy-url` requires a configured `NGROK_HOST`.
+5. A reserved ngrok domain is optional. Temporary URL mode works for a first run, but `terminalbridge copy-url` requires a configured `NGROK_HOST` for a stable URL.
 
 Common install commands:
 
@@ -75,14 +78,14 @@ From a repository checkout:
 git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
 cd ouroboros-workspace-bridge
 uv sync
-uv run woojae setup
+uv run terminalbridge setup
 ```
 
 You can optionally use the Bash helper:
 
 ```bash
 ./install.sh
-uv run woojae setup
+uv run terminalbridge setup
 ```
 
 `install.sh` is Bash-only. On Windows PowerShell, use `install.ps1`.
@@ -95,14 +98,14 @@ From a repository checkout:
 git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
 cd ouroboros-workspace-bridge
 uv sync
-uv run woojae setup
+uv run terminalbridge setup
 ```
 
 You can optionally use the PowerShell helper:
 
 ```powershell
 .\install.ps1
-uv run woojae setup
+uv run terminalbridge setup
 ```
 
 During setup:
@@ -119,15 +122,15 @@ Project-specific command help is available with `uv run woojae help`. Use `uv ru
 You can optionally open the browser onboarding helper:
 
 ```bash
-uv run woojae setup-ui
+uv run terminalbridge setup-ui
 ```
 
-`setup-ui` does not replace `uv run woojae setup`. It is a one-time localhost guide for ngrok preparation, workspace concepts, ChatGPT app connection, and the first success test. Unlike the existing `/pending` operations UI, it does not provide start/stop/restart controls.
+`setup-ui` does not replace `uv run terminalbridge setup`. It is a one-time localhost guide for ngrok, Cloudflare, or generic external preparation, workspace concepts, ChatGPT app connection, and the first success test. Unlike the existing `/pending` operations UI, it does not provide start/stop/restart controls.
 
 ## Start
 
 ```bash
-uv run woojae start
+uv run terminalbridge start
 ```
 
 The review UI opens at:
@@ -143,22 +146,22 @@ If you are unsure what to enter in each field of the new app screen, see [Connec
 1. Start the local session.
 
 ```bash
-uv run woojae start
+uv run terminalbridge start
 ```
 
 2. Open the local review UI.
 
 ```bash
-uv run woojae open
+uv run terminalbridge open
 ```
 
 3. Copy the MCP URL.
 
 ```bash
-uv run woojae copy-url
+uv run terminalbridge copy-url
 ```
 
-`copy-url` copies the real MCP URL to the clipboard. It uses `pbcopy` on macOS, `xclip` on Linux, and `clip` on Windows when available. `uv run woojae mcp-url` prints only a redacted URL preview. It does not print the token. The URL format is:
+`copy-url` copies the real MCP URL to the clipboard. It uses `pbcopy` on macOS, `xclip` on Linux, and `clip` on Windows when available. `uv run terminalbridge mcp-url` prints only a redacted URL preview. It does not print the token. The URL format is:
 
 ngrok mode:
 
@@ -166,10 +169,10 @@ ngrok mode:
 https://<NGROK_HOST>/mcp?access_token=<TOKEN>
 ```
 
-external mode example:
+Cloudflare or generic external mode example:
 
 ```text
-https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
+https://terminalbridge.example.com/mcp?access_token=<TOKEN>
 ```
 
 Do not paste or share the real token in docs, screenshots, chats, or GitHub issues.
@@ -183,7 +186,7 @@ The UI may change, so use the settings, connector, or apps area that allows crea
 - Icon: optional.
 - Name: `Ouroboros Workspace Bridge` or `Woojae Workspace Bridge`
 - Description: `Local MCP bridge for approved workspace file and command operations.`
-- MCP server URL: paste the URL copied by `uv run woojae copy-url`.
+- MCP server URL: paste the URL copied by `uv run terminalbridge copy-url`.
 - Authentication: choose `No auth` or equivalent if the access token is already included in the MCP URL query string.
 - Advanced OAuth settings: leave empty unless the product UI requires otherwise.
 - Security warning checkbox: custom MCP servers can access data and tools. Enable it only for your own trusted local bridge after understanding the risk.
@@ -208,7 +211,7 @@ When the expected pending bundle appears, read it in the local review UI and app
 To print only a redacted URL preview:
 
 ```bash
-uv run woojae mcp-url
+uv run terminalbridge mcp-url
 ```
 
 ## Approval Mode
@@ -219,9 +222,9 @@ uv run woojae mcp-url
 
 ## Temporary ngrok URL Caveat
 
-If `NGROK_HOST` is not configured, `woojae copy-url` may not work. A temporary ngrok URL can change after restart, so the ChatGPT app MCP URL may need to be updated.
+If `NGROK_HOST` is not configured, `terminalbridge copy-url` may not produce a stable ngrok URL. A temporary ngrok URL can change after restart, so the ChatGPT app MCP URL may need to be updated.
 
-For stable usage, create a reserved ngrok domain and set `NGROK_HOST` during `uv run woojae setup`.
+For stable usage, create a reserved ngrok domain and set `NGROK_HOST` during `uv run terminalbridge setup`.
 
 ## Update Existing Installation
 
@@ -274,5 +277,5 @@ See [LICENSE](../../LICENSE).
 ## Stop
 
 ```bash
-uv run woojae stop
+uv run terminalbridge stop
 ```

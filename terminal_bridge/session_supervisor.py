@@ -32,6 +32,10 @@ class SessionSettings:
     workspace_root: Path
     public_access_mode: str = "ngrok"
     public_mcp_url: str = ""
+    external_tunnel_provider: str = "manual"
+    cloudflared_config_path: str = ""
+    cloudflared_tunnel_name: str = ""
+    cloudflared_bin: str = "cloudflared"
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8787
     review_host: str = "127.0.0.1"
@@ -77,6 +81,10 @@ class SessionSettings:
         env["NGROK_HOST"] = self.ngrok_host
         env["PUBLIC_ACCESS_MODE"] = self.public_access_mode
         env["PUBLIC_MCP_URL"] = self.public_mcp_url
+        env["EXTERNAL_TUNNEL_PROVIDER"] = self.external_tunnel_provider
+        env["CLOUDFLARED_CONFIG_PATH"] = self.cloudflared_config_path
+        env["CLOUDFLARED_TUNNEL_NAME"] = self.cloudflared_tunnel_name
+        env["CLOUDFLARED_BIN"] = self.cloudflared_bin
         env["WOOJAE_HELP_LANG"] = self.help_language
         if self.mcp_access_token:
             env["MCP_ACCESS_TOKEN"] = self.mcp_access_token
@@ -251,6 +259,17 @@ def load_settings(*, strict_public_access: bool = True) -> SessionSettings:
         if public_access_mode == "external" and strict_public_access
         else raw_public_mcp_url
     )
+    raw_external_tunnel_provider = session_value(
+        "EXTERNAL_TUNNEL_PROVIDER", "external_tunnel_provider"
+    )
+    try:
+        external_tunnel_provider = public_access.normalize_external_tunnel_provider(
+            raw_external_tunnel_provider
+        )
+    except public_access.PublicAccessConfigError:
+        if strict_public_access:
+            raise
+        external_tunnel_provider = "manual"
     return SessionSettings(
         runtime_root=root,
         mcp_access_token=session_value("MCP_ACCESS_TOKEN", "mcp_access_token"),
@@ -261,6 +280,15 @@ def load_settings(*, strict_public_access: bool = True) -> SessionSettings:
         ).expanduser().resolve(strict=False),
         public_access_mode=public_access_mode,
         public_mcp_url=public_mcp_url,
+        external_tunnel_provider=external_tunnel_provider,
+        cloudflared_config_path=session_value(
+            "CLOUDFLARED_CONFIG_PATH", "cloudflared_config_path"
+        ).strip(),
+        cloudflared_tunnel_name=session_value(
+            "CLOUDFLARED_TUNNEL_NAME", "cloudflared_tunnel_name"
+        ).strip(),
+        cloudflared_bin=session_value("CLOUDFLARED_BIN", "cloudflared_bin").strip()
+        or "cloudflared",
         mcp_host=session_value("MCP_HOST", "mcp_host") or "127.0.0.1",
         mcp_port=int_session_value("MCP_PORT", "mcp_port", 8787),
         review_host=session_value("BUNDLE_REVIEW_HOST", "review_host") or "127.0.0.1",
@@ -290,6 +318,10 @@ def write_session_files(settings: SessionSettings) -> None:
                 "ngrok_host": settings.ngrok_host,
                 "public_access_mode": settings.public_access_mode,
                 "public_mcp_url": settings.public_mcp_url,
+                "external_tunnel_provider": settings.external_tunnel_provider,
+                "cloudflared_config_path": settings.cloudflared_config_path,
+                "cloudflared_tunnel_name": settings.cloudflared_tunnel_name,
+                "cloudflared_bin": settings.cloudflared_bin,
                 "workspace_root": str(settings.workspace_root),
                 "mcp_host": settings.mcp_host,
                 "mcp_port": settings.mcp_port,
@@ -311,6 +343,10 @@ def write_session_files(settings: SessionSettings) -> None:
         f"export NGROK_HOST={shlex.quote(settings.ngrok_host)}",
         f"export PUBLIC_ACCESS_MODE={shlex.quote(settings.public_access_mode)}",
         f"export PUBLIC_MCP_URL={shlex.quote(settings.public_mcp_url)}",
+        f"export EXTERNAL_TUNNEL_PROVIDER={shlex.quote(settings.external_tunnel_provider)}",
+        f"export CLOUDFLARED_CONFIG_PATH={shlex.quote(settings.cloudflared_config_path)}",
+        f"export CLOUDFLARED_TUNNEL_NAME={shlex.quote(settings.cloudflared_tunnel_name)}",
+        f"export CLOUDFLARED_BIN={shlex.quote(settings.cloudflared_bin)}",
         f"export WORKSPACE_ROOT={shlex.quote(str(settings.workspace_root))}",
         f"export MCP_HOST={shlex.quote(settings.mcp_host)}",
         f"export MCP_PORT={shlex.quote(str(settings.mcp_port))}",
@@ -341,18 +377,37 @@ def configure() -> int:
     print(f"Session JSON: {session_json_path(current.runtime_root)}")
     print()
 
+    current_operator_mode = (
+        "ngrok"
+        if current.public_access_mode == "ngrok"
+        else "cloudflare"
+        if current.external_tunnel_provider == "cloudflare"
+        else "external"
+    )
     try:
-        public_access_mode = public_access.normalize_public_access_mode(
+        operator_mode = public_access.normalize_operator_mode(
             prompt_text(
-                "Public access mode [ngrok/external]",
-                current.public_access_mode,
+                "Public connection mode [ngrok/cloudflare/external]",
+                current_operator_mode,
             )
         )
     except public_access.PublicAccessConfigError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
 
-    if public_access_mode == "ngrok":
+    public_access_mode = "ngrok" if operator_mode == "ngrok" else "external"
+    external_tunnel_provider = (
+        "cloudflare"
+        if operator_mode == "cloudflare"
+        else "manual"
+        if operator_mode == "external"
+        else current.external_tunnel_provider
+    )
+    cloudflared_config_path = current.cloudflared_config_path
+    cloudflared_tunnel_name = current.cloudflared_tunnel_name
+    cloudflared_bin = current.cloudflared_bin
+
+    if operator_mode == "ngrok":
         if shutil.which("ngrok"):
             print("[ok] ngrok CLI: found")
             print("If this machine is not connected to your ngrok account yet, run:")
@@ -365,7 +420,6 @@ def configure() -> int:
         )
         public_mcp_url = current.public_mcp_url
     else:
-        print("[info] external mode: tunnel or reverse-proxy lifecycle is managed separately.")
         print("[info] expose only the local MCP service at 127.0.0.1:8787; keep the review UI local-only.")
         ngrok_host = current.ngrok_host
         try:
@@ -375,6 +429,27 @@ def configure() -> int:
         except public_access.PublicAccessConfigError as exc:
             print(f"[error] {exc}", file=sys.stderr)
             return 1
+
+        if operator_mode == "cloudflare":
+            if shutil.which(current.cloudflared_bin or "cloudflared"):
+                print("[ok] cloudflared CLI: found")
+            else:
+                print("[warn] cloudflared is not installed or not on PATH.")
+                print("Install it from Cloudflare, then create a tunnel in your own account.")
+            cloudflared_config_path = prompt_text(
+                "CLOUDFLARED_CONFIG_PATH",
+                current.cloudflared_config_path,
+            )
+            cloudflared_tunnel_name = prompt_text(
+                "CLOUDFLARED_TUNNEL_NAME",
+                current.cloudflared_tunnel_name,
+            )
+            cloudflared_bin = prompt_text(
+                "CLOUDFLARED_BIN",
+                current.cloudflared_bin or "cloudflared",
+            )
+        else:
+            print("[info] external mode: tunnel or reverse-proxy lifecycle is managed separately.")
     print()
 
     if current.mcp_access_token:
@@ -403,6 +478,10 @@ def configure() -> int:
         workspace_root=workspace_root,
         public_access_mode=public_access_mode,
         public_mcp_url=public_mcp_url,
+        external_tunnel_provider=external_tunnel_provider,
+        cloudflared_config_path=cloudflared_config_path,
+        cloudflared_tunnel_name=cloudflared_tunnel_name,
+        cloudflared_bin=cloudflared_bin,
         mcp_host=prompt_text("MCP_HOST", current.mcp_host),
         mcp_port=int(prompt_text("MCP_PORT", str(current.mcp_port))),
         review_host=prompt_text("BUNDLE_REVIEW_HOST", current.review_host),
@@ -415,10 +494,17 @@ def configure() -> int:
     print(f"MCP_ACCESS_TOKEN: {token_status}")
     print(f"Public access mode: {settings.public_access_mode}")
     if settings.public_access_mode == "ngrok":
+        print("Operator mode: ngrok")
         print(f"NGROK_HOST: {settings.ngrok_host or 'not set; ngrok temporary URL mode will be used'}")
     else:
+        print(f"Operator mode: {settings.external_tunnel_provider}")
         print(f"PUBLIC_MCP_URL: {settings.public_mcp_url}")
-        print("External tunnel: managed outside Workspace Terminal Bridge")
+        if settings.external_tunnel_provider == "cloudflare":
+            print(f"CLOUDFLARED_CONFIG_PATH: {settings.cloudflared_config_path or 'not set'}")
+            print(f"CLOUDFLARED_TUNNEL_NAME: {settings.cloudflared_tunnel_name or 'not set'}")
+            print("Cloudflare tunnel: managed by `uv run terminalbridge start|stop`")
+        else:
+            print("External tunnel: managed outside Workspace Terminal Bridge")
     print(f"WORKSPACE_ROOT: {settings.workspace_root}")
     print(f"Help language: {settings.help_language}")
     return 0
@@ -684,7 +770,10 @@ def status_session() -> int:
     elif settings.public_access_mode == "ngrok":
         print("Public MCP endpoint: dynamic ngrok URL")
     if settings.public_access_mode == "external":
-        print("External tunnel: managed outside Workspace Terminal Bridge")
+        if settings.external_tunnel_provider == "cloudflare":
+            print("External tunnel: Cloudflare, managed by `terminalbridge`")
+        else:
+            print("External tunnel: managed outside Workspace Terminal Bridge")
     print()
     for service in SERVICES:
         print_service_status(settings, service)
@@ -809,7 +898,10 @@ def doctor() -> int:
             print_ngrok_setup_hint()
     else:
         print(f"[ok] PUBLIC_MCP_URL: {settings.public_mcp_url}")
-        print("[info] external tunnel lifecycle is managed separately")
+        if settings.external_tunnel_provider == "cloudflare":
+            print("[info] Cloudflare tunnel lifecycle is managed by `terminalbridge`")
+        else:
+            print("[info] external tunnel lifecycle is managed separately")
     if sys.platform == "darwin":
         print("[ok] terminal-notifier: found" if shutil.which("terminal-notifier") else "[warn] terminal-notifier: missing; clickable macOS notifications require it.")
         print("[ok] osascript fallback: found" if shutil.which("osascript") else "[warn] osascript fallback: missing")
@@ -1062,13 +1154,17 @@ def print_checklist() -> int:
 5. Tail logs when debugging:
    woojae logs [review|mcp|ngrok]
 
-   In external mode, manage the public tunnel separately and keep only one
-   shared-domain connector active at a time.
+   For a complete managed connection stack, use:
+   uv run terminalbridge start
+   uv run terminalbridge status
+
+   Generic external mode remains manually managed. Keep only one shared-domain
+   connector active at a time.
 
 6. Stop when finished:
-   woojae stop
+   uv run terminalbridge stop
 
-Official commands on every platform use `uv run woojae ...`.
+Low-level Bridge commands remain available as `uv run woojae ...`.
 Optional compatibility wrappers:
   - macOS/Linux: scripts/dev_session.sh start
   - Windows PowerShell: scripts/dev_session.ps1 start

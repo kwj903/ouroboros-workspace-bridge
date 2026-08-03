@@ -4,6 +4,31 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 ## Unreleased
 
+## 0.5.0 - 2026-08-03
+
+### Added
+
+- New `terminalbridge` operator CLI for complete `setup`, `start`, `stop`, `restart`, `status`, `logs`, `doctor`, onboarding, and connector-URL workflows.
+- Managed Cloudflare Tunnel profile using each installation's own public URL, cloudflared config path, tunnel name, executable, account, domain, and credentials.
+- Explicit `--mode ngrok|cloudflare|external` switching while preserving provider-specific configuration for later reuse.
+- Safe cloudflared PID, log, and process-metadata tracking under the private runtime process directory.
+- Bilingual documentation for user-owned ngrok, managed Cloudflare, generic external connectors, and single-active-computer handoff.
+
+### Changed
+
+- Normal complete-stack operation now uses `uv run terminalbridge ...`; the existing `uv run woojae ...` CLI remains the low-level Bridge supervisor and compatibility interface.
+- Review UI full-session stop and restart actions now include the selected managed public connector through the operator layer.
+- Setup and setup UI distinguish ngrok, managed Cloudflare, and generic external profiles.
+- User-facing examples use neutral placeholder domains instead of a maintainer-specific endpoint.
+- Release version updated to `0.5.0` without changing the public MCP tool schema.
+
+### Security
+
+- No maintainer token, public domain, tunnel ID, Cloudflare credential, account-specific config, or local absolute path is used as a working product default.
+- Managed cloudflared shutdown verifies the executable, config path, and tunnel name before termination; stale or reused PID tracking is removed without killing an unrelated process.
+- Remote smoke checks use an in-process MCP client with a Bearer header, reject token-bearing URL arguments, and no longer place the connector token in subprocess argv.
+- The review UI remains loopback-only and shared-domain connectors must remain active on only one computer at a time.
+
 ## 0.4.3 - 2026-08-02
 
 ### Added

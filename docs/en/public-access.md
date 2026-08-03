@@ -1,45 +1,80 @@
 # Public access modes
 
-Ouroboros Workspace Bridge supports two ways to expose the local MCP endpoint to ChatGPT.
+Ouroboros Workspace Bridge has one shared MCP and review core with three operator modes. The recommended command is:
+
+```bash
+uv run terminalbridge setup
+uv run terminalbridge start
+uv run terminalbridge status
+```
+
+`uv run woojae ...` remains available as the low-level Bridge supervisor for debugging and compatibility.
+
+## Ownership rule
+
+Every installation uses infrastructure owned by that user:
+
+- the user's own `MCP_ACCESS_TOKEN`;
+- the user's own ngrok account and domain; or
+- the user's own Cloudflare account, domain, tunnel, config, and credentials.
+
+The repository does not ship a maintainer token, tunnel credential, tunnel ID, public domain, or user-specific absolute path as a working default. Example domains in the documentation are placeholders.
 
 ## ngrok mode
 
-`ngrok` is the default and preserves the original workflow.
+ngrok remains the backward-compatible default.
 
 ```text
 PUBLIC_ACCESS_MODE=ngrok
 NGROK_HOST=<optional-fixed-ngrok-domain>
 ```
 
-`uv run woojae start` manages:
+Start explicitly or use the saved mode:
+
+```bash
+uv run terminalbridge start --mode ngrok
+# or
+uv run terminalbridge start
+```
+
+The operator starts and manages:
 
 - the localhost review UI;
 - the local MCP server;
-- ngrok.
+- the user's ngrok connector.
 
-If `NGROK_HOST` is empty, ngrok may use a temporary URL. A fixed host is required for `uv run woojae copy-url`.
+If `NGROK_HOST` is empty, ngrok may use a temporary URL. A fixed ngrok host is required for a stable ChatGPT connector URL.
 
-## External mode
+## Managed Cloudflare mode
 
-Use `external` when you already manage an HTTPS domain through Cloudflare Tunnel, a VPS reverse proxy, or another connector.
+Choose Cloudflare when the user has created a named Cloudflare Tunnel and a public hostname in their own Cloudflare account.
+
+The compatibility settings remain external at the Bridge layer, while the operator provider selects managed Cloudflare lifecycle:
 
 ```text
 PUBLIC_ACCESS_MODE=external
-PUBLIC_MCP_URL=https://terminalbridge.woojae.dev/mcp
+EXTERNAL_TUNNEL_PROVIDER=cloudflare
+PUBLIC_MCP_URL=https://terminalbridge.example.com/mcp
+CLOUDFLARED_CONFIG_PATH=~/.cloudflared/terminalbridge.yml
+CLOUDFLARED_TUNNEL_NAME=my-terminalbridge
+CLOUDFLARED_BIN=cloudflared
 ```
 
-`PUBLIC_MCP_URL` must:
+Start explicitly or use the saved mode:
 
-- use `https://`;
-- include the `/mcp` endpoint;
-- exclude query parameters, fragments, usernames, passwords, and access tokens.
+```bash
+uv run terminalbridge start --mode cloudflare
+# or
+uv run terminalbridge start
+```
 
-`uv run woojae start` manages only:
+The operator starts and manages:
 
 - the localhost review UI;
-- the local MCP server.
+- the local MCP server;
+- the user's configured `cloudflared` connector.
 
-The external tunnel or reverse proxy remains operator-managed. Route the public hostname only to:
+The Cloudflare config must route the user's public hostname only to:
 
 ```text
 http://127.0.0.1:8787
@@ -51,85 +86,145 @@ Never publish the review UI:
 http://127.0.0.1:8790/pending
 ```
 
-## Configure
+Cloudflare account login, tunnel creation, DNS routing, credential storage, and config ownership remain the user's responsibility. The project only starts and stops the configured connector.
 
-Run:
+## Generic external mode
 
-```bash
-uv run woojae setup
-```
-
-Choose `external`, then enter:
+Use generic external mode for a VPS reverse proxy, Tailscale Funnel, another tunnel provider, or a connector lifecycle intentionally managed outside this project.
 
 ```text
-https://terminalbridge.woojae.dev/mcp
+PUBLIC_ACCESS_MODE=external
+EXTERNAL_TUNNEL_PROVIDER=manual
+PUBLIC_MCP_URL=https://terminalbridge.example.com/mcp
 ```
 
-Verify without exposing the token:
-
 ```bash
-uv run woojae doctor
-uv run woojae status
-uv run woojae mcp-url
+uv run terminalbridge start --mode external
 ```
 
-Copy the real token-protected connector URL only to your local clipboard:
+The operator starts only the review and MCP services. The external proxy or connector remains manually managed.
+
+## URL validation
+
+`PUBLIC_MCP_URL` must:
+
+- use `https://`;
+- contain a hostname;
+- use the `/mcp` endpoint;
+- exclude query parameters, fragments, usernames, passwords, and access tokens.
+
+Keep the access token in `MCP_ACCESS_TOKEN`. The token is added only when copying the real connector URL.
+
+## Configure and operate
+
+Run the interactive setup:
 
 ```bash
-uv run woojae copy-url
+uv run terminalbridge setup
+```
+
+Then use the same commands for every mode:
+
+```bash
+uv run terminalbridge doctor
+uv run terminalbridge start
+uv run terminalbridge status
+uv run terminalbridge logs
+uv run terminalbridge restart
+uv run terminalbridge stop
+```
+
+Force a saved mode transition when needed:
+
+```bash
+uv run terminalbridge start --mode ngrok
+uv run terminalbridge start --mode cloudflare
+uv run terminalbridge start --mode external
+```
+
+The command preserves provider-specific details while switching. For example, changing temporarily to ngrok does not delete the saved Cloudflare config and tunnel name.
+
+Print a redacted URL or copy the real tokenized URL locally:
+
+```bash
+uv run terminalbridge mcp-url
+uv run terminalbridge copy-url
 ```
 
 Expected connector form:
 
 ```text
-https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
+https://terminalbridge.example.com/mcp?access_token=<TOKEN>
 ```
 
-The bridge also accepts `Authorization: Bearer <TOKEN>` requests, but the documented ChatGPT connector workflow continues to use the query-token URL.
+The MCP server also accepts `Authorization: Bearer <TOKEN>`, while the documented ChatGPT connector workflow continues to support the query-token URL.
 
-## Move the shared domain between computers
+## Move one shared domain between computers
 
-Use the same public domain on Mac, Linux, or Windows, but run its connector on only one computer at a time.
+A fixed domain may be used on Mac, Linux, or Windows, but its connector must be active on only one computer at a time. If the ChatGPT connector URL must remain unchanged, configure the same `MCP_ACCESS_TOKEN` privately on those computers; do not transmit it through command arguments, logs, chat, or Git.
 
 To move from Mac to Windows:
 
-1. Stop the Mac bridge:
+1. Stop the complete Mac stack:
 
    ```bash
-   uv run woojae stop
+   uv run terminalbridge stop
    ```
 
-2. Stop the Mac external tunnel connector.
-3. Start the Windows bridge:
+2. Confirm the Mac public connector is stopped.
+3. Start the Windows stack with the same user-owned tunnel configuration:
 
    ```powershell
-   uv run woojae start
-   uv run woojae status
+   uv run terminalbridge start
+   uv run terminalbridge status
    ```
 
-4. Start the same external tunnel connector on Windows.
-5. Keep the ChatGPT connector URL unchanged.
-6. Confirm that reads and proposals now target the Windows workspace.
+4. Keep the ChatGPT connector URL unchanged.
+5. Confirm that reads and proposals now target the Windows workspace.
 
-Running replicas on multiple computers can send related requests to different local workspaces. That is not a supported default workflow.
+Running replica connectors on multiple computers can distribute related requests across different local workspaces. That is not a supported default workflow.
+
+On Windows, an interactive terminal or an operating-system service/task may be needed when the connector must survive logout or an SSH session ending. The project does not automatically install a persistent scheduled task for every user.
+
+## Process safety
+
+Managed Cloudflare state is stored under the user's runtime process directory:
+
+```text
+cloudflared.pid
+cloudflared.log
+cloudflared.process.json
+```
+
+Before stopping a recorded PID, the operator verifies that the running process still matches the saved cloudflared command. If the PID has been reused by an unrelated process, it removes only stale tracking files and does not terminate that process.
+
+The operator also prevents its managed ngrok and Cloudflare connectors from running at the same time. It cannot stop an independently started connector on another computer, so the one-active-computer rule still matters.
 
 ## Security requirements
 
 - Keep `MCP_ACCESS_TOKEN` private and outside Git.
-- Do not place the token inside `PUBLIC_MCP_URL`.
-- Treat the public endpoint as internet-reachable.
+- Keep ngrok authtokens and Cloudflare credentials outside the repository.
+- Do not place a token inside `PUBLIC_MCP_URL`.
+- Treat every public endpoint as internet-reachable.
 - Keep DNS-rebinding host checks enabled.
 - Keep the review UI bound to loopback.
-- Approve proposals only on the computer currently serving the shared domain.
-- Do not store Cloudflare or tunnel credentials in this repository.
+- Approve proposals only on the computer currently serving the public domain.
+- Never copy one user's tunnel credentials into a distributable package.
 
 ## Diagnostics
 
 ```bash
-uv run woojae doctor
-uv run woojae status
-uv run woojae logs mcp
-uv run woojae mcp-url
+uv run terminalbridge doctor
+uv run terminalbridge status
+uv run terminalbridge logs mcp
+uv run terminalbridge logs cloudflared
+uv run terminalbridge mcp-url
 ```
 
-In external mode, `doctor` does not require ngrok and `status` reports ngrok as disabled. The bridge validates the configured URL but cannot start or repair the external tunnel itself.
+Use low-level commands only when diagnosing one Bridge component:
+
+```bash
+uv run woojae status
+uv run woojae restart mcp
+uv run woojae logs ngrok
+```

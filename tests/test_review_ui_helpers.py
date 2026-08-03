@@ -1373,25 +1373,23 @@ class ReviewServerHelperTests(unittest.TestCase):
                 os.environ["MCP_ACCESS_TOKEN"] = original
 
     def test_public_mcp_endpoint_hint_omits_token(self) -> None:
-        original_host = os.environ.get("NGROK_HOST")
-        original_base_url = os.environ.get("NGROK_BASE_URL")
-        try:
-            os.environ["NGROK_HOST"] = "example.ngrok-free.app?access_token=secret"
-            os.environ["NGROK_BASE_URL"] = "https://ignored.example/mcp?access_token=secret"
-
-            self.assertEqual(review.public_mcp_endpoint_hint(), "https://example.ngrok-free.app/mcp")
+        with patch.dict(
+            os.environ,
+            {
+                "PUBLIC_ACCESS_MODE": "ngrok",
+                "PUBLIC_MCP_URL": "",
+                "EXTERNAL_TUNNEL_PROVIDER": "manual",
+                "NGROK_HOST": "example.ngrok-free.app?access_token=secret",
+                "NGROK_BASE_URL": "https://ignored.example/mcp?access_token=secret",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                review.public_mcp_endpoint_hint(),
+                "https://example.ngrok-free.app/mcp",
+            )
             self.assertNotIn("access_token", review.public_mcp_endpoint_hint() or "")
             self.assertNotIn("secret", review.public_mcp_endpoint_hint() or "")
-        finally:
-            if original_host is None:
-                os.environ.pop("NGROK_HOST", None)
-            else:
-                os.environ["NGROK_HOST"] = original_host
-
-            if original_base_url is None:
-                os.environ.pop("NGROK_BASE_URL", None)
-            else:
-                os.environ["NGROK_BASE_URL"] = original_base_url
 
     def test_public_mcp_endpoint_hint_supports_external_mode(self) -> None:
         with patch.dict(
@@ -1442,26 +1440,25 @@ class ReviewServerHelperTests(unittest.TestCase):
                 os.environ["MCP_ACCESS_TOKEN"] = original_token
 
     def test_server_tab_content_omits_token_value(self) -> None:
-        original_token = os.environ.get("MCP_ACCESS_TOKEN")
-        original_host = os.environ.get("NGROK_HOST")
-        try:
-            os.environ["MCP_ACCESS_TOKEN"] = "secret-token-value"
-            os.environ["NGROK_HOST"] = "example.ngrok-free.app?access_token=secret-token-value"
+        with patch.dict(
+            os.environ,
+            {
+                "PUBLIC_ACCESS_MODE": "ngrok",
+                "PUBLIC_MCP_URL": "",
+                "EXTERNAL_TUNNEL_PROVIDER": "manual",
+                "MCP_ACCESS_TOKEN": "secret-token-value",
+                "NGROK_HOST": "example.ngrok-free.app?access_token=secret-token-value",
+            },
+            clear=False,
+        ):
             html = review.server_tab_content_html("connection", review.server_state())
 
-            self.assertIn("https://&lt;NGROK_HOST&gt;/mcp?access_token=&lt;TOKEN&gt;", html)
+            self.assertIn(
+                "https://&lt;NGROK_HOST&gt;/mcp?access_token=&lt;TOKEN&gt;",
+                html,
+            )
             self.assertNotIn("secret-token-value", html)
             self.assertNotIn("example.ngrok-free.app?access_token", html)
-        finally:
-            if original_token is None:
-                os.environ.pop("MCP_ACCESS_TOKEN", None)
-            else:
-                os.environ["MCP_ACCESS_TOKEN"] = original_token
-
-            if original_host is None:
-                os.environ.pop("NGROK_HOST", None)
-            else:
-                os.environ["NGROK_HOST"] = original_host
 
     def test_diagnostics_tab_shows_embedded_watcher_settings(self) -> None:
         html = review.server_tab_content_html("diagnostics", review.server_state())
@@ -1534,7 +1531,16 @@ class ReviewServerHelperTests(unittest.TestCase):
     def test_processes_tab_renders_supervisor_status(self) -> None:
         root = Path(self.tmp.name) / "runtime"
         review.RUNTIME_ROOT = root
-        html = review.server_tab_content_html("processes", review.server_state())
+        with patch.dict(
+            os.environ,
+            {
+                "PUBLIC_ACCESS_MODE": "ngrok",
+                "PUBLIC_MCP_URL": "",
+                "EXTERNAL_TUNNEL_PROVIDER": "manual",
+            },
+            clear=False,
+        ):
+            html = review.server_tab_content_html("processes", review.server_state())
 
         self.assertIn("Supervisor processes", html)
         self.assertIn("uv run woojae start", html)
@@ -1592,6 +1598,24 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("https://terminalbridge.woojae.dev/mcp?access_token=&lt;TOKEN&gt;", html)
         self.assertNotIn("secret-token-value", html)
 
+    def test_cloudflare_connection_tab_reports_terminalbridge_managed_lifecycle(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "PUBLIC_ACCESS_MODE": "external",
+                "EXTERNAL_TUNNEL_PROVIDER": "cloudflare",
+                "PUBLIC_MCP_URL": "https://terminalbridge.example.com/mcp",
+            },
+            clear=False,
+        ):
+            state = review.server_state()
+            html = review.server_tab_content_html("services", state)
+
+        self.assertEqual(state["public_access"]["provider"], "cloudflare")
+        self.assertFalse(state["public_access"]["externally_managed"])
+        self.assertIn("cloudflare / terminalbridge-managed", html)
+        self.assertNotIn("woojae.dev", html)
+
     def test_full_session_stop_and_restart_pages_render(self) -> None:
         stop_confirm_html = review.full_session_stop_confirm_html()
         stopping_html = review.full_session_stopping_html()
@@ -1600,11 +1624,11 @@ class ReviewServerHelperTests(unittest.TestCase):
 
         self.assertIn("/servers/session/stop", stop_confirm_html)
         self.assertIn("Stop full session", stop_confirm_html)
-        self.assertIn("uv run woojae start", stopping_html)
+        self.assertIn("uv run terminalbridge start", stopping_html)
         self.assertIn("Full session stop requested", stopping_html)
         self.assertIn("/servers/session/restart", restart_confirm_html)
         self.assertIn("Restart full session", restart_confirm_html)
-        self.assertIn("uv run woojae restart-session", restart_confirm_html)
+        self.assertIn("uv run terminalbridge restart", restart_confirm_html)
         self.assertIn("Full session restart requested", restarting_html)
 
     def test_review_pid_probe_uses_shared_supervisor_implementation(self) -> None:
@@ -1617,6 +1641,12 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertEqual(
             review.supervisor_cli_command("restart", "mcp"),
             [sys.executable, "-m", "terminal_bridge.cli", "restart", "mcp"],
+        )
+
+    def test_operator_cli_command_is_cross_platform_python_entrypoint(self) -> None:
+        self.assertEqual(
+            review.operator_cli_command("restart"),
+            [sys.executable, "-m", "terminal_bridge.operator_cli", "restart"],
         )
 
     def test_detached_subprocess_kwargs_are_platform_specific(self) -> None:
@@ -1633,7 +1663,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         source = inspect.getsource(review.schedule_full_session_stop)
 
         self.assertIn("subprocess.Popen", source)
-        self.assertIn("supervisor_cli_command", source)
+        self.assertIn("operator_cli_command", source)
         self.assertIn("detached_subprocess_kwargs", source)
         self.assertNotIn("subprocess.run", source)
 
@@ -1641,7 +1671,7 @@ class ReviewServerHelperTests(unittest.TestCase):
         source = inspect.getsource(review.schedule_full_session_restart)
 
         self.assertIn("subprocess.Popen", source)
-        self.assertIn("supervisor_cli_command", source)
+        self.assertIn("operator_cli_command", source)
         self.assertIn("detached_subprocess_kwargs", source)
         self.assertNotIn("subprocess.run", source)
 

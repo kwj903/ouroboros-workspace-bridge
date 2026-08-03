@@ -41,13 +41,18 @@ TEXT = {
         "host": "NGROK_HOST",
         "workspace": "WORKSPACE_ROOT",
         "review": "review UI",
-        "review_not_ready": "접속되지 않음. 터미널에서 `uv run woojae start`를 실행하세요.",
+        "review_not_ready": "접속되지 않음. 터미널에서 `uv run terminalbridge start`를 실행하세요.",
         "check_again": "다시 확인",
         "ngrok_title": "ngrok 준비",
         "ngrok_intro": "authtoken은 이 화면에 입력하지 않습니다. ngrok dashboard에서 복사한 뒤 터미널에서 직접 실행하세요.",
         "ngrok_downloads": "ngrok 공식 다운로드 페이지",
         "external_title": "사용자 도메인 연결",
-        "external_intro": "외부 tunnel 또는 reverse proxy는 이 프로젝트 밖에서 관리합니다. 공개 주소는 로컬 MCP의 127.0.0.1:8787로만 연결하고 review UI는 공개하지 마세요.",
+        "external_intro": "외부 tunnel 또는 reverse proxy는 사용자가 관리합니다. 공개 주소는 로컬 MCP의 127.0.0.1:8787로만 연결하고 review UI는 공개하지 마세요.",
+        "cloudflare_intro": "Cloudflare 모드에서는 terminalbridge 명령이 사용자의 cloudflared 설정과 tunnel을 시작·중지합니다. 계정, 도메인, credential은 각 사용자가 직접 소유합니다.",
+        "provider": "공개 connector",
+        "cloudflared": "cloudflared CLI",
+        "cloudflare_config": "Cloudflare config",
+        "cloudflare_tunnel": "Cloudflare tunnel",
         "external_single": "같은 공유 도메인의 connector는 한 번에 한 컴퓨터에서만 실행하세요.",
         "linux_fallback": "다른 Linux 배포판은 ngrok 공식 다운로드 페이지의 패키지 또는 zip 설치 방법을 참고하세요.",
         "windows_fallback": "winget이 없거나 Microsoft Store 사용이 막혀 있으면 ngrok 공식 다운로드 페이지에서 Windows용 zip을 받은 뒤 `ngrok.exe`를 PATH에 추가하세요.",
@@ -73,8 +78,8 @@ TEXT = {
         "docs_ko": "ChatGPT 앱 설정 문서",
         "docs_en": "English setup guide",
         "pending": "pending review UI 열기",
-        "mcp_url": "`uv run woojae mcp-url`은 redacted preview만 보여줍니다.",
-        "copy_url": "실제 URL은 `uv run woojae copy-url`로 clipboard에 복사하세요.",
+        "mcp_url": "`uv run terminalbridge mcp-url`은 redacted preview만 보여줍니다.",
+        "copy_url": "실제 URL은 `uv run terminalbridge copy-url`로 clipboard에 복사하세요.",
         "prompt": "작업할 디렉토리는 /path/to/your/project 입니다.\n이 디렉토리의 구성을 간단히 보여주고, 어떤 종류의 프로젝트인지 요약해줘.",
     },
     "en": {
@@ -94,13 +99,18 @@ TEXT = {
         "host": "NGROK_HOST",
         "workspace": "WORKSPACE_ROOT",
         "review": "review UI",
-        "review_not_ready": "Not reachable. Run `uv run woojae start` in your terminal.",
+        "review_not_ready": "Not reachable. Run `uv run terminalbridge start` in your terminal.",
         "check_again": "Check again",
         "ngrok_title": "Prepare ngrok",
         "ngrok_intro": "Do not enter your authtoken in this page. Copy it from the ngrok dashboard and run the command in your terminal.",
         "ngrok_downloads": "official ngrok downloads page",
         "external_title": "Connect your own domain",
-        "external_intro": "Manage the external tunnel or reverse proxy outside this project. Route only the public hostname to local MCP at 127.0.0.1:8787 and never expose the review UI.",
+        "external_intro": "Manage the external tunnel or reverse proxy with your own account and infrastructure. Route only the public hostname to local MCP at 127.0.0.1:8787 and never expose the review UI.",
+        "cloudflare_intro": "In Cloudflare mode, terminalbridge starts and stops the tunnel from this user's cloudflared config. Each user owns their own account, domain, credentials, and tunnel.",
+        "provider": "Public connector",
+        "cloudflared": "cloudflared CLI",
+        "cloudflare_config": "Cloudflare config",
+        "cloudflare_tunnel": "Cloudflare tunnel",
         "external_single": "Run the shared-domain connector on only one computer at a time.",
         "linux_fallback": "For other Linux distributions, use the package or zip instructions from the official ngrok downloads page.",
         "windows_fallback": "If winget or Microsoft Store is unavailable, download the Windows zip from the official ngrok downloads page and add `ngrok.exe` to PATH.",
@@ -126,8 +136,8 @@ TEXT = {
         "docs_ko": "Korean setup guide",
         "docs_en": "ChatGPT app setup docs",
         "pending": "Open pending review UI",
-        "mcp_url": "`uv run woojae mcp-url` shows only a redacted preview.",
-        "copy_url": "Use `uv run woojae copy-url` to copy the real URL to your clipboard.",
+        "mcp_url": "`uv run terminalbridge mcp-url` shows only a redacted preview.",
+        "copy_url": "Use `uv run terminalbridge copy-url` to copy the real URL to your clipboard.",
         "prompt": "Use this workspace directory: /path/to/your/project\nShow me a brief overview of this directory's structure and tell me what kind of project it looks like.",
     },
 }
@@ -192,11 +202,19 @@ def _review_ui_reachable(settings: supervisor.SessionSettings, timeout: float = 
 def _environment_rows(settings: supervisor.SessionSettings, labels: dict[str, str], *, review_reachable: bool) -> str:
     uv_path = shutil.which("uv")
     ngrok_path = shutil.which("ngrok")
+    cloudflared_path = shutil.which(settings.cloudflared_bin or "cloudflared")
     review_value = settings.review_dashboard_url if review_reachable else f"{settings.review_dashboard_url} - {labels['review_not_ready']}"
+    operator_mode = (
+        "ngrok"
+        if settings.public_access_mode == "ngrok"
+        else "cloudflare"
+        if settings.external_tunnel_provider == "cloudflare"
+        else "external"
+    )
     rows = [
         (labels["python"], True, sys.executable, False),
         (labels["uv"], uv_path is not None, uv_path or "uv not found", False),
-        (labels["access_mode"], True, settings.public_access_mode, False),
+        (labels["access_mode"], True, operator_mode, False),
         (labels["token"], bool(settings.mcp_access_token), "set" if settings.mcp_access_token else "not set", False),
     ]
     if settings.public_access_mode == "ngrok":
@@ -210,6 +228,32 @@ def _environment_rows(settings: supervisor.SessionSettings, labels: dict[str, st
         rows.append(
             (labels["public_url"], bool(settings.public_mcp_url), settings.public_mcp_url or "not set", False)
         )
+        rows.append(
+            (labels["provider"], True, settings.external_tunnel_provider, False)
+        )
+        if settings.external_tunnel_provider == "cloudflare":
+            rows.extend(
+                [
+                    (
+                        labels["cloudflared"],
+                        cloudflared_path is not None,
+                        cloudflared_path or settings.cloudflared_bin or "cloudflared not found",
+                        False,
+                    ),
+                    (
+                        labels["cloudflare_config"],
+                        bool(settings.cloudflared_config_path),
+                        settings.cloudflared_config_path or "not set",
+                        False,
+                    ),
+                    (
+                        labels["cloudflare_tunnel"],
+                        bool(settings.cloudflared_tunnel_name),
+                        settings.cloudflared_tunnel_name or "not set",
+                        False,
+                    ),
+                ]
+            )
     rows.extend(
         [
             (labels["workspace"], bool(settings.workspace_root), settings.workspace_root, False),
@@ -264,10 +308,15 @@ def render_setup_page(settings: supervisor.SessionSettings, *, language: str) ->
   </section>
 """
     else:
+        external_intro = (
+            labels["cloudflare_intro"]
+            if settings.external_tunnel_provider == "cloudflare"
+            else labels["external_intro"]
+        )
         public_access_section = f"""
   <section>
     <h2>{_escape(labels["external_title"])}</h2>
-    <p class="notice">{_escape(labels["external_intro"])}</p>
+    <p class="notice">{_escape(external_intro)}</p>
     <p><strong>PUBLIC_MCP_URL:</strong> <code>{_escape(settings.public_mcp_url)}</code></p>
     <p><strong>{_escape(labels["external_single"])}</strong></p>
   </section>
@@ -328,7 +377,7 @@ def render_setup_page(settings: supervisor.SessionSettings, *, language: str) ->
     <p>{_escape(labels["workspace_text"])}</p>
     <p><strong>WORKSPACE_ROOT:</strong> <code>{_escape(settings.workspace_root)}</code></p>
     <p>{_escape(labels["change_workspace"])}</p>
-    {_copy_block("uv run woojae setup", labels)}
+    {_copy_block("uv run terminalbridge setup", labels)}
   </section>
 
   <section>
@@ -348,9 +397,9 @@ def render_setup_page(settings: supervisor.SessionSettings, *, language: str) ->
     <h2>{_escape(labels["next_title"])}</h2>
     <p>{_escape(labels["next_intro"])}</p>
     <ol>
-      <li>{_escape(labels["next_setup"])}{_copy_block("uv run woojae setup", labels)}</li>
-      <li>{_escape(labels["next_start"])}{_copy_block("uv run woojae start", labels)}</li>
-      <li>{_escape(labels["next_copy_url"])}{_copy_block("uv run woojae copy-url", labels)}</li>
+      <li>{_escape(labels["next_setup"])}{_copy_block("uv run terminalbridge setup", labels)}</li>
+      <li>{_escape(labels["next_start"])}{_copy_block("uv run terminalbridge start", labels)}</li>
+      <li>{_escape(labels["next_copy_url"])}{_copy_block("uv run terminalbridge copy-url", labels)}</li>
       <li><a href="{GITHUB_DOC_KO if language == 'ko' else GITHUB_DOC_EN}">{_escape(labels["next_docs"])}</a></li>
       <li><a href="{_escape(settings.review_dashboard_url)}">{_escape(labels["next_pending"])}</a></li>
     </ol>

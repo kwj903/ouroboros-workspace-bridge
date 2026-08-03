@@ -1,6 +1,6 @@
 # Use the pending review UI
 
-This guide explains the local review screen opened after `uv run woojae start`.
+This guide explains the local review screen opened after `uv run terminalbridge start`.
 
 ```text
 http://127.0.0.1:8790/pending
@@ -75,7 +75,7 @@ If the page says there are no pending bundles, that is usually normal. It means 
 If you expected a bundle, check the session:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 ```
 
 Also confirm that the ChatGPT app is using the current MCP server URL.

@@ -13,15 +13,15 @@ cd ouroboros-workspace-bridge
 Start with the current supervisor state.
 
 ```bash
-uv run woojae status
-uv run woojae doctor
+uv run terminalbridge status
+uv run terminalbridge doctor
 ```
 
 Expected high-level result:
 
 - `review` has an alive managed process and is reachable.
 - `mcp` has an alive managed process and is reachable.
-- In ngrok mode, `ngrok` has a managed process and a current log path. In external mode, it is reported as disabled.
+- In ngrok mode, `ngrok` is managed. In Cloudflare mode, `cloudflared` is managed. In generic external mode, the connector is reported as manually managed.
 - `uv` is installed.
 - Token values are not printed.
 
@@ -29,9 +29,9 @@ Expected high-level result:
 
 Use this checklist after the first setup:
 
-1. `uv run woojae status` shows review and mcp reachable.
+1. `uv run terminalbridge status` shows review and mcp reachable.
 2. `http://127.0.0.1:8790/pending` opens locally.
-3. `uv run woojae copy-url` or `uv run woojae mcp-url` returns the expected MCP URL information.
+3. `uv run terminalbridge copy-url` or `uv run terminalbridge mcp-url` returns the expected MCP URL information.
 4. The ChatGPT custom app uses the current MCP server URL.
 5. Asking ChatGPT for a brief overview of the target workspace directory creates a pending bundle.
 6. Approving that bundle shows a result in the review UI history.
@@ -49,22 +49,22 @@ Symptoms:
 Check:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 uv run woojae logs review
 ```
 
 Recover:
 
 ```bash
-uv run woojae restart-session
+uv run terminalbridge restart
 ```
 
 If that does not recover the UI:
 
 ```bash
-uv run woojae stop
-uv run woojae start
-uv run woojae status
+uv run terminalbridge stop
+uv run terminalbridge start
+uv run terminalbridge status
 ```
 
 ## MCP server is unreachable
@@ -73,12 +73,12 @@ Symptoms:
 
 - ChatGPT MCP calls fail.
 - `/servers?tab=processes` shows MCP reachable as `no`.
-- `uv run woojae status` shows `mcp alive=no` or `reachable=no`.
+- `uv run terminalbridge status` shows `mcp alive=no` or `reachable=no`.
 
 Check:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 uv run woojae logs mcp
 ```
 
@@ -86,7 +86,7 @@ Recover:
 
 ```bash
 uv run woojae restart mcp
-uv run woojae status
+uv run terminalbridge status
 ```
 
 If `server.py` or MCP tool schemas changed, refresh the MCP connection in the ChatGPT app after restart.
@@ -95,7 +95,7 @@ If `server.py` or MCP tool schemas changed, refresh the MCP connection in the Ch
 
 Symptoms:
 
-- ChatGPT creates a session restart bundle such as `uv run woojae restart-session`, then the MCP connection drops.
+- ChatGPT creates a session restart bundle such as `uv run terminalbridge restart`, then the MCP connection drops.
 - The review UI may still show that restart bundle in pending, rejected, or failed history.
 
 This is usually an expected side effect. When the MCP server restarts itself, the active ChatGPT tool connection can be interrupted.
@@ -103,37 +103,38 @@ This is usually an expected side effect. When the MCP server restarts itself, th
 Recommended recovery:
 
 ```bash
-uv run woojae status
-uv run woojae start
+uv run terminalbridge status
+uv run terminalbridge start
 # or
-uv run woojae restart-session
+uv run terminalbridge restart
 ```
 
 Then refresh the MCP connection in the ChatGPT app and confirm the connection with a read-only tool such as `workspace_transport_probe` or `workspace_git_status`.
 
 Recommended operating rule:
 
-- Restart the full local session from a terminal when possible; ngrok is included only in ngrok mode.
+- Restart the full local session from a terminal when possible; the selected managed ngrok or Cloudflare connector is included automatically.
 - Avoid restarting the server through a ChatGPT tool proposal unless you are intentionally debugging the restart flow.
 - A rejected or failed restart bundle may be an already-processed history item. Check `/history` and the bundle status together.
 
-## External domain is not connected
+## Cloudflare or external domain is not connected
 
 Symptoms:
 
 - `PUBLIC_ACCESS_MODE=external` is configured, but the public endpoint does not reach the local MCP server.
-- `uv run woojae status` shows review and MCP healthy while ChatGPT cannot connect.
+- `uv run terminalbridge status` shows review and MCP healthy while ChatGPT cannot connect.
 
 Check:
 
 ```bash
-uv run woojae doctor
-uv run woojae status
-uv run woojae logs mcp
-uv run woojae mcp-url
+uv run terminalbridge doctor
+uv run terminalbridge status
+uv run terminalbridge logs mcp
+uv run terminalbridge logs cloudflared
+uv run terminalbridge mcp-url
 ```
 
-Confirm that the external tunnel or reverse proxy is running on the intended computer and routes the public hostname only to `http://127.0.0.1:8787`. Stop any replica connector on another computer. The bridge does not manage or restart an external tunnel. See [Public access modes](public-access.md).
+For managed Cloudflare mode, confirm that the user's config path and tunnel name are correct and that `cloudflared` is alive. For generic external mode, start the proxy or connector separately. In both cases, route the public hostname only to `http://127.0.0.1:8787`, keep the review UI private, and stop replica connectors on other computers. See [Public access modes](public-access.md).
 
 ## ngrok is not connected
 
@@ -146,7 +147,7 @@ Symptoms:
 Check:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 uv run woojae logs ngrok
 ```
 
@@ -154,10 +155,10 @@ Recover:
 
 ```bash
 uv run woojae restart ngrok
-uv run woojae status
+uv run terminalbridge status
 ```
 
-If ngrok still fails, check that the ngrok account/session is valid. `NGROK_HOST` is optional for temporary URL mode, but `uv run woojae copy-url` requires a configured fixed host.
+If ngrok still fails, check that the ngrok account/session is valid. `NGROK_HOST` is optional for temporary URL mode, but `uv run terminalbridge copy-url` requires a configured fixed host.
 
 ## Bundle is stuck in pending
 
@@ -191,7 +192,7 @@ Recover:
 Notification helpers are optional. If desktop notifications are unavailable, the review UI and bundle approval flow still work.
 
 ```bash
-uv run woojae doctor
+uv run terminalbridge doctor
 ```
 
 - macOS: `terminal-notifier` enables clickable notifications; `osascript` can be used as a fallback when configured.
@@ -259,7 +260,7 @@ Symptoms:
 Check:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 ```
 
 Recover by restarting the service or full session:
@@ -272,7 +273,7 @@ uv run woojae restart ngrok
 For review-related stale state, prefer full session recovery:
 
 ```bash
-uv run woojae restart-session
+uv run terminalbridge restart
 ```
 
 ## Full session restart did not recover
@@ -285,7 +286,7 @@ Symptoms:
 Check:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 uv run woojae logs review
 uv run woojae logs mcp
 uv run woojae logs ngrok
@@ -294,12 +295,12 @@ uv run woojae logs ngrok
 Recover:
 
 ```bash
-uv run woojae stop
-uv run woojae start
-uv run woojae status
+uv run terminalbridge stop
+uv run terminalbridge start
+uv run terminalbridge status
 ```
 
-The full session restart helper log is stored under the process directory shown by `uv run woojae status`.
+The full session restart helper log is stored under the process directory shown by `uv run terminalbridge status`.
 
 ## ChatGPT app MCP connection needs refresh
 
@@ -314,7 +315,7 @@ Recommended order:
 
 ```bash
 uv run woojae restart mcp
-uv run woojae status
+uv run terminalbridge status
 ```
 
 Then refresh the MCP connection in the ChatGPT app.
@@ -347,8 +348,8 @@ Do not repeat the same large request. Split the next attempt into smaller bundle
 When unsure, use this order:
 
 ```bash
-uv run woojae status
-uv run woojae doctor
+uv run terminalbridge status
+uv run terminalbridge doctor
 uv run woojae logs review
 uv run woojae logs mcp
 uv run woojae logs ngrok

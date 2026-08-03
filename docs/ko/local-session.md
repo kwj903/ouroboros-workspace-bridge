@@ -15,10 +15,10 @@ cd ouroboros-workspace-bridge
 처음 한 번 설정합니다.
 
 ```bash
-uv run woojae setup
+uv run terminalbridge setup
 ```
 
-설정 과정에서 공개 연결 방식, ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`, 기본 도움말 언어를 선택합니다. shell에 이미 설정된 `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `MCP_ACCESS_TOKEN`, `NGROK_HOST`, `WOOJAE_HELP_LANG`은 runtime `session.env`보다 우선합니다. 자세한 내용은 [공개 연결 모드](public-access.md)를 확인하세요.
+설정 과정에서 `ngrok`, 관리형 `cloudflare`, 일반 `external` 중 하나와 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`, 기본 도움말 언어를 선택합니다. 각 사용자의 ngrok 또는 Cloudflare 설정을 사용하며 shell의 기존 값은 runtime `session.env`보다 우선합니다. 자세한 내용은 [공개 연결 모드](public-access.md)를 확인하세요.
 
 프로젝트 명령어 도움말은 `uv run woojae help`로 확인할 수 있습니다. 한국어 도움말을 기본으로 보려면 setup 중 `Help language`를 `ko`로 저장하거나 `uv run woojae help --lang ko`를 사용하세요.
 
@@ -31,25 +31,25 @@ uv run woojae doctor
 전체 로컬 세션을 시작합니다.
 
 ```bash
-uv run woojae start
+uv run terminalbridge start
 ```
 
 상태 확인:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 ```
 
 review UI 열기:
 
 ```bash
-uv run woojae open
+uv run terminalbridge open
 ```
 
 종료:
 
 ```bash
-uv run woojae stop
+uv run terminalbridge stop
 ```
 
 ## Runtime 환경
@@ -68,7 +68,7 @@ private runtime env 파일은 repository 밖에 저장됩니다.
 
 토큰 값은 문서, 로그, 테스트 fixture, screenshot, ChatGPT 메시지에 넣지 마세요.
 
-`ngrok` 모드에서 `NGROK_HOST`는 선택 사항이며 없으면 temporary URL mode를 사용합니다. `external` 모드에서는 `PUBLIC_MCP_URL`이 필수입니다. `uv run woojae copy-url`은 고정 공개 endpoint와 `MCP_ACCESS_TOKEN`이 모두 있을 때 동작합니다.
+`ngrok` 모드에서 `NGROK_HOST`는 선택 사항이며 없으면 temporary URL mode를 사용합니다. 관리형 `cloudflare`와 일반 `external` 모드에서는 `PUBLIC_MCP_URL`이 필수이며 Cloudflare는 사용자의 config path와 tunnel 이름도 필요합니다. `uv run terminalbridge copy-url`은 고정 공개 endpoint와 `MCP_ACCESS_TOKEN`이 모두 있을 때 동작합니다.
 
 ## Runtime 데이터 관리
 
@@ -129,21 +129,21 @@ uv run woojae update --skip-restart
 
 ## 프로세스 제어
 
-일반 운영은 `woojae`를 사용합니다.
+전체 연결 스택의 일반 운영에는 `terminalbridge`, 개별 Bridge 서비스 진단에는 `woojae`를 사용합니다.
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 uv run woojae restart mcp
 uv run woojae restart ngrok
-uv run woojae restart-session
+uv run terminalbridge restart
 uv run woojae logs review
 uv run woojae logs mcp
 uv run woojae logs ngrok
 ```
 
-`restart ngrok`과 `logs ngrok`은 ngrok 모드용입니다. external 모드에서는 ngrok 시작·재시작이 차단되며, 모드 전환 뒤 남아 있는 기존 managed ngrok을 정리할 때만 stop을 사용할 수 있습니다. external tunnel은 별도로 관리하세요.
+저수준 `restart ngrok`과 `logs ngrok`은 ngrok 모드용입니다. Cloudflare와 일반 external 모드에서는 ngrok 시작·재시작이 차단됩니다. 선택된 전체 스택은 `uv run terminalbridge restart`, 관리형 Cloudflare 로그는 `uv run terminalbridge logs cloudflared`를 사용하고 일반 external connector는 별도로 관리하세요.
 
-호환 wrapper도 같은 명령을 전달합니다. 새 문서와 자동화에서는 `uv run woojae ...`를 우선 사용하세요.
+호환 wrapper는 계속 사용할 수 있습니다. 전체 스택 운영에는 `uv run terminalbridge ...`, 개별 서비스 진단에는 `uv run woojae ...`를 사용하세요.
 
 macOS/Linux:
 
@@ -172,22 +172,22 @@ scripts/run_ngrok.sh
 1. 로컬 세션을 시작합니다.
 
 ```bash
-uv run woojae start
+uv run terminalbridge start
 ```
 
 2. review UI를 엽니다.
 
 ```bash
-uv run woojae open
+uv run terminalbridge open
 ```
 
 3. MCP URL을 clipboard에 복사하거나 URL 상태를 확인합니다.
 
 ```bash
-uv run woojae copy-url
+uv run terminalbridge copy-url
 ```
 
-`copy-url`은 실제 URL을 clipboard에 복사하지만 token을 터미널에 출력하지 않습니다. macOS는 `pbcopy`, Linux는 `xclip`, Windows는 `clip`이 있으면 사용합니다. `uv run woojae mcp-url`은 redacted URL preview만 출력합니다.
+`copy-url`은 실제 URL을 clipboard에 복사하지만 token을 터미널에 출력하지 않습니다. macOS는 `pbcopy`, Linux는 `xclip`, Windows는 `clip`이 있으면 사용합니다. `uv run terminalbridge mcp-url`은 redacted URL preview만 출력합니다.
 
 MCP URL 형식:
 
@@ -197,10 +197,10 @@ ngrok 모드:
 https://<NGROK_HOST>/mcp?access_token=<TOKEN>
 ```
 
-external 모드 예시:
+Cloudflare 또는 일반 external 모드 예시:
 
 ```text
-https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
+https://terminalbridge.example.com/mcp?access_token=<TOKEN>
 ```
 
 실제 token 값은 문서, screenshot, chat, GitHub issue에 붙여넣거나 공유하지 마세요.
@@ -214,7 +214,7 @@ UI는 바뀔 수 있으므로 settings, connector, apps 영역에서 custom app 
 - 아이콘: 선택 사항입니다.
 - 이름: `Ouroboros Workspace Bridge` 또는 `Woojae Workspace Bridge`
 - 설명: `Local MCP bridge for approved workspace file and command operations.`
-- MCP 서버 URL: `uv run woojae copy-url`로 복사한 URL을 붙여넣습니다.
+- MCP 서버 URL: `uv run terminalbridge copy-url`로 복사한 URL을 붙여넣습니다.
 - 인증: access token이 MCP URL query string에 이미 들어 있으므로 `No auth` 또는 이에 해당하는 항목을 선택합니다.
 - 고급 OAuth 설정: UI가 요구하지 않는 한 비워둡니다.
 - warning checkbox: custom MCP server는 데이터와 도구에 접근할 수 있으므로, 본인의 trusted local bridge라는 점을 이해한 뒤 체크하세요.
@@ -234,14 +234,14 @@ http://127.0.0.1:8790/pending
 redacted preview만 확인하려면:
 
 ```bash
-uv run woojae mcp-url
+uv run terminalbridge mcp-url
 ```
 
 ## Temporary ngrok URL 주의
 
-`NGROK_HOST`가 없으면 `woojae copy-url`이 동작하지 않을 수 있습니다. temporary ngrok URL은 재시작 후 바뀔 수 있어서 ChatGPT app의 MCP URL도 다시 수정해야 할 수 있습니다.
+`NGROK_HOST`가 없으면 `terminalbridge copy-url`이 안정적인 ngrok URL을 만들지 못할 수 있습니다. temporary ngrok URL은 재시작 후 바뀔 수 있어서 ChatGPT app의 MCP URL도 다시 수정해야 할 수 있습니다.
 
-안정적으로 사용하려면 ngrok reserved domain을 만들고 `uv run woojae setup`에서 `NGROK_HOST`를 설정하세요.
+안정적으로 사용하려면 ngrok reserved domain을 만들고 `uv run terminalbridge setup`에서 `NGROK_HOST`를 설정하세요.
 
 ## Approval mode
 
@@ -260,7 +260,7 @@ uv run woojae mcp-url
 
 ```bash
 uv run woojae restart mcp
-uv run woojae status
+uv run terminalbridge status
 ```
 
 ## 안전한 bundle 흐름

@@ -1,6 +1,6 @@
 # Update Info
 
-Version: 0.4.3
+Version: 0.5.0
 
 For live local version and git state, run:
 
@@ -12,6 +12,11 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
+- 2ac0e6c Handle reused Windows service PIDs
+- 220c67e Harden Windows Git output decoding
+- 123822d Fix Windows locale test regressions
+- 21d3647 Fix home fallback on Windows
+- fb89fed Add external public access mode
 - 9c1d862 Fix clean git status reporting
 - 0241d15 Fix cross-platform runtime support
 - ab4bda1 Release version 0.4.1
@@ -27,11 +32,6 @@ Recent Commits is a generated snapshot. Run `uv run python scripts/update_versio
 - 8ea7903 feat: paginate bundle history view
 - ca620f1 feat: add runtime cleanup policy core
 - 1f87c13 docs: plan runtime storage cleanup management
-- c92edcf chore: release v0.4.0
-- e01c213 docs: record task orchestration release checkpoint
-- 64f7d10 feat: orchestrate safe task merge proposals
-- 9260afb feat: surface validation result hints in dashboard
-- dbdd81f feat: add task validation result hints
 
 ## How to Update Existing Installation
 

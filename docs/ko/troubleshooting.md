@@ -11,15 +11,15 @@ cd ouroboros-workspace-bridge
 ## 먼저 확인할 것
 
 ```bash
-uv run woojae status
-uv run woojae doctor
+uv run terminalbridge status
+uv run terminalbridge doctor
 ```
 
 확인할 내용:
 
 - `review`가 살아 있고 reachable인지
 - `mcp`가 살아 있고 reachable인지
-- ngrok 모드에서는 `ngrok` 프로세스와 로그가 있는지, external 모드에서는 비활성화로 표시되는지
+- ngrok 모드에서는 `ngrok`, Cloudflare 모드에서는 `cloudflared`가 관리되는지, 일반 external 모드에서는 connector가 수동 관리로 표시되는지
 - `uv`가 설치되어 있는지
 - token 값이 출력되지 않는지
 
@@ -27,9 +27,9 @@ uv run woojae doctor
 
 첫 설정 후에는 아래 순서로 확인하세요.
 
-1. `uv run woojae status`에서 review와 mcp가 reachable인지 확인합니다.
+1. `uv run terminalbridge status`에서 review와 mcp가 reachable인지 확인합니다.
 2. `http://127.0.0.1:8790/pending`이 로컬에서 열리는지 확인합니다.
-3. `uv run woojae copy-url` 또는 `uv run woojae mcp-url`로 MCP URL 정보를 확인합니다.
+3. `uv run terminalbridge copy-url` 또는 `uv run terminalbridge mcp-url`로 MCP URL 정보를 확인합니다.
 4. ChatGPT custom app에 현재 MCP 서버 URL이 들어갔는지 확인합니다.
 5. ChatGPT에게 대상 작업 디렉토리의 간단한 구성 요약을 요청했을 때 pending bundle이 생기는지 확인합니다.
 6. 해당 bundle을 승인했을 때 review UI 이력에서 결과가 보이는지 확인합니다.
@@ -46,22 +46,22 @@ uv run woojae doctor
 확인:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 uv run woojae logs review
 ```
 
 복구:
 
 ```bash
-uv run woojae restart-session
+uv run terminalbridge restart
 ```
 
 그래도 안 되면:
 
 ```bash
-uv run woojae stop
-uv run woojae start
-uv run woojae status
+uv run terminalbridge stop
+uv run terminalbridge start
+uv run terminalbridge status
 ```
 
 ## MCP server가 unreachable
@@ -70,12 +70,12 @@ uv run woojae status
 
 - ChatGPT MCP call 실패
 - `/servers?tab=processes`에서 MCP reachable이 `no`
-- `uv run woojae status`에서 `mcp alive=no` 또는 `reachable=no`
+- `uv run terminalbridge status`에서 `mcp alive=no` 또는 `reachable=no`
 
 확인:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 uv run woojae logs mcp
 ```
 
@@ -83,7 +83,7 @@ uv run woojae logs mcp
 
 ```bash
 uv run woojae restart mcp
-uv run woojae status
+uv run terminalbridge status
 ```
 
 `server.py` 또는 MCP tool schema가 바뀌었다면 ChatGPT 앱에서 MCP 연결도 refresh하세요.
@@ -92,7 +92,7 @@ uv run woojae status
 
 증상:
 
-- ChatGPT가 `uv run woojae restart-session` 같은 세션 재시작 bundle을 만든 뒤 MCP 연결이 끊깁니다.
+- ChatGPT가 `uv run terminalbridge restart` 같은 세션 재시작 bundle을 만든 뒤 MCP 연결이 끊깁니다.
 - review UI에 재시작 bundle이 pending, rejected, failed 이력으로 남아 보일 수 있습니다.
 
 이것은 대부분 정상적인 부작용입니다. MCP 서버가 자기 자신을 재시작하면 현재 ChatGPT tool connection도 함께 끊길 수 있습니다.
@@ -100,37 +100,38 @@ uv run woojae status
 권장 복구:
 
 ```bash
-uv run woojae status
-uv run woojae start
+uv run terminalbridge status
+uv run terminalbridge start
 # 또는
-uv run woojae restart-session
+uv run terminalbridge restart
 ```
 
 그 다음 ChatGPT 앱에서 MCP 연결을 refresh하고, ChatGPT에서 `workspace_transport_probe` 또는 `workspace_git_status` 같은 읽기 도구로 연결을 확인합니다.
 
 권장 운영 방식:
 
-- 전체 로컬 세션 재시작은 가능하면 터미널에서 직접 실행합니다. ngrok은 ngrok 모드에서만 포함됩니다.
+- 전체 로컬 세션 재시작은 가능하면 터미널에서 직접 실행합니다. 선택한 관리형 ngrok 또는 Cloudflare connector가 자동으로 포함됩니다.
 - ChatGPT tool proposal로 서버 자체를 재시작하는 방식은 연결이 끊겨 상태 반영이 꼬일 수 있으므로 디버깅 목적이 아니면 피합니다.
 - rejected 또는 failed로 남은 재시작 bundle은 이미 처리된 이력일 수 있으므로 `/history`와 bundle status를 함께 확인합니다.
 
-## external 도메인 연결 문제
+## Cloudflare 또는 external 도메인 연결 문제
 
 증상:
 
 - `PUBLIC_ACCESS_MODE=external`인데 공개 endpoint가 로컬 MCP 서버로 연결되지 않음
-- `uv run woojae status`에서는 review와 MCP가 정상인데 ChatGPT 연결이 실패함
+- `uv run terminalbridge status`에서는 review와 MCP가 정상인데 ChatGPT 연결이 실패함
 
 확인:
 
 ```bash
-uv run woojae doctor
-uv run woojae status
-uv run woojae logs mcp
-uv run woojae mcp-url
+uv run terminalbridge doctor
+uv run terminalbridge status
+uv run terminalbridge logs mcp
+uv run terminalbridge logs cloudflared
+uv run terminalbridge mcp-url
 ```
 
-external tunnel 또는 reverse proxy가 의도한 컴퓨터에서 실행 중인지, 공개 hostname이 `http://127.0.0.1:8787`에만 연결되는지 확인합니다. 다른 컴퓨터의 replica connector는 종료하세요. Bridge는 external tunnel 자체를 시작하거나 재시작하지 않습니다. 자세한 내용은 [공개 연결 모드](public-access.md)를 확인하세요.
+관리형 Cloudflare 모드에서는 사용자의 config path와 tunnel 이름이 정확하고 `cloudflared`가 살아 있는지 확인합니다. 일반 external 모드에서는 proxy 또는 connector를 별도로 시작합니다. 두 경우 모두 공개 hostname을 `http://127.0.0.1:8787`에만 연결하고 review UI는 비공개로 유지하며 다른 컴퓨터의 replica connector를 종료하세요. 자세한 내용은 [공개 연결 모드](public-access.md)를 확인하세요.
 
 ## ngrok 연결 문제
 
@@ -143,7 +144,7 @@ external tunnel 또는 reverse proxy가 의도한 컴퓨터에서 실행 중인�
 확인:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 uv run woojae logs ngrok
 ```
 
@@ -151,10 +152,10 @@ uv run woojae logs ngrok
 
 ```bash
 uv run woojae restart ngrok
-uv run woojae status
+uv run terminalbridge status
 ```
 
-`NGROK_HOST`는 temporary URL mode에서는 선택 사항입니다. 하지만 `uv run woojae copy-url`은 고정 `NGROK_HOST`와 `MCP_ACCESS_TOKEN`이 필요합니다.
+`NGROK_HOST`는 temporary URL mode에서는 선택 사항입니다. 하지만 `uv run terminalbridge copy-url`은 고정 `NGROK_HOST`와 `MCP_ACCESS_TOKEN`이 필요합니다.
 
 ## Bundle이 pending에 멈춤
 
@@ -183,7 +184,7 @@ workspace_command_bundle_status <bundle_id>
 알림 도구는 선택 사항입니다. 알림이 없어도 review UI와 bundle 승인 흐름은 계속 사용할 수 있습니다.
 
 ```bash
-uv run woojae doctor
+uv run terminalbridge doctor
 ```
 
 - macOS: `terminal-notifier`가 있으면 클릭 가능한 알림을 사용하고, 설정에 따라 `osascript` fallback을 사용할 수 있습니다.
@@ -245,7 +246,7 @@ uv run woojae cleanup --dry-run
 확인:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 ```
 
 복구:
@@ -258,7 +259,7 @@ uv run woojae restart ngrok
 review 관련 stale 상태는 전체 세션 재시작이 더 단순합니다.
 
 ```bash
-uv run woojae restart-session
+uv run terminalbridge restart
 ```
 
 ## ChatGPT 응답이 끊겼지만 bundle이 생겼을 수 있음

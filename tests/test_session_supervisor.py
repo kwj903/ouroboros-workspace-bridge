@@ -112,7 +112,11 @@ class SessionSupervisorPublicAccessTests(unittest.TestCase):
                 ngrok_host="previous.ngrok.app",
                 workspace_root=workspace_root,
                 public_access_mode="external",
-                public_mcp_url="https://terminalbridge.woojae.dev/mcp",
+                public_mcp_url="https://terminalbridge.example.com/mcp",
+                external_tunnel_provider="cloudflare",
+                cloudflared_config_path="~/.cloudflared/terminalbridge.yml",
+                cloudflared_tunnel_name="terminalbridge-example",
+                cloudflared_bin="cloudflared",
             )
 
             supervisor.write_session_files(settings)
@@ -127,15 +131,47 @@ class SessionSupervisorPublicAccessTests(unittest.TestCase):
             self.assertEqual(loaded.public_access_mode, "external")
             self.assertEqual(
                 loaded.public_mcp_base_url,
-                "https://terminalbridge.woojae.dev/mcp",
+                "https://terminalbridge.example.com/mcp",
             )
             self.assertEqual(loaded.ngrok_host, "previous.ngrok.app")
+            self.assertEqual(loaded.external_tunnel_provider, "cloudflare")
+            self.assertEqual(
+                loaded.cloudflared_config_path,
+                "~/.cloudflared/terminalbridge.yml",
+            )
+            self.assertEqual(
+                loaded.cloudflared_tunnel_name,
+                "terminalbridge-example",
+            )
             env_text = supervisor.session_env_path(runtime_root).read_text(encoding="utf-8")
             self.assertIn("export PUBLIC_ACCESS_MODE=external", env_text)
             self.assertIn(
-                "export PUBLIC_MCP_URL=https://terminalbridge.woojae.dev/mcp",
+                "export PUBLIC_MCP_URL=https://terminalbridge.example.com/mcp",
                 env_text,
             )
+            self.assertIn("export EXTERNAL_TUNNEL_PROVIDER=cloudflare", env_text)
+            self.assertIn(
+                "export CLOUDFLARED_TUNNEL_NAME=terminalbridge-example",
+                env_text,
+            )
+
+    def test_legacy_external_settings_default_to_manual_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp) / "runtime"
+            runtime_root.mkdir()
+            supervisor.session_json_path(runtime_root).write_text(
+                '{"public_access_mode":"external","public_mcp_url":"https://terminalbridge.example.com/mcp"}\n',
+                encoding="utf-8",
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"MCP_TERMINAL_BRIDGE_RUNTIME_ROOT": str(runtime_root)},
+                clear=True,
+            ):
+                loaded = supervisor.load_settings()
+
+        self.assertEqual(loaded.external_tunnel_provider, "manual")
+        self.assertEqual(loaded.cloudflared_bin, "cloudflared")
 
     def test_lenient_settings_load_allows_repairing_invalid_external_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

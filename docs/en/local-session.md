@@ -12,12 +12,12 @@ cd ouroboros-workspace-bridge
 
 ## Recommended session flow
 
-The official command form is `uv run woojae ...`. `scripts/dev_session.sh` and `scripts/dev_session.ps1` are compatibility wrappers for older docs and local automation.
+Use `uv run terminalbridge ...` for normal setup and complete connection-stack operation. `uv run woojae ...` and `scripts/dev_session.*` remain low-level compatibility and debugging interfaces.
 
 Run the initial setup when configuring a checkout for the first time:
 
 ```bash
-uv run woojae setup
+uv run terminalbridge setup
 ```
 
 This writes private runtime settings outside the repository. During setup, choose the public access mode, the allowed `WORKSPACE_ROOT`, and the default help language. Existing shell environment values such as `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `MCP_ACCESS_TOKEN`, `NGROK_HOST`, and `WOOJAE_HELP_LANG` take precedence over values loaded from runtime `session.env`. See [Public access modes](public-access.md).
@@ -33,10 +33,10 @@ uv run woojae doctor
 Start the full local session:
 
 ```bash
-uv run woojae start
+uv run terminalbridge start
 ```
 
-This always starts the review and MCP servers in the background. In the default `ngrok` mode it also starts ngrok; in `external` mode the public tunnel is managed separately. Process metadata is stored outside the repository under:
+This starts review and MCP in the background. In `ngrok` mode it also starts the user's ngrok connector. In managed `cloudflare` mode it starts the user's configured `cloudflared` connector. In generic `external` mode the public connector remains manually managed. Process metadata is stored outside the repository under:
 
 ```text
 ~/.mcp_terminal_bridge/my-terminal-tool/processes
@@ -45,19 +45,19 @@ This always starts the review and MCP servers in the background. In the default 
 Check service status:
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 ```
 
 Open the review UI:
 
 ```bash
-uv run woojae open
+uv run terminalbridge open
 ```
 
 Stop the full session when finished:
 
 ```bash
-uv run woojae stop
+uv run terminalbridge stop
 ```
 
 ## Runtime environment
@@ -65,7 +65,7 @@ uv run woojae stop
 If `MCP_ACCESS_TOKEN` is missing, create a private runtime env file:
 
 ```bash
-uv run woojae setup
+uv run terminalbridge setup
 ```
 
 The generated file is stored outside the repository:
@@ -82,7 +82,7 @@ Expected permission:
 
 Token values must not be committed, printed in docs, or pasted into logs.
 
-In `ngrok` mode, `NGROK_HOST` is optional and an unset host uses temporary URL mode. In `external` mode, `PUBLIC_MCP_URL` is required. `uv run woojae copy-url` requires a fixed public endpoint and `MCP_ACCESS_TOKEN`.
+In `ngrok` mode, `NGROK_HOST` is optional and an unset host uses temporary URL mode. Managed `cloudflare` and generic `external` modes require `PUBLIC_MCP_URL`. Cloudflare additionally requires the user's config path and tunnel name. `uv run terminalbridge copy-url` requires a fixed public endpoint and `MCP_ACCESS_TOKEN`.
 
 ## Runtime data management
 
@@ -148,21 +148,21 @@ uv run woojae update --skip-restart
 
 ## Process controls
 
-Use `woojae` for normal local process control.
+Use `terminalbridge` for normal complete-stack process control and `woojae` for individual Bridge services.
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 uv run woojae restart mcp
 uv run woojae restart ngrok
-uv run woojae restart-session
+uv run terminalbridge restart
 uv run woojae logs review
 uv run woojae logs mcp
 uv run woojae logs ngrok
 ```
 
-`restart ngrok` and `logs ngrok` apply to ngrok mode. In external mode, ngrok start/restart is disabled; stop remains available only to clean up a stale managed ngrok process after switching modes. Manage the external tunnel separately.
+Low-level `restart ngrok` and `logs ngrok` apply only to ngrok mode. In Cloudflare and generic external modes, ngrok start/restart is disabled. Use `uv run terminalbridge restart` for the complete selected stack, `uv run terminalbridge logs cloudflared` for managed Cloudflare logs, and manage a generic external connector separately.
 
-The wrapper scripts pass through to the same CLI and remain available for compatibility. Prefer `uv run woojae ...` in new docs and automation.
+The wrapper scripts remain available for compatibility. Prefer `uv run terminalbridge ...` for complete-stack operation and `uv run woojae ...` only for individual-service diagnostics.
 
 macOS/Linux:
 
@@ -178,29 +178,29 @@ Windows PowerShell:
 .\scripts\dev_session.ps1 restart-session
 ```
 
-Script-level controls such as `uv run woojae start-service mcp`, `stop-service`, and `restart-session` remain available for fallback/debug use. The review process is not individually controlled from the UI because it is the UI process itself. For review-related recovery, use full session restart or stop/start.
+Low-level controls such as `uv run woojae start-service mcp`, `stop-service`, and `restart-session` remain available for fallback/debug use. The Review UI's full-session actions invoke the operator layer so a managed Cloudflare connector is included. The review process is not individually controlled from its own UI.
 
 ## ChatGPT MCP connection
 
 1. Start the local session.
 
 ```bash
-uv run woojae start
+uv run terminalbridge start
 ```
 
 2. Open the local review UI.
 
 ```bash
-uv run woojae open
+uv run terminalbridge open
 ```
 
 3. Copy the MCP URL.
 
 ```bash
-uv run woojae copy-url
+uv run terminalbridge copy-url
 ```
 
-`copy-url` copies the real URL to the clipboard. It uses `pbcopy` on macOS, `xclip` on Linux, and `clip` on Windows when available. `uv run woojae mcp-url` prints only a redacted URL preview. It does not print the token.
+`copy-url` copies the real URL to the clipboard. It uses `pbcopy` on macOS, `xclip` on Linux, and `clip` on Windows when available. `uv run terminalbridge mcp-url` prints only a redacted URL preview. It does not print the token.
 
 The ChatGPT app MCP URL format is:
 
@@ -210,10 +210,10 @@ ngrok mode:
 https://<NGROK_HOST>/mcp?access_token=<TOKEN>
 ```
 
-external mode example:
+Cloudflare or generic external mode example:
 
 ```text
-https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
+https://terminalbridge.example.com/mcp?access_token=<TOKEN>
 ```
 
 Do not write the real token value in README, docs, logs, fixtures, screenshots, chats, or GitHub issues.
@@ -227,7 +227,7 @@ The UI may change, so use the settings, connector, or apps area that allows crea
 - Icon: optional.
 - Name: `Ouroboros Workspace Bridge` or `Woojae Workspace Bridge`
 - Description: `Local MCP bridge for approved workspace file and command operations.`
-- MCP server URL: paste the URL copied by `uv run woojae copy-url`.
+- MCP server URL: paste the URL copied by `uv run terminalbridge copy-url`.
 - Authentication: choose `No auth` or equivalent if the access token is already included in the MCP URL query string.
 - Advanced OAuth settings: leave empty unless the product UI requires otherwise.
 - Security warning checkbox: custom MCP servers can access data and tools. Enable it only for your own trusted local bridge after understanding the risk.
@@ -245,14 +245,14 @@ For a first test, ask ChatGPT to summarize the target workspace directory struct
 To print only a redacted URL preview:
 
 ```bash
-uv run woojae mcp-url
+uv run terminalbridge mcp-url
 ```
 
 ## Temporary ngrok URL Caveat
 
-If `NGROK_HOST` is not configured, `woojae copy-url` may not work. A temporary ngrok URL can change after restart, so the ChatGPT app MCP URL may need to be updated.
+If `NGROK_HOST` is not configured, `terminalbridge copy-url` may not produce a stable ngrok URL. A temporary ngrok URL can change after restart, so the ChatGPT app MCP URL may need to be updated.
 
-For stable usage, create a reserved ngrok domain and set `NGROK_HOST` during `uv run woojae setup`.
+For stable usage, create a reserved ngrok domain and set `NGROK_HOST` during `uv run terminalbridge setup`.
 
 ## Approval Mode
 
@@ -272,7 +272,7 @@ Recommended refresh flow:
 
 ```bash
 uv run woojae restart mcp
-uv run woojae status
+uv run terminalbridge status
 ```
 
 Then refresh the MCP connection in the ChatGPT app.
@@ -312,9 +312,9 @@ brew install terminal-notifier
 Useful watcher options:
 
 ```bash
-BUNDLE_REVIEW_EMBEDDED_WATCHER=0 uv run woojae start
-BUNDLE_WATCH_NOTIFICATION_CLICK_ACTION=open uv run woojae start
-BUNDLE_WATCH_OPEN_MODE=none uv run woojae start
+BUNDLE_REVIEW_EMBEDDED_WATCHER=0 uv run terminalbridge start
+BUNDLE_WATCH_NOTIFICATION_CLICK_ACTION=open uv run terminalbridge start
+BUNDLE_WATCH_OPEN_MODE=none uv run terminalbridge start
 ```
 
 Default notification target is `/pending`. Use bundle-specific notification targets only when debugging review flow behavior.

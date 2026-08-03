@@ -182,14 +182,15 @@ bundle을 만든 뒤에는 반드시 다음을 알려준다.
 
 ## 로컬 세션 제어
 
-Ouroboros Workspace Bridge 관련 로컬 프로세스 제어는 `woojae` CLI를 우선 사용한다.
+Ouroboros Workspace Bridge 전체 연결 스택 제어는 `terminalbridge`, 개별 Bridge 서비스 진단은 `woojae` CLI를 사용한다.
 
-- `uv run woojae start`
-- `uv run woojae status`
-- `uv run woojae doctor`
-- `uv run woojae logs [review|mcp|ngrok]`
-- `uv run woojae restart [mcp|ngrok]`
-- `uv run woojae stop`
+- `uv run terminalbridge start`
+- `uv run terminalbridge status`
+- `uv run terminalbridge doctor`
+- `uv run terminalbridge logs [review|mcp|ngrok|cloudflared]`
+- `uv run terminalbridge restart`
+- `uv run terminalbridge stop`
+- 개별 서비스 진단: `uv run woojae restart [mcp|ngrok]`
 
 UI나 프로세스 제어 기능을 새로 만들 때는 먼저 CLI에서 검증하고, 그 다음 UI에 연결한다.
 

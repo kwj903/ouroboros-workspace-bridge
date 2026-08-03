@@ -897,6 +897,12 @@ def current_public_access_mode() -> str:
     )
 
 
+def current_external_tunnel_provider() -> str:
+    return public_access.normalize_external_tunnel_provider(
+        os.environ.get("EXTERNAL_TUNNEL_PROVIDER", "manual")
+    )
+
+
 def public_mcp_endpoint_hint() -> str | None:
     mode = current_public_access_mode()
     raw_host = os.environ.get("NGROK_HOST") or os.environ.get("NGROK_BASE_URL", "")
@@ -1005,6 +1011,7 @@ def server_state() -> dict[str, object]:
     review_host = os.environ.get("BUNDLE_REVIEW_HOST", HOST)
     review_port = env_int("BUNDLE_REVIEW_PORT", PORT)
     public_access_mode = current_public_access_mode()
+    external_tunnel_provider = current_external_tunnel_provider()
     public_endpoint = public_mcp_endpoint_hint()
     watcher_config = embedded_watcher_config()
 
@@ -1021,6 +1028,7 @@ def server_state() -> dict[str, object]:
         "tools": {
             "uv": command_exists("uv"),
             "ngrok": command_exists("ngrok"),
+            "cloudflared": command_exists(os.environ.get("CLOUDFLARED_BIN", "cloudflared")),
             "terminal_notifier": command_exists("terminal-notifier"),
             "osascript": command_exists("osascript"),
             "notify_send": command_exists("notify-send"),
@@ -1032,6 +1040,9 @@ def server_state() -> dict[str, object]:
             "mcp_access_token": env_status("MCP_ACCESS_TOKEN"),
             "public_access_mode": public_access_mode,
             "public_mcp_url": env_status("PUBLIC_MCP_URL"),
+            "external_tunnel_provider": external_tunnel_provider,
+            "cloudflared_config_path": env_status("CLOUDFLARED_CONFIG_PATH"),
+            "cloudflared_tunnel_name": env_status("CLOUDFLARED_TUNNEL_NAME"),
             "ngrok_host": env_any_status(["NGROK_HOST", "NGROK_BASE_URL"]),
             "mcp_host": mcp_host,
             "mcp_port": mcp_port,
@@ -1044,9 +1055,13 @@ def server_state() -> dict[str, object]:
         },
         "public_access": {
             "mode": public_access_mode,
+            "provider": external_tunnel_provider,
             "configured": "set" if public_endpoint else "missing",
             "public_mcp_endpoint_hint": public_endpoint,
-            "externally_managed": public_access_mode == "external",
+            "externally_managed": (
+                public_access_mode == "external"
+                and external_tunnel_provider == "manual"
+            ),
         },
         "ngrok": {
             "enabled": public_access_mode == "ngrok",
@@ -2268,6 +2283,10 @@ def supervisor_cli_command(*args: str) -> list[str]:
     return [sys.executable, "-m", "terminal_bridge.cli", *args]
 
 
+def operator_cli_command(*args: str) -> list[str]:
+    return [sys.executable, "-m", "terminal_bridge.operator_cli", *args]
+
+
 def detached_subprocess_kwargs() -> dict[str, object]:
     if os.name == "nt":
         creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -2316,7 +2335,7 @@ def schedule_full_session_stop(delay_seconds: float = 0.6) -> None:
             "shell": False,
         }
         popen_kwargs.update(detached_subprocess_kwargs())
-        subprocess.Popen(supervisor_cli_command("stop"), **popen_kwargs)
+        subprocess.Popen(operator_cli_command("stop"), **popen_kwargs)
 
     threading.Thread(target=run_stop, name="delayed-session-stop", daemon=True).start()
 
@@ -2326,13 +2345,13 @@ def full_session_stop_confirm_html() -> str:
     <div class="stack">
       <div class="notice">
         <strong>전체 세션 종료 확인</strong><br>
-        이 작업은 review UI, MCP server, ngrok을 모두 종료합니다. 브라우저의 현재 review UI 연결도 곧 끊깁니다.
+        이 작업은 review UI, MCP server, ngrok 또는 managed Cloudflare connector를 모두 종료합니다. 브라우저의 현재 review UI 연결도 곧 끊깁니다.
       </div>
       <section class="card">
         <h2>Stop full local session?</h2>
         <p class="meta">
-          실행 명령: <code>uv run woojae stop</code><br>
-          다시 시작하려면 터미널에서 <code>uv run woojae start</code>를 실행하세요.
+          실행 명령: <code>uv run terminalbridge stop</code><br>
+          다시 시작하려면 터미널에서 <code>uv run terminalbridge start</code>를 실행하세요.
         </p>
         <div class="button-row">
           <form class="inline" method="post" action="/servers/session/stop">
@@ -2350,7 +2369,7 @@ def full_session_stopping_html() -> str:
     <div class="stack">
       <div class="notice">
         <strong>Full session stop requested</strong><br>
-        review UI, MCP server, ngrok이 곧 종료됩니다.
+        review UI, MCP server, 공개 connector가 곧 종료됩니다.
       </div>
       <section class="card">
         <h2>세션 종료 중</h2>
@@ -2358,7 +2377,7 @@ def full_session_stopping_html() -> str:
           이 페이지가 열린 뒤 잠시 후 review UI 연결이 끊기는 것이 정상입니다.<br>
           다시 시작하려면 터미널에서 다음 명령을 실행하세요.
         </p>
-        <pre>uv run woojae start</pre>
+        <pre>uv run terminalbridge start</pre>
       </section>
     </div>
     """
@@ -2377,7 +2396,7 @@ def schedule_full_session_restart(delay_seconds: float = 0.4) -> None:
             "shell": False,
         }
         popen_kwargs.update(detached_subprocess_kwargs())
-        subprocess.Popen(supervisor_cli_command("restart-session"), **popen_kwargs)
+        subprocess.Popen(operator_cli_command("restart"), **popen_kwargs)
 
     threading.Thread(target=run_restart, name="delayed-session-restart", daemon=True).start()
 
@@ -2387,12 +2406,12 @@ def full_session_restart_confirm_html() -> str:
     <div class="stack">
       <div class="notice">
         <strong>전체 세션 재시작 확인</strong><br>
-        이 작업은 review UI, MCP server, ngrok을 모두 재시작합니다. 브라우저의 현재 review UI 연결이 잠시 끊길 수 있습니다.
+        이 작업은 review UI, MCP server, 선택된 공개 connector를 모두 재시작합니다. 브라우저의 현재 review UI 연결이 잠시 끊길 수 있습니다.
       </div>
       <section class="card">
         <h2>Restart full local session?</h2>
         <p class="meta">
-          실행 명령: <code>uv run woojae restart-session</code><br>
+          실행 명령: <code>uv run terminalbridge restart</code><br>
           재시작 후 review UI가 다시 올라오면 <code>/servers?tab=processes</code>를 새로고침하세요.
         </p>
         <div class="button-row">
@@ -2411,7 +2430,7 @@ def full_session_restarting_html() -> str:
     <div class="stack">
       <div class="notice">
         <strong>Full session restart requested</strong><br>
-        review UI, MCP server, ngrok이 곧 재시작됩니다.
+        review UI, MCP server, 선택된 공개 connector가 곧 재시작됩니다.
       </div>
       <section class="card">
         <h2>세션 재시작 중</h2>
@@ -3326,6 +3345,7 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
     supervisor = state.get("supervisor") if isinstance(state.get("supervisor"), dict) else supervisor_state()
 
     public_access_mode = str(public_access_state.get("mode", "ngrok"))
+    external_tunnel_provider = str(public_access_state.get("provider", "manual"))
     public_hint = public_access_state.get("public_mcp_endpoint_hint") or ngrok.get("public_mcp_endpoint_hint")
     public_hint_value = f"<code>{escape(public_hint)}</code>" if public_hint else "없음"
     pending_url = str(review_dashboard.get("pending_url", "/pending"))
@@ -3338,14 +3358,27 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
         if public_access_mode == "external" and public_hint
         else "https://<NGROK_HOST>/mcp?access_token=<TOKEN>"
     )
-    public_access_label = "External domain" if public_access_mode == "external" else "ngrok"
+    public_access_label = (
+        "Cloudflare"
+        if public_access_mode == "external"
+        and external_tunnel_provider == "cloudflare"
+        else "External domain"
+        if public_access_mode == "external"
+        else "ngrok"
+    )
     public_access_description = (
-        "외부 tunnel/reverse proxy는 별도로 관리하며 공유 connector는 한 컴퓨터에서만 실행합니다."
+        "uv run terminalbridge 명령이 이 사용자의 Cloudflare connector를 관리합니다. 공유 connector는 한 컴퓨터에서만 실행하세요."
+        if public_access_mode == "external"
+        and external_tunnel_provider == "cloudflare"
+        else "외부 tunnel/reverse proxy는 별도로 관리하며 공유 connector는 한 컴퓨터에서만 실행합니다."
         if public_access_mode == "external"
         else "공개 MCP endpoint 구성을 위한 host/base URL 상태"
     )
     process_control_description = (
-        "external 모드에서는 MCP 제어만 제공하며 ngrok은 비활성화됩니다. 전체 session과 review 제어는 터미널에서 수행합니다."
+        "Cloudflare 포함 전체 session 제어는 uv run terminalbridge 명령을 사용합니다. 이 화면에서는 MCP 제어만 제공하며 ngrok은 비활성화됩니다."
+        if public_access_mode == "external"
+        and external_tunnel_provider == "cloudflare"
+        else "external 모드에서는 MCP 제어만 제공하며 ngrok은 비활성화됩니다. 전체 session과 review 제어는 터미널에서 수행합니다."
         if public_access_mode == "external"
         else "이 화면에서는 MCP/ngrok start/stop/restart만 제공합니다. 전체 session start/stop과 review 제어는 터미널에서 수행합니다."
     )
@@ -3425,7 +3458,7 @@ def server_tab_content_html(tab: str, state: dict[str, object], action_notice_ht
               {kv_row_html("Mode", public_access_mode, code_value=True)}
               {kv_row_html("Configured", set_missing_chip(public_access_state.get("configured", "missing")), value_is_html=True)}
               {kv_row_html("Public endpoint hint", public_hint_value, value_is_html=True)}
-              {kv_row_html("Tunnel lifecycle", "external / operator-managed" if public_access_mode == "external" else "ngrok / supervisor-managed", code_value=True)}
+              {kv_row_html("Tunnel lifecycle", "cloudflare / terminalbridge-managed" if public_access_mode == "external" and external_tunnel_provider == "cloudflare" else "external / operator-managed" if public_access_mode == "external" else "ngrok / supervisor-managed", code_value=True)}
             </div>
           </section>
         </div>

@@ -10,22 +10,22 @@
 
 ```bash
 uv sync
-uv run woojae setup
-uv run woojae start
+uv run terminalbridge setup
+uv run terminalbridge start
 ```
 
-`setup` 중에는 공개 연결 방식, ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`, 기본 도움말 언어를 선택합니다. `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, `WOOJAE_HELP_LANG` 같은 기존 shell 환경값이 있으면 그 값을 우선 사용합니다. 자세한 내용은 [공개 연결 모드](public-access.md)를 확인하세요.
+`setup` 중에는 `ngrok`, 관리형 `cloudflare`, 일반 `external` 중 하나와 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`, 기본 도움말 언어를 선택합니다. 각 설치는 해당 사용자의 공개 connector 설정과 credential을 사용합니다. 자세한 내용은 [공개 연결 모드](public-access.md)를 확인하세요.
 
 실제 연결용 MCP URL은 다음 명령으로 복사하는 것을 권장합니다.
 
 ```bash
-uv run woojae copy-url
+uv run terminalbridge copy-url
 ```
 
 미리보기만 확인하려면 다음 명령을 사용합니다.
 
 ```bash
-uv run woojae mcp-url
+uv run terminalbridge mcp-url
 ```
 
 `mcp-url`은 token을 가린 redacted preview일 수 있습니다. 실제 앱 생성 화면에는 `copy-url`로 복사한 실제 연결용 URL을 사용하세요.
@@ -37,7 +37,7 @@ uv run woojae mcp-url
 | 아이콘 | 선택 사항 | 없어도 앱 생성은 가능합니다. 넣는다면 128x128 이상의 PNG를 권장합니다. |
 | 이름 | `Ouroboros Workspace Bridge` | ChatGPT 앱 목록에 보이는 이름입니다. 짧게 `Ouroboros Bridge`로 써도 됩니다. |
 | 설명 | `로컬 워크스페이스에서 파일 변경과 명령 실행을 승인 기반으로 연결하는 MCP 브리지` | 선택 사항이지만 나중에 앱을 구분하기 쉽게 넣는 것을 권장합니다. |
-| MCP 서버 URL | `uv run woojae copy-url`로 복사한 URL | 직접 추측해서 입력하지 말고, 로컬 명령이 만든 실제 URL을 붙여넣으세요. |
+| MCP 서버 URL | `uv run terminalbridge copy-url`로 복사한 URL | 직접 추측해서 입력하지 말고, 로컬 명령이 만든 실제 URL을 붙여넣으세요. |
 | 인증 | 가능하면 `No auth`, `None`, `인증 없음`에 해당하는 옵션 | 이 bridge는 URL query string의 `access_token`으로 보호되는 흐름을 사용합니다. OAuth를 임의로 선택하지 마세요. |
 | 고급 OAuth 설정 | 보통 비워둠 | 이 bridge를 OAuth 모드로 구성한 것이 아니라면 수정하지 않습니다. |
 | 위험 경고 체크박스 | 내용을 이해한 뒤 체크 | 체크해야 `만들기` 버튼이 활성화됩니다. |
@@ -53,10 +53,10 @@ ngrok 모드:
 https://<NGROK_HOST>/mcp?access_token=<TOKEN>
 ```
 
-external 모드 예시:
+Cloudflare 또는 일반 external 모드 예시:
 
 ```text
-https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
+https://terminalbridge.example.com/mcp?access_token=<TOKEN>
 ```
 
 실제 token이 포함된 URL은 비밀값으로 취급하세요.
@@ -66,7 +66,7 @@ https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
 - 다른 사람과 공유하지 마세요.
 - 연결이 끝난 뒤에도 터미널 출력이나 clipboard 기록 노출에 주의하세요.
 
-ngrok 모드에서 `NGROK_HOST`가 설정되어 있지 않으면 temporary URL이 사용될 수 있으며 재시작 후 바뀔 수 있습니다. external 모드는 고정 `PUBLIC_MCP_URL`을 사용하므로 활성 tunnel을 다른 컴퓨터로 옮겨도 ChatGPT connector URL을 유지할 수 있습니다.
+ngrok 모드에서 `NGROK_HOST`가 설정되어 있지 않으면 temporary URL이 사용될 수 있으며 재시작 후 바뀔 수 있습니다. Cloudflare와 일반 external 모드는 고정 `PUBLIC_MCP_URL`을 사용하므로 하나의 활성 connector를 다른 컴퓨터로 옮겨도 ChatGPT connector URL을 유지할 수 있습니다.
 
 ## 인증 선택
 
@@ -102,7 +102,7 @@ ChatGPT 요청
 앱 생성 후 다음을 확인하세요.
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 ```
 
 로컬 review UI:
@@ -135,13 +135,13 @@ review UI에 예상한 command bundle이 올라오면 내용을 확인한 뒤 �
 직접 만들지 말고 다음 명령을 사용하세요.
 
 ```bash
-uv run woojae copy-url
+uv run terminalbridge copy-url
 ```
 
 미리보기만 보고 싶다면:
 
 ```bash
-uv run woojae mcp-url
+uv run terminalbridge mcp-url
 ```
 
 ### 인증에서 무엇을 골라야 하나요?
@@ -153,11 +153,11 @@ uv run woojae mcp-url
 다음을 확인하세요.
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 ```
 
-- `uv run woojae start`가 실행 중인지 확인합니다.
-- ngrok URL이 바뀌지 않았는지 또는 external tunnel이 의도한 컴퓨터를 가리키는지 확인합니다.
+- `uv run terminalbridge status`에서 review, MCP와 선택한 connector가 정상인지 확인합니다.
+- ngrok URL이 바뀌지 않았는지 또는 Cloudflare/external connector가 의도한 컴퓨터를 가리키는지 확인합니다.
 - ChatGPT 앱의 MCP 서버 URL을 최신 URL로 갱신했는지 확인합니다.
 - `http://127.0.0.1:8790/pending` 페이지가 열리는지 확인합니다.
 
