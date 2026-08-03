@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import argparse
-import json
+import asyncio
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+from terminal_bridge import session_supervisor
+from terminal_bridge.public_access import PublicAccessConfigError
 
 
 def redact_sensitive_text(value: str) -> str:
@@ -128,40 +133,32 @@ def check_git_diff() -> None:
     require_success("git diff --check", result)
 
 
-def check_workspace_info(mcp_url: str, timeout: int) -> None:
-    if shutil.which("npx") is None:
-        raise RuntimeError("npx is required for MCP inspector checks but was not found on PATH.")
+async def call_workspace_info(
+    base_url: str,
+    token: str,
+    timeout: int,
+) -> dict[str, object]:
+    headers = {"Authorization": f"Bearer {token}"}
+    async with streamablehttp_client(
+        base_url,
+        headers=headers,
+        timeout=float(timeout),
+        sse_read_timeout=float(timeout),
+    ) as (read_stream, write_stream, _get_session_id):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            result = await session.call_tool("workspace_info", {})
 
-    result = run_command(
-        [
-            "npx",
-            "-y",
-            "@modelcontextprotocol/inspector",
-            "--cli",
-            mcp_url,
-            "--transport",
-            "http",
-            "--method",
-            "tools/call",
-            "--tool-name",
-            "workspace_info",
-        ],
-        timeout=timeout,
-    )
-    require_success("workspace_info inspector call", result)
-
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Inspector output was not valid JSON: {exc}") from exc
-
-    if payload.get("isError"):
-        raise RuntimeError(f"workspace_info returned isError=true: {payload}")
-
-    structured = payload.get("structuredContent")
+    if result.isError:
+        raise RuntimeError("workspace_info returned isError=true")
+    structured = result.structuredContent
     if not isinstance(structured, dict):
         raise RuntimeError("workspace_info response did not include structuredContent.")
+    return structured
 
+
+def check_workspace_info(base_url: str, token: str, timeout: int) -> None:
+    structured = asyncio.run(call_workspace_info(base_url, token, timeout))
     tools = structured.get("tools")
     if not isinstance(tools, list):
         raise RuntimeError("workspace_info response did not include a tools list.")
@@ -184,28 +181,92 @@ def main() -> int:
     parser.add_argument(
         "--mcp-url",
         default=os.environ.get("MCP_URL"),
-        help="Optional MCP URL to verify through MCP Inspector. Can also be set via MCP_URL.",
+        help=(
+            "Optional token-free public MCP base URL. The token is loaded from "
+            "MCP_ACCESS_TOKEN. Token-bearing URLs are rejected."
+        ),
+    )
+    parser.add_argument(
+        "--remote",
+        action="store_true",
+        help="Verify the configured public MCP endpoint using the private session token.",
+    )
+    parser.add_argument(
+        "--remote-only",
+        action="store_true",
+        help="Run only the configured remote MCP check, without repeating local checks.",
     )
     parser.add_argument(
         "--timeout",
         type=int,
         default=120,
-        help="Timeout in seconds for Inspector-based checks.",
+        help="Timeout in seconds for remote MCP checks.",
     )
 
     args = parser.parse_args()
 
-    checks = [
-        ("py_compile", lambda: check_local_python()),
-        ("script entrypoint imports", lambda: check_script_entrypoint_imports()),
-        ("unit tests", lambda: check_unit_tests()),
-        ("git diff --check", lambda: check_git_diff()),
-    ]
+    checks = []
+    if not args.remote_only:
+        checks.extend(
+            [
+                ("py_compile", lambda: check_local_python()),
+                ("script entrypoint imports", lambda: check_script_entrypoint_imports()),
+                ("unit tests", lambda: check_unit_tests()),
+                ("git diff --check", lambda: check_git_diff()),
+            ]
+        )
 
-    if args.mcp_url:
-        checks.append(("workspace_info", lambda: check_workspace_info(args.mcp_url, args.timeout)))
+    if args.remote or args.remote_only:
+        try:
+            settings = session_supervisor.load_settings()
+        except PublicAccessConfigError as exc:
+            print(f"Remote MCP smoke skipped: {exc}")
+        else:
+            if settings.public_mcp_base_url and settings.mcp_access_token:
+                checks.append(
+                    (
+                        "workspace_info",
+                        lambda: check_workspace_info(
+                            settings.public_mcp_base_url,
+                            settings.mcp_access_token,
+                            args.timeout,
+                        ),
+                    )
+                )
+            else:
+                print(
+                    "A fixed public MCP endpoint and MCP_ACCESS_TOKEN are required; "
+                    "skipping remote MCP checks."
+                )
+    elif args.mcp_url:
+        from urllib.parse import parse_qs, urlsplit, urlunsplit
+
+        parsed = urlsplit(args.mcp_url)
+        query = parse_qs(parsed.query, keep_blank_values=False)
+        if query.get("access_token") or query.get("token"):
+            print(
+                "Smoke check failed: token-bearing --mcp-url values are not allowed. "
+                "Use --remote or pass a token-free base URL with MCP_ACCESS_TOKEN "
+                "stored privately.",
+                file=sys.stderr,
+            )
+            return 2
+        token = os.environ.get("MCP_ACCESS_TOKEN", "")
+        base_url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+        if base_url and token:
+            checks.append(
+                (
+                    "workspace_info",
+                    lambda: check_workspace_info(base_url, token, args.timeout),
+                )
+            )
+        else:
+            print(
+                "A token-free --mcp-url and private MCP_ACCESS_TOKEN are both required; "
+                "skipping remote checks."
+            )
     else:
-        print("MCP_URL was not provided; skipping Inspector-based MCP checks.")
+        print("Remote MCP checks were not requested; use --remote to enable them.")
 
     try:
         for name, check in checks:

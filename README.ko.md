@@ -20,11 +20,11 @@ Ouroboros by KwakWooJae의 일부입니다.
 - 파일 수정은 바로 적용되지 않고 검토 가능한 proposal로 만들어집니다.
 - 명령은 사용자가 로컬에서 승인한 뒤에만 실행됩니다.
 - 런타임 데이터는 repository 밖에 저장됩니다.
-- 공식 실행 흐름은 `uv run woojae ...`입니다.
+- 공식 운영 흐름은 `uv run terminalbridge ...`이며, 저수준 진단에는 `uv run woojae ...`를 사용할 수 있습니다.
 
 ## 빠른 시작
 
-준비물: Python 3.12+, `uv`, custom MCP app/connector를 만들 수 있는 ChatGPT 환경. 기본 공개 연결 방식에는 ngrok CLI를 사용하고, 직접 관리하는 HTTPS 도메인/tunnel이 있다면 external 모드를 사용할 수 있습니다.
+준비물: Python 3.12+, `uv`, custom MCP app/connector를 만들 수 있는 ChatGPT 환경. 각 설치는 해당 사용자의 ngrok 계정, Cloudflare 계정·tunnel·도메인 또는 다른 HTTPS connector를 사용합니다.
 
 macOS/Linux:
 
@@ -32,9 +32,9 @@ macOS/Linux:
 git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
 cd ouroboros-workspace-bridge
 uv sync
-uv run woojae setup
-uv run woojae start
-uv run woojae mcp-url
+uv run terminalbridge setup
+uv run terminalbridge start
+uv run terminalbridge mcp-url
 ```
 
 Windows PowerShell:
@@ -43,28 +43,30 @@ Windows PowerShell:
 git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
 cd ouroboros-workspace-bridge
 uv sync
-uv run woojae setup
-uv run woojae start
-uv run woojae mcp-url
+uv run terminalbridge setup
+uv run terminalbridge start
+uv run terminalbridge mcp-url
 ```
 
-setup 중에는 공개 연결 방식, ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`, 기본 도움말 언어를 선택합니다. 기존 shell 환경값인 `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, `WOOJAE_HELP_LANG`가 있으면 이를 존중합니다.
+setup 중에는 `ngrok`, 관리형 `cloudflare`, 일반 `external` 중 하나와 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`, 기본 도움말 언어를 선택합니다. 기존 shell·runtime 설정값은 그대로 존중합니다.
 
 공개 연결 방식:
 
-- `ngrok`(기본값): 기존과 동일하게 supervisor가 ngrok을 시작하고 관리합니다.
-- `external`: `https://terminalbridge.woojae.dev/mcp` 같은 고정 endpoint를 설정하고, supervisor는 review와 MCP만 시작합니다. Cloudflare Tunnel 또는 reverse proxy는 사용자가 별도로 관리합니다.
-- review UI는 localhost 전용으로 유지하고, 공유 external 도메인의 connector는 한 번에 한 컴퓨터에서만 실행하세요.
+- `ngrok`(기본값): review, MCP와 사용자의 ngrok connector를 시작합니다.
+- `cloudflare`: review, MCP와 사용자 자신의 계정·config에 등록된 named Cloudflare Tunnel을 시작합니다.
+- `external`: review와 MCP만 시작하고 다른 proxy 또는 tunnel은 사용자가 프로젝트 밖에서 관리합니다.
+- 관리자 token, 도메인, tunnel ID 또는 credential은 제품의 작동 기본값으로 제공되지 않습니다.
+- review UI는 localhost 전용으로 유지하고, 공유 도메인의 connector는 한 번에 한 컴퓨터에서만 실행하세요.
 
 선택형 브라우저 온보딩:
 
 ```bash
-uv run woojae setup-ui
+uv run terminalbridge setup-ui
 ```
 
-`setup-ui`는 처음 쓰는 사용자를 위한 임시 localhost 설정 마법사입니다. 선택한 모드에 맞는 ngrok 또는 external 도메인 안내, workspace 개념, ChatGPT 앱 연결, 첫 성공 테스트를 한 화면에서 보여줍니다. `uv run woojae setup`을 대체하지 않으며, 일반 review/MCP 세션을 시작하거나 중지하거나 재시작하지 않습니다.
+`setup-ui`는 처음 쓰는 사용자를 위한 임시 localhost 설정 마법사입니다. 선택한 모드에 맞는 ngrok, 관리형 Cloudflare 또는 일반 external 안내, workspace 개념, ChatGPT 앱 연결, 첫 성공 테스트를 한 화면에서 보여줍니다. `uv run terminalbridge setup`을 대체하지 않으며 일반 세션을 시작하거나 중지하거나 재시작하지 않습니다.
 
-`uv run woojae mcp-url`은 token을 노출하지 않고 redacted URL preview만 보여줍니다. 고정 공개 endpoint, `MCP_ACCESS_TOKEN`, 플랫폼 clipboard helper가 준비되어 있고 실제 연결용 URL을 ChatGPT에 붙여넣을 준비가 되었을 때 `uv run woojae copy-url`을 사용하세요.
+`uv run terminalbridge mcp-url`은 token을 노출하지 않고 redacted URL preview만 보여줍니다. 고정 공개 endpoint, `MCP_ACCESS_TOKEN`, 플랫폼 clipboard helper가 준비되어 있고 실제 연결용 URL을 ChatGPT에 붙여넣을 준비가 되었을 때 `uv run terminalbridge copy-url`을 사용하세요.
 
 다음 단계:
 
@@ -84,18 +86,18 @@ uv run woojae setup-ui
 로컬 세션 종료:
 
 ```bash
-uv run woojae stop
+uv run terminalbridge stop
 ```
 
 선택 설치 helper:
 
-이 스크립트는 필수가 아닌 OS별 설치 보조 도구입니다. `uv run woojae setup`을 대체하지 않고, 일반적인 `uv run woojae ...` 흐름을 더 편하게 사용할 수 있도록 로컬 편의 기능을 준비합니다.
+이 스크립트는 필수가 아닌 OS별 설치 보조 도구입니다. `uv run terminalbridge setup`을 대체하지 않고 일반 운영 흐름을 더 편하게 사용할 수 있도록 로컬 편의 기능을 준비합니다.
 
 - `./install.sh`: macOS/Linux용 Bash helper.
 - `./install.ps1`: Windows PowerShell용 helper.
 - Python 의존성을 설치/동기화하고, 로컬 워크플로우에 필요한 플랫폼 도구를 확인하거나 안내합니다.
 - 플랫폼 도구에는 브라우저 열기, clipboard 복사 helper, pending review 알림용 desktop notification 기능이 포함됩니다.
-- helper 실행 후에는 `uv run woojae setup` 또는 `uv run woojae setup-ui`로 실제 설정을 이어가세요.
+- helper 실행 후에는 `uv run terminalbridge setup` 또는 `uv run terminalbridge setup-ui`로 실제 설정을 이어가세요.
 
 ## 업데이트
 

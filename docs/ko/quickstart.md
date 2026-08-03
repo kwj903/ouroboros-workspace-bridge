@@ -2,7 +2,7 @@
 
 Ouroboros Workspace Bridge를 처음 실행해서 ChatGPT에 연결하는 가장 짧은 절차입니다.
 
-권장 사용 방식은 repository checkout에서 `uv run woojae ...`를 실행하는 것입니다. `scripts/dev_session.sh`와 `scripts/dev_session.ps1`은 같은 CLI를 호출하는 호환 wrapper입니다.
+일반 설정과 전체 연결 스택 운영에는 `uv run terminalbridge ...`를 사용합니다. `uv run woojae ...`와 기존 `scripts/dev_session.*` wrapper는 저수준 Bridge 진단과 하위 호환을 위해 유지됩니다.
 
 ## 준비물
 
@@ -11,12 +11,15 @@ Ouroboros Workspace Bridge를 처음 실행해서 ChatGPT에 연결하는 가장
 - Windows 10/11: PowerShell과 공용 Python supervisor 흐름 지원. 공개 tunnel, 방화벽, browser, clipboard 동작은 로컬 환경에 맞게 확인 필요
 - Python 3.12+
 - `uv`
-- ngrok 계정과 ngrok CLI 또는 직접 관리하는 HTTPS 도메인/tunnel
+- 사용자 자신의 ngrok 계정과 CLI, 사용자 자신의 Cloudflare 계정과 named tunnel 또는 다른 HTTPS connector
 
-`uv run woojae setup`에서 공개 연결 방식을 선택합니다.
+`uv run terminalbridge setup`에서 공개 연결 방식을 선택합니다.
 
-- `ngrok`은 기본값이며 기존 managed tunnel 흐름을 유지합니다.
-- `external`은 `https://terminalbridge.woojae.dev/mcp` 같은 고정 endpoint를 사용하고 tunnel lifecycle은 Bridge 밖에서 관리합니다.
+- `ngrok`은 기본값이며 기존 managed connector 흐름을 유지합니다.
+- `cloudflare`는 사용자의 `cloudflared` tunnel을 review·MCP와 함께 시작합니다.
+- `external`은 `https://terminalbridge.example.com/mcp` 같은 고정 endpoint를 사용하고 다른 proxy 또는 tunnel은 사용자가 별도로 관리합니다.
+
+관리자 도메인, token, tunnel ID 또는 credential은 작동 기본값으로 사용되지 않습니다.
 
 도메인 인계와 보안 규칙은 [공개 연결 모드](public-access.md)를 확인하세요.
 
@@ -28,7 +31,7 @@ Ouroboros Workspace Bridge를 처음 실행해서 ChatGPT에 연결하는 가장
 4. `ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>`으로 authtoken을 로컬에 저장합니다.
 5. reserved domain은 선택 사항입니다.
 
-`NGROK_HOST`를 설정하지 않아도 첫 실행은 temporary URL mode로 가능합니다. 다만 `uv run woojae copy-url`은 고정 `NGROK_HOST`와 `MCP_ACCESS_TOKEN`이 모두 있어야 동작합니다.
+`NGROK_HOST`를 설정하지 않아도 첫 실행은 temporary URL mode로 가능합니다. 다만 `uv run terminalbridge copy-url`은 고정 `NGROK_HOST`와 `MCP_ACCESS_TOKEN`이 모두 있어야 동작합니다.
 
 자주 쓰는 설치 명령:
 
@@ -75,14 +78,14 @@ winget이 없거나 Microsoft Store 사용이 막혀 있으면 [ngrok 공식 다
 git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
 cd ouroboros-workspace-bridge
 uv sync
-uv run woojae setup
+uv run terminalbridge setup
 ```
 
 선택 사항으로 Bash helper를 사용할 수 있습니다.
 
 ```bash
 ./install.sh
-uv run woojae setup
+uv run terminalbridge setup
 ```
 
 `install.sh`는 Bash 전용입니다. Windows PowerShell에서는 `install.ps1`을 사용하세요.
@@ -93,14 +96,14 @@ uv run woojae setup
 git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
 cd ouroboros-workspace-bridge
 uv sync
-uv run woojae setup
+uv run terminalbridge setup
 ```
 
 선택 사항으로 PowerShell helper를 사용할 수 있습니다.
 
 ```powershell
 .\install.ps1
-uv run woojae setup
+uv run terminalbridge setup
 ```
 
 setup 중에는 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 도움말 언어(`Help language`)를 고릅니다. `Help language`를 `ko`로 저장하면 `uv run woojae help`가 기본적으로 한국어 설명을 표시합니다. 이미 shell에 `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, `WOOJAE_HELP_LANG`이 설정되어 있으면 그 값이 runtime `session.env`보다 우선합니다.
@@ -108,15 +111,15 @@ setup 중에는 ChatGPT가 접근할 수 있는 `WORKSPACE_ROOT`와 도움말 �
 초보자용 브라우저 온보딩을 함께 보고 싶으면 선택적으로 실행할 수 있습니다.
 
 ```bash
-uv run woojae setup-ui
+uv run terminalbridge setup-ui
 ```
 
-`setup-ui`는 `uv run woojae setup`을 대체하지 않습니다. 일회성 localhost 안내 화면이며, ngrok 준비, workspace 개념, ChatGPT 앱 연결, 첫 성공 테스트를 안내합니다. 기존 `/pending` 운영 UI와 달리 start/stop/restart 버튼은 제공하지 않습니다.
+`setup-ui`는 `uv run terminalbridge setup`을 대체하지 않습니다. 일회성 localhost 안내 화면이며 ngrok, Cloudflare 또는 일반 external 준비, workspace 개념, ChatGPT 앱 연결, 첫 성공 테스트를 안내합니다. 기존 `/pending` 운영 UI와 달리 start/stop/restart 버튼은 제공하지 않습니다.
 
 ## 시작
 
 ```bash
-uv run woojae start
+uv run terminalbridge start
 ```
 
 로컬 승인 UI:
@@ -132,22 +135,22 @@ http://127.0.0.1:8790/pending
 1. 로컬 세션을 시작합니다.
 
 ```bash
-uv run woojae start
+uv run terminalbridge start
 ```
 
 2. 로컬 review UI를 엽니다.
 
 ```bash
-uv run woojae open
+uv run terminalbridge open
 ```
 
 3. MCP URL을 복사합니다.
 
 ```bash
-uv run woojae copy-url
+uv run terminalbridge copy-url
 ```
 
-`copy-url`은 실제 MCP URL을 clipboard에 복사합니다. macOS는 `pbcopy`, Linux는 `xclip`, Windows는 `clip`이 있으면 사용합니다. `uv run woojae mcp-url`은 redacted URL preview만 출력합니다. 터미널에는 token을 출력하지 않습니다.
+`copy-url`은 실제 MCP URL을 clipboard에 복사합니다. macOS는 `pbcopy`, Linux는 `xclip`, Windows는 `clip`이 있으면 사용합니다. `uv run terminalbridge mcp-url`은 redacted URL preview만 출력합니다. 터미널에는 token을 출력하지 않습니다.
 
 URL 형식은 다음과 같습니다.
 
@@ -157,10 +160,10 @@ ngrok 모드:
 https://<NGROK_HOST>/mcp?access_token=<TOKEN>
 ```
 
-external 모드 예시:
+Cloudflare 또는 일반 external 모드 예시:
 
 ```text
-https://terminalbridge.woojae.dev/mcp?access_token=<TOKEN>
+https://terminalbridge.example.com/mcp?access_token=<TOKEN>
 ```
 
 실제 token을 문서, screenshot, chat, GitHub issue에 붙여넣거나 공유하지 마세요.
@@ -174,7 +177,7 @@ ChatGPT UI는 바뀔 수 있으므로 일반적으로는 settings, connector, ap
 - 아이콘: 선택 사항입니다.
 - 이름: `Ouroboros Workspace Bridge` 또는 `Woojae Workspace Bridge`
 - 설명: `Local MCP bridge for approved workspace file and command operations.`
-- MCP 서버 URL: `uv run woojae copy-url`로 복사한 URL을 붙여넣습니다.
+- MCP 서버 URL: `uv run terminalbridge copy-url`로 복사한 URL을 붙여넣습니다.
 - 인증: access token이 MCP URL query string에 이미 포함되어 있으면 `No auth` 또는 이에 해당하는 항목을 선택합니다.
 - 고급 OAuth 설정: 제품 UI가 요구하지 않는 한 비워둡니다.
 - warning checkbox: custom MCP server는 데이터와 도구에 접근할 수 있습니다. 본인이 신뢰하는 local bridge라는 점과 위험을 이해한 뒤에만 체크하세요.
@@ -201,7 +204,7 @@ http://127.0.0.1:8790/pending
 redacted URL 미리보기만 보고 싶으면 다음 명령을 사용할 수 있습니다.
 
 ```bash
-uv run woojae mcp-url
+uv run terminalbridge mcp-url
 ```
 
 ## Approval mode
@@ -212,9 +215,9 @@ uv run woojae mcp-url
 
 ## Temporary ngrok URL 주의
 
-`NGROK_HOST`가 없으면 `woojae copy-url`이 동작하지 않을 수 있습니다. temporary ngrok URL은 재시작 후 바뀔 수 있어서 ChatGPT app의 MCP URL도 다시 수정해야 할 수 있습니다.
+`NGROK_HOST`가 없으면 `terminalbridge copy-url`이 안정적인 ngrok URL을 만들지 못할 수 있습니다. temporary ngrok URL은 재시작 후 바뀔 수 있어서 ChatGPT app의 MCP URL도 다시 수정해야 할 수 있습니다.
 
-가장 안정적인 사용을 위해 ngrok reserved domain을 만들고 `uv run woojae setup`에서 `NGROK_HOST`를 설정하는 것을 권장합니다.
+가장 안정적인 사용을 위해 ngrok reserved domain을 만들고 `uv run terminalbridge setup`에서 `NGROK_HOST`를 설정하는 것을 권장합니다.
 
 ## 기존 설치 업데이트
 
@@ -266,5 +269,5 @@ ChatGPT가 파일 수정이나 명령 실행을 요청하면 pending bundle이 �
 ## 종료
 
 ```bash
-uv run woojae stop
+uv run terminalbridge stop
 ```

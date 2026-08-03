@@ -1,6 +1,6 @@
 # pending review UI 사용하기
 
-이 문서는 `uv run woojae start`로 로컬 세션을 시작한 뒤, 브라우저에서 여는 pending review UI를 사용하는 방법을 설명합니다.
+이 문서는 `uv run terminalbridge start`로 전체 연결 스택을 시작한 뒤 브라우저에서 여는 pending review UI 사용법을 설명합니다.
 
 ```text
 http://127.0.0.1:8790/pending
@@ -96,7 +96,7 @@ YOLO mode is ON. Pending bundles may be auto-approved except blocked-risk bundle
 새 작업을 요청한 뒤에도 계속 비어 있다면 다음을 확인하세요.
 
 ```bash
-uv run woojae status
+uv run terminalbridge status
 ```
 
 그리고 ChatGPT 앱 연결 URL이 최신인지 확인하세요.
@@ -147,17 +147,17 @@ review UI에 예상한 확인 bundle이 올라오면 내용을 확인한 뒤 승
 7. 작업이 끝나면 필요하면 세션을 종료합니다.
 
 ```bash
-uv run woojae stop
+uv run terminalbridge stop
 ```
 
 ## 자주 막히는 문제
 
 ### 승인 대기 번들이 보이지 않아요
 
-- `uv run woojae start`가 실행 중인지 확인하세요.
+- `uv run terminalbridge start`가 실행 중인지 확인하세요.
 - ChatGPT 앱의 MCP 서버 URL이 최신인지 확인하세요.
 - temporary ngrok URL을 쓰고 있다면 재시작 후 URL이 바뀌었을 수 있습니다.
-- `uv run woojae status`로 review와 mcp 상태를 확인하세요.
+- `uv run terminalbridge status`로 review, mcp와 공개 connector 상태를 확인하세요.
 
 ### 빨간 경고가 보여요
 

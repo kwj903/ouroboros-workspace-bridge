@@ -4,6 +4,8 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 
 PUBLIC_ACCESS_MODES = frozenset({"ngrok", "external"})
+EXTERNAL_TUNNEL_PROVIDERS = frozenset({"manual", "cloudflare"})
+OPERATOR_MODES = frozenset({"ngrok", "cloudflare", "external"})
 
 
 class PublicAccessConfigError(ValueError):
@@ -16,6 +18,26 @@ def normalize_public_access_mode(value: str) -> str:
         supported = ", ".join(sorted(PUBLIC_ACCESS_MODES))
         raise PublicAccessConfigError(
             f"Unsupported PUBLIC_ACCESS_MODE={value!r}. Supported values: {supported}."
+        )
+    return mode
+
+
+def normalize_external_tunnel_provider(value: str) -> str:
+    provider = value.strip().lower() or "manual"
+    if provider not in EXTERNAL_TUNNEL_PROVIDERS:
+        supported = ", ".join(sorted(EXTERNAL_TUNNEL_PROVIDERS))
+        raise PublicAccessConfigError(
+            f"Unsupported EXTERNAL_TUNNEL_PROVIDER={value!r}. Supported values: {supported}."
+        )
+    return provider
+
+
+def normalize_operator_mode(value: str) -> str:
+    mode = value.strip().lower()
+    if mode not in OPERATOR_MODES:
+        supported = ", ".join(sorted(OPERATOR_MODES))
+        raise PublicAccessConfigError(
+            f"Unsupported operator mode={value!r}. Supported values: {supported}."
         )
     return mode
 

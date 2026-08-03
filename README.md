@@ -20,11 +20,11 @@ Author: KwakWooJae
 - File edits are staged as reviewable proposals.
 - Commands run only after local approval.
 - Runtime data stays outside your repository.
-- Built for `uv run woojae ...` workflows.
+- Built for `uv run terminalbridge ...` operation with `uv run woojae ...` available for low-level diagnostics.
 
 ## Quick Start
 
-Prerequisites: Python 3.12+, `uv`, and a ChatGPT environment that can create a custom MCP app/connector. Use the ngrok CLI for the default public access mode, or provide an externally managed HTTPS domain/tunnel.
+Prerequisites: Python 3.12+, `uv`, and a ChatGPT environment that can create a custom MCP app/connector. Each installation uses that user's own ngrok account, Cloudflare account/tunnel/domain, or another external HTTPS connector.
 
 macOS/Linux:
 
@@ -32,9 +32,9 @@ macOS/Linux:
 git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
 cd ouroboros-workspace-bridge
 uv sync
-uv run woojae setup
-uv run woojae start
-uv run woojae mcp-url
+uv run terminalbridge setup
+uv run terminalbridge start
+uv run terminalbridge mcp-url
 ```
 
 Windows PowerShell:
@@ -43,28 +43,30 @@ Windows PowerShell:
 git clone https://github.com/kwj903/ouroboros-workspace-bridge.git
 cd ouroboros-workspace-bridge
 uv sync
-uv run woojae setup
-uv run woojae start
-uv run woojae mcp-url
+uv run terminalbridge setup
+uv run terminalbridge start
+uv run terminalbridge mcp-url
 ```
 
-During setup, choose the public access mode, the `WORKSPACE_ROOT` ChatGPT may access, and the default help language. Existing shell environment values such as `PUBLIC_ACCESS_MODE`, `PUBLIC_MCP_URL`, `WORKSPACE_ROOT`, `NGROK_HOST`, `MCP_ACCESS_TOKEN`, and `WOOJAE_HELP_LANG` are respected.
+During setup, choose `ngrok`, managed `cloudflare`, or generic `external`, the `WORKSPACE_ROOT` ChatGPT may access, and the default help language. Existing shell and runtime settings are respected.
 
-Public access modes:
+Public connection modes:
 
-- `ngrok` (default): the supervisor starts and manages ngrok exactly as before.
-- `external`: configure a fixed endpoint such as `https://terminalbridge.woojae.dev/mcp`; the supervisor starts only review and MCP, while you manage Cloudflare Tunnel or another reverse proxy separately.
-- Keep the review UI local-only and run a shared external-domain connector on only one computer at a time.
+- `ngrok` (default): starts review, MCP, and the user's own ngrok connector.
+- `cloudflare`: starts review, MCP, and the user's configured named Cloudflare Tunnel from their own account and config.
+- `external`: starts review and MCP while another user-managed proxy or tunnel remains outside the project lifecycle.
+- No maintainer token, domain, tunnel ID, or credential is a working product default.
+- Keep the review UI local-only and run a shared-domain connector on only one computer at a time.
 
 Optional browser onboarding:
 
 ```bash
-uv run woojae setup-ui
+uv run terminalbridge setup-ui
 ```
 
-`setup-ui` opens a temporary localhost setup wizard for first-time users. It shows mode-aware ngrok or external-domain guidance, workspace concepts, ChatGPT app connection, and the first success test. It does not replace `uv run woojae setup` and does not start, stop, or restart the normal review/MCP session.
+`setup-ui` opens a temporary localhost setup wizard for first-time users. It shows mode-aware ngrok, managed Cloudflare, or generic external guidance, workspace concepts, ChatGPT app connection, and the first success test. It does not replace `uv run terminalbridge setup` and does not start, stop, or restart the normal session.
 
-`uv run woojae mcp-url` prints a redacted URL preview for checking configuration without exposing the token. Use `uv run woojae copy-url` when a fixed public endpoint, `MCP_ACCESS_TOKEN`, and a platform clipboard helper are configured and you are ready to paste the real token-protected MCP URL into ChatGPT.
+`uv run terminalbridge mcp-url` prints a redacted URL preview for checking configuration without exposing the token. Use `uv run terminalbridge copy-url` when a fixed public endpoint, `MCP_ACCESS_TOKEN`, and a platform clipboard helper are configured and you are ready to paste the real token-protected MCP URL into ChatGPT.
 
 Next steps:
 
@@ -84,18 +86,18 @@ Approve only the expected pending bundle in the local review UI.
 Stop the local session:
 
 ```bash
-uv run woojae stop
+uv run terminalbridge stop
 ```
 
 Optional install helpers:
 
-These scripts are optional OS-specific setup helpers. They do not replace `uv run woojae setup`; they prepare local conveniences so the normal `uv run woojae ...` workflow is easier to use.
+These scripts are optional OS-specific setup helpers. They do not replace `uv run terminalbridge setup`; they prepare local conveniences so the normal operator workflow is easier to use.
 
 - `./install.sh`: Bash helper for macOS/Linux.
 - `./install.ps1`: PowerShell helper for Windows.
 - They install/sync Python dependencies and check or guide platform tools used by the local workflow.
 - Platform tools include browser opening, clipboard copy helpers, and desktop notifications for pending review events when available.
-- After running a helper, continue with `uv run woojae setup` or `uv run woojae setup-ui`.
+- After running a helper, continue with `uv run terminalbridge setup` or `uv run terminalbridge setup-ui`.
 
 ## Update
 
