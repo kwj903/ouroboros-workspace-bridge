@@ -16,10 +16,6 @@ from terminal_bridge.models import (
     OperationListResult,
     OperationStatusResult,
     RecoverySnapshotResult,
-    TaskListEntry,
-    TaskListResult,
-    TaskStatusResult,
-    TaskStepEntry,
     TransportGitStatusSummary,
     TransportProbeResult,
     ToolCallListResult,
@@ -283,7 +279,6 @@ def list_handoffs(
     client_id: str | None = None,
     session_id: str | None = None,
     project_id: str | None = None,
-    workspace_mode: str | None = None,
 ) -> HandoffListResult:
     entries = [
         handoff_entry(record)
@@ -293,7 +288,6 @@ def list_handoffs(
             client_id=client_id,
             session_id=session_id,
             project_id=project_id,
-            workspace_mode=workspace_mode,
         )
     ]
     return HandoffListResult(entries=entries, count=len(entries))
@@ -392,92 +386,6 @@ def list_trash(
 
     entries = list_trash_entries(limit)
     return TrashListResult(entries=entries, count=len(entries))
-
-
-def task_result(record: dict[str, object]) -> TaskStatusResult:
-    raw_steps = record.get("steps")
-    steps: list[TaskStepEntry] = []
-
-    if isinstance(raw_steps, list):
-        for raw_step in raw_steps:
-            if not isinstance(raw_step, dict):
-                continue
-
-            steps.append(
-                TaskStepEntry(
-                    ts=str(raw_step.get("ts", "")),
-                    kind=str(raw_step.get("kind", "note")),
-                    message=str(raw_step.get("message", "")),
-                    data=raw_step.get("data") if isinstance(raw_step.get("data"), dict) else None,
-                )
-            )
-
-    raw_plan = record.get("plan")
-    plan = [str(item) for item in raw_plan] if isinstance(raw_plan, list) else []
-
-    raw_next_steps = record.get("next_steps")
-    next_steps = [str(item) for item in raw_next_steps] if isinstance(raw_next_steps, list) else []
-
-    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-
-    return TaskStatusResult(
-        task_id=str(record.get("task_id", "")),
-        title=str(record.get("title", "")),
-        goal=str(record.get("goal", "")),
-        status=str(record.get("status", "unknown")),
-        created_at=str(record.get("created_at", "")),
-        updated_at=str(record.get("updated_at", "")),
-        finished_at=record.get("finished_at") if isinstance(record.get("finished_at"), str) else None,
-        plan=plan,
-        steps=steps,
-        metadata=metadata,
-        summary=record.get("summary") if isinstance(record.get("summary"), str) else None,
-        next_steps=next_steps,
-    )
-
-
-def task_status(
-    normalize_task_id: NormalizeId,
-    read_task: ReadRecord,
-    task_id: str,
-) -> TaskStatusResult:
-    normalized = normalize_task_id(task_id)
-    record = read_task(normalized)
-
-    return task_result(record)
-
-
-def list_tasks(
-    ensure_runtime_dirs: EnsureRuntimeDirs,
-    list_task_paths: ListPaths,
-    limit: int,
-) -> TaskListResult:
-    ensure_runtime_dirs()
-
-    entries: list[TaskListEntry] = []
-
-    for task_path in list_task_paths():
-        try:
-            record = json.loads(task_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-
-        entries.append(
-            TaskListEntry(
-                task_id=str(record.get("task_id", task_path.stem)),
-                title=str(record.get("title", "")),
-                status=str(record.get("status", "unknown")),
-                created_at=str(record.get("created_at", "")),
-                updated_at=str(record.get("updated_at", "")),
-                finished_at=record.get("finished_at") if isinstance(record.get("finished_at"), str) else None,
-                summary=record.get("summary") if isinstance(record.get("summary"), str) else None,
-            )
-        )
-
-        if len(entries) >= limit:
-            break
-
-    return TaskListResult(entries=entries, count=len(entries))
 
 
 def git_status(run_command: RunCommand, cwd: str) -> CommandResult:

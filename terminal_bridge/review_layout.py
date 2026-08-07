@@ -10,7 +10,6 @@ VALID_SERVER_TABS = {
     "environment",
     "tools",
     "storage_cleanup",
-    "worktree_tasks",
     "diagnostics",
 }
 SERVER_TAB_LABELS = {
@@ -21,7 +20,6 @@ SERVER_TAB_LABELS = {
     "environment": "환경",
     "tools": "로컬 도구",
     "storage_cleanup": "저장소 정리",
-    "worktree_tasks": "Worktree Task 관리",
     "diagnostics": "진단",
 }
 
@@ -67,7 +65,6 @@ def management_nav_html(current_tab: str) -> str:
         "environment",
         "tools",
         "storage_cleanup",
-        "worktree_tasks",
         "diagnostics",
     ):
         classes = ["side-link"]

@@ -45,14 +45,6 @@ ChatGPT 요청
 
 승인 대기 bundle, session 설정, secret, 실행 중인 pid 파일은 정리 대상에서 제외됩니다.
 
-## Worktree Task 관리
-
-`관리 > Worktree Task 관리`는 실제 Git 상태와 Workspace Bridge 작업 이력을 분리해서 보여줍니다.
-
-- 현재 브랜치, 남아있는 `task/*` 브랜치, 작업용 git worktree를 현재 repo에서 직접 조회합니다.
-- task 브랜치나 작업용 worktree가 남아 있으면 체크박스 확인 후 바로 삭제/제거할 수 있습니다.
-- 과거 Worktree Task 이력은 감사용 record이며, 브랜치나 worktree가 실제로 남았다는 뜻은 아닙니다.
-
 ## Approval mode
 
 Approval mode는 pending bundle을 얼마나 자동으로 처리할지 정하는 설정입니다.
@@ -61,23 +53,26 @@ Approval mode는 pending bundle을 얼마나 자동으로 처리할지 정하는
 | --- | --- | --- |
 | Normal | 모든 pending bundle을 사용자가 직접 승인합니다. | 처음 사용하는 사용자, 안전이 중요한 작업 |
 | Safe Auto | 보수적으로 low-risk command-only 확인 bundle만 자동 승인될 수 있습니다. | 흐름에 익숙해진 뒤 반복 확인이 많을 때 |
-| YOLO | hard-blocked bundle을 제외한 pending bundle이 자동 승인될 수 있습니다. | 신뢰할 수 있는 개발 세션에서 빠르게 진행할 때 |
+| YOLO | 모든 유효한 pending bundle을 수동 승인 없이 runner로 보냅니다. | 신뢰할 수 있는 개발 세션에서 빠르게 진행할 때 |
 
 처음 사용할 때는 **Normal**을 권장합니다.
 
-YOLO는 개발 작업을 빠르게 진행하기 위한 모드입니다. 현재 hard block은 의도적으로 좁게 유지됩니다.
+YOLO는 **승인 단계의 올패스 모드**입니다. pending bundle의 `low`/`medium`/`high`/`blocked` risk나 민감 경로 표시는 더 이상 사용자의 승인 클릭을 요구하는 조건이 아닙니다.
 
-- 계속 hard-blocked: `WORKSPACE_ROOT` 밖 경로, 정확한 `.env`, `.git`, `.aws`, `.gnupg`, `sudo`, `su`, `dd`, `mkfs`, `diskutil`
-- hard-blocked가 아닌 개발 작업: `.env.example`, `.env.local`, `.ssh`, `.venv`, `node_modules`, `ssh`, `scp`, `sftp`, `rsync`, shell `-c/-lc`, package install/sync, 일반 git 작업
-- hard-blocked가 아닌 작업도 필요하면 `medium` 또는 `high` risk로 표시될 수 있습니다. YOLO에서는 이런 pending bundle이 자동 승인될 수 있고, Safe Auto에서는 계속 보수적으로 다룹니다.
+- 새 pending bundle은 모두 자동 실행을 시도합니다.
+- review/watcher가 재시작되기 전에 남아 있던 YOLO 대상 pending bundle도 다시 자동 처리합니다.
+- bundle JSON이 기록 중이라 일시적으로 읽히지 않으면 수동 승인으로 넘기지 않고 다음 poll에서 다시 읽습니다.
+- runner의 경로·명령 검증이나 실제 명령 실행 자체가 실패하면 bundle은 실패로 처리됩니다. YOLO가 이런 실행 오류를 다시 수동 승인 요청으로 바꾸지는 않습니다.
+
+즉 YOLO는 **승인을 생략**하지만, 잘못된 경로·실행 불가능한 명령·실제 프로세스 실패까지 성공으로 위장하는 모드는 아닙니다.
 
 YOLO가 켜져 있으면 화면 상단에 다음과 같은 경고가 보일 수 있습니다.
 
 ```text
-YOLO mode is ON. Pending bundles may be auto-approved except blocked-risk bundles.
+YOLO mode is ON. Every pending bundle is sent to the runner without manual approval.
 ```
 
-이 메시지는 오류가 아니라 현재 승인 모드가 자동 승인에 가까운 상태라는 알림입니다. 의도한 상황이 아니라면 **Normal**로 되돌리세요.
+이 메시지는 오류가 아니라 현재 승인 단계가 올패스 상태라는 알림입니다. 의도한 상황이 아니라면 **Normal**로 되돌리세요.
 
 ## 승인 대기 번들이 없을 때
 

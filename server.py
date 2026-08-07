@@ -97,8 +97,6 @@ from terminal_bridge.models import (
     HandoffListResult,
     IntentPreparationResult,
     ListResult,
-    MergeQueueEntryResult,
-    MergeQueueListResult,
     OperationListResult,
     OperationStatusResult,
     PatchApplyResult,
@@ -110,17 +108,7 @@ from terminal_bridge.models import (
     RecoverySnapshotResult,
     ReplaceTextResult,
     RestoreResult,
-    SafeTaskMergePreparationResult,
     SearchTextResult,
-    TaskListResult,
-    TaskCleanupPreviewResult,
-    TaskOrchestrationSummaryResult,
-    TaskValidationResultHintResult,
-    TaskStatusResult,
-    TaskWorkspaceListResult,
-    TaskWorktreeMergePreflightResult,
-    TaskWorkspaceStatusResult,
-    TaskWorktreeInspectionResult,
     TextPayloadStageResult,
     ToolCallListResult,
     ToolCallStatusResult,
@@ -135,14 +123,6 @@ from terminal_bridge.models import (
 from terminal_bridge.handoffs import handoff_for_bundle as _handoff_for_bundle_record
 from terminal_bridge.handoffs import list_handoffs as _list_handoff_records
 from terminal_bridge.handoffs import next_handoff as _next_handoff_record
-from terminal_bridge.merge_queue import (
-    archive_merge_queue_entry as _archive_merge_queue_entry,
-    enqueue_task_worktree_merge as _enqueue_task_worktree_merge,
-    list_merge_queue as _list_merge_queue,
-    read_merge_queue_entry as _read_merge_queue_entry,
-    record_task_validation as _record_task_validation,
-    task_validation_status as _task_validation_status,
-)
 from terminal_bridge.mcp_tools.readonly import (
     find_files as _readonly_find_files,
     project_snapshot as _readonly_project_snapshot,
@@ -179,14 +159,11 @@ from terminal_bridge.mcp_tools.status import (
     list_backups as _status_list_backups,
     list_handoffs as _status_list_handoffs,
     list_operations as _status_list_operations,
-    list_tasks as _status_list_tasks,
     list_tool_calls as _status_list_tool_calls,
     list_trash as _status_list_trash,
     next_handoff as _status_next_handoff,
     read_audit_log as _status_read_audit_log,
     recover_last_activity as _status_recover_last_activity,
-    task_result as _status_task_result,
-    task_status as _status_task_status,
     tool_call_status as _status_tool_call_status,
     transport_git_status_summary as _status_transport_git_status_summary,
     transport_probe as _status_transport_probe,
@@ -217,30 +194,6 @@ from terminal_bridge.safety import (
     _validate_expected_sha256,
 )
 from terminal_bridge.storage import _now_iso, _read_json, _sha256_bytes, _write_json
-from terminal_bridge.tasks import (
-    _list_task_paths,
-    _new_task_id,
-    _normalize_task_id,
-    _read_task,
-    _task_path,
-    _write_task,
-)
-from terminal_bridge.task_workspaces import (
-    archive_task_workspace as _archive_task_workspace,
-    create_task_worktree as _create_task_worktree,
-    inspect_task_worktree as _inspect_task_worktree,
-    list_task_workspaces as _list_task_workspaces,
-    merge_preflight_task_worktree as _merge_preflight_task_worktree,
-    prepare_task_workspace as _prepare_task_workspace,
-    read_task_workspace as _read_task_workspace,
-)
-from terminal_bridge.task_cleanup_preview import task_cleanup_preview as _task_cleanup_preview
-from terminal_bridge.task_orchestration_summary import task_orchestration_summary as _task_orchestration_summary
-from terminal_bridge.task_merge_orchestration import prepare_safe_task_merge_and_wait as _prepare_safe_task_merge_and_wait
-from terminal_bridge.task_validation_proposal import (
-    prepare_task_validation_command_proposal as _prepare_task_validation_command_proposal,
-)
-from terminal_bridge.task_validation_result import task_validation_result_hint as _task_validation_result_hint
 from terminal_bridge.tool_calls import list_tool_calls as _list_tool_call_records
 from terminal_bridge.tool_calls import read_tool_call as _read_tool_call_record
 from terminal_bridge.trash import (
@@ -576,22 +529,6 @@ def _intent_response(
 
 def _read_operation_record(operation_id: str) -> dict[str, object] | None:
     return _read_operation(operation_id)
-
-
-def _read_task_record(task_id: str) -> dict[str, object] | None:
-    try:
-        return _read_task(task_id)
-    except FileNotFoundError:
-        return None
-
-
-def _write_task_record(record: dict[str, object]) -> None:
-    task_id = _normalize_task_id(str(record["task_id"]))
-    _write_task(task_id, record)
-
-
-def _task_result(record: dict[str, object]) -> TaskStatusResult:
-    return _status_task_result(record)
 
 
 def _extract_bearer_token(headers: dict[str, str]) -> str | None:
@@ -984,9 +921,6 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_git_diff",
     "workspace_preview_patch",
     "workspace_transport_probe",
-    "workspace_prepare_check_intent",
-    "workspace_prepare_commit_current_changes_intent",
-    "workspace_prepare_dev_session_intent",
     "workspace_read_audit_log",
     "workspace_recover_last_activity",
     "workspace_get_handoff_for_bundle",
@@ -994,36 +928,7 @@ DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
     "workspace_list_handoffs",
     "workspace_list_tool_calls",
     "workspace_tool_call_status",
-    "workspace_get_operation",
-    "workspace_list_operations",
     "workspace_list_backups",
-    "workspace_list_trash",
-    "workspace_task_start",
-    "workspace_task_status",
-    "workspace_task_log_step",
-    "workspace_task_update_plan",
-    "workspace_task_finish",
-    "workspace_list_tasks",
-    "workspace_prepare_task_workspace",
-    "workspace_create_task_worktree",
-    "workspace_inspect_task_worktree",
-    "workspace_merge_preflight_task_worktree",
-    "workspace_enqueue_task_worktree_merge",
-    "workspace_merge_queue_status",
-    "workspace_list_merge_queue",
-    "workspace_task_orchestration_summary",
-    "workspace_task_cleanup_preview",
-    "workspace_record_task_validation",
-    "workspace_task_validation_result_hint",
-    "workspace_propose_task_validation_command_and_wait",
-    "workspace_propose_task_cleanup_and_wait",
-    "workspace_task_validation_status",
-    "workspace_prepare_safe_task_merge_and_wait",
-    "workspace_propose_task_worktree_merge_and_wait",
-    "workspace_archive_task_workspace",
-    "workspace_archive_merge_queue_entry",
-    "workspace_task_workspace_status",
-    "workspace_list_task_workspaces",
     "workspace_stage_text_payload",
     "workspace_propose_command_and_wait",
     "workspace_propose_file_write_and_wait",
@@ -1685,11 +1590,10 @@ def workspace_next_handoff() -> HandoffEntry | None:
 )
 def workspace_list_handoffs(
     limit: Annotated[int, Field(ge=1, le=100, description="Maximum handoff records to return.")] = 20,
-    task_id: Annotated[str | None, Field(description="Optional metadata task_id filter. Empty strings are ignored.")] = None,
-    client_id: Annotated[str | None, Field(description="Optional metadata client_id filter. Empty strings are ignored.")] = None,
-    session_id: Annotated[str | None, Field(description="Optional metadata session_id filter. Empty strings are ignored.")] = None,
-    project_id: Annotated[str | None, Field(description="Optional metadata project_id filter. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional metadata workspace_mode filter. Empty strings are ignored.")] = None,
+    task_id: Annotated[str | None, Field(description="Optional logical task_id filter. Empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional caller/platform client_id filter. Empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional conversation/session_id filter. Empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional logical project_id filter. Empty strings are ignored.")] = None,
 ) -> HandoffListResult:
     """List recent local bundle handoffs, newest first.
 
@@ -1703,7 +1607,6 @@ def workspace_list_handoffs(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
-        workspace_mode=workspace_mode,
     )
 
 
@@ -1950,857 +1853,6 @@ def workspace_project_snapshot(
         path=path,
         max_depth=max_depth,
         max_entries=max_entries,
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
-def workspace_task_start(
-    title: Annotated[str, Field(min_length=1, max_length=120, description="Short task title.")],
-    goal: Annotated[str, Field(min_length=1, max_length=2_000, description="Task goal or user request summary.")],
-    plan: Annotated[list[str], Field(description="Initial ordered plan steps.")] = [],
-    metadata: Annotated[dict[str, object] | None, Field(description="Optional task metadata.")] = None,
-    task_id: Annotated[str | None, Field(description="Optional explicit task id. Generated if omitted.")] = None,
-) -> TaskStatusResult:
-    """Start a Codex-style local work task record for planning, steps, verification, and handoff."""
-    new_task_id = _normalize_task_id(task_id) if task_id else _new_task_id()
-
-    if _task_path(new_task_id).exists():
-        raise FileExistsError(f"Task already exists: {new_task_id}")
-
-    now = _now_iso()
-    record: dict[str, object] = {
-        "task_id": new_task_id,
-        "title": title,
-        "goal": goal,
-        "status": "active",
-        "created_at": now,
-        "updated_at": now,
-        "finished_at": None,
-        "plan": [str(item) for item in plan],
-        "steps": [],
-        "metadata": metadata or {},
-        "summary": None,
-        "next_steps": [],
-    }
-
-    _write_task(new_task_id, record)
-    _audit("task_started", task_id=new_task_id, title=title)
-    return _task_result(record)
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_task_status(
-    task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
-) -> TaskStatusResult:
-    """Return a task record by task_id."""
-    return _status_task_status(_normalize_task_id, _read_task, task_id)
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
-def workspace_task_log_step(
-    task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
-    message: Annotated[str, Field(min_length=1, max_length=2_000, description="Step message to append.")],
-    kind: Annotated[
-        Literal["note", "read", "write", "test", "decision", "todo", "error"],
-        Field(description="Step kind."),
-    ] = "note",
-    data: Annotated[dict[str, object] | None, Field(description="Optional structured data for this step.")] = None,
-) -> TaskStatusResult:
-    """Append a step to a task record and return the updated task."""
-    normalized = _normalize_task_id(task_id)
-    record = _read_task(normalized)
-
-    if record.get("status") not in {"active", "paused"}:
-        raise ValueError(f"Cannot log step to non-active task: {record.get('status')}")
-
-    steps = record.get("steps") if isinstance(record.get("steps"), list) else []
-    steps.append(
-        {
-            "ts": _now_iso(),
-            "kind": kind,
-            "message": message,
-            "data": data,
-        }
-    )
-
-    record["steps"] = steps
-    record["updated_at"] = _now_iso()
-
-    _write_task(normalized, record)
-    _audit("task_step_logged", task_id=normalized, kind=kind, message=message)
-    return _task_result(record)
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
-def workspace_task_update_plan(
-    task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
-    plan: Annotated[list[str], Field(description="Replacement ordered plan steps.")],
-) -> TaskStatusResult:
-    """Replace the plan for an active task."""
-    normalized = _normalize_task_id(task_id)
-    record = _read_task(normalized)
-
-    if record.get("status") not in {"active", "paused"}:
-        raise ValueError(f"Cannot update plan for non-active task: {record.get('status')}")
-
-    record["plan"] = [str(item) for item in plan]
-    record["updated_at"] = _now_iso()
-
-    _write_task(normalized, record)
-    _audit("task_plan_updated", task_id=normalized, plan=record["plan"])
-    return _task_result(record)
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
-def workspace_task_finish(
-    task_id: Annotated[str, Field(description="Task id returned by workspace_task_start.")],
-    status: Annotated[
-        Literal["completed", "paused", "cancelled"],
-        Field(description="Final or paused task status."),
-    ] = "completed",
-    summary: Annotated[str, Field(max_length=4_000, description="Task summary.")] = "",
-    next_steps: Annotated[list[str], Field(description="Follow-up steps, if any.")] = [],
-) -> TaskStatusResult:
-    """Finish, pause, or cancel a task record."""
-    normalized = _normalize_task_id(task_id)
-    record = _read_task(normalized)
-
-    now = _now_iso()
-    record["status"] = status
-    record["updated_at"] = now
-    record["finished_at"] = now if status in {"completed", "cancelled"} else None
-    record["summary"] = summary
-    record["next_steps"] = [str(item) for item in next_steps]
-
-    _write_task(normalized, record)
-    _audit("task_finished", task_id=normalized, status=status, summary=summary)
-    return _task_result(record)
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_list_tasks(
-    limit: Annotated[int, Field(ge=1, le=200, description="Maximum tasks to return.")] = 50,
-) -> TaskListResult:
-    """List recent task records, newest first."""
-    return _status_list_tasks(_ensure_runtime_dirs, _list_task_paths, limit)
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_prepare_task_workspace(
-    task_id: Annotated[str, Field(description="Task id for the isolated task workspace.")],
-    cwd: Annotated[str, Field(description="Relative source workspace directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-) -> TaskWorkspaceStatusResult:
-    """Create or refresh a runtime task workspace record and empty isolated repo directory.
-
-    This prepares the runtime bookkeeping for task-workspace mode only. It does not
-    create a git worktree, copy source files, merge changes, or change runner apply
-    behavior.
-    """
-    return _record_tool_call(
-        "workspace_prepare_task_workspace",
-        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
-        lambda: TaskWorkspaceStatusResult(**_prepare_task_workspace(task_id, cwd=cwd, project_id=project_id)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_create_task_worktree(
-    task_id: Annotated[str, Field(description="Task id for the isolated git worktree.")],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-) -> TaskWorkspaceStatusResult:
-    """Create or refresh a real git worktree for a task workspace.
-
-    This only prepares the isolated worktree under the MCP runtime directory. It
-    does not apply proposals by itself and does not merge changes back into the
-    source project.
-    """
-    return _record_tool_call(
-        "workspace_create_task_worktree",
-        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
-        lambda: TaskWorkspaceStatusResult(**_create_task_worktree(task_id, cwd=cwd, project_id=project_id)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_inspect_task_worktree(
-    task_id: Annotated[str, Field(description="Task id for the isolated git worktree.")],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-) -> TaskWorktreeInspectionResult:
-    """Inspect a ready task worktree's git status and diff without merging or modifying the source project."""
-    return _record_tool_call(
-        "workspace_inspect_task_worktree",
-        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
-        lambda: TaskWorktreeInspectionResult(**_inspect_task_worktree(task_id, cwd=cwd, project_id=project_id)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_merge_preflight_task_worktree(
-    task_id: Annotated[str, Field(description="Task id for the isolated git worktree.")],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-) -> TaskWorktreeMergePreflightResult:
-    """Read-only merge preflight for a ready task worktree without modifying the source project."""
-    return _record_tool_call(
-        "workspace_merge_preflight_task_worktree",
-        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
-        lambda: TaskWorktreeMergePreflightResult(**_merge_preflight_task_worktree(task_id, cwd=cwd, project_id=project_id)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_enqueue_task_worktree_merge(
-    task_id: Annotated[str, Field(description="Task id for the ready task worktree to enqueue for a future merge.")],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-) -> MergeQueueEntryResult:
-    """Create or refresh a merge queue record for a ready task worktree without applying changes."""
-    return _record_tool_call(
-        "workspace_enqueue_task_worktree_merge",
-        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
-        lambda: MergeQueueEntryResult(**_enqueue_task_worktree_merge(task_id, cwd=cwd, project_id=project_id)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_merge_queue_status(
-    task_id: Annotated[str, Field(description="Task id for the merge queue record.")],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-) -> MergeQueueEntryResult:
-    """Return one merge queue record status without applying changes."""
-    return _record_tool_call(
-        "workspace_merge_queue_status",
-        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
-        lambda: MergeQueueEntryResult(**_read_merge_queue_entry(task_id, cwd=cwd, project_id=project_id)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_record_task_validation(
-    task_id: Annotated[str, Field(description="Task id for the merge queue record to annotate with validation metadata.")],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-    validation_status: Annotated[str, Field(description="Validation status: unknown, pending, passed, or failed.")] = "unknown",
-    validation_commands: Annotated[list[str] | None, Field(description="Commands the operator ran or plans to run for validation.")] = None,
-    validation_summary: Annotated[str | None, Field(description="Short human summary of validation result.")] = None,
-    validated_by: Annotated[str | None, Field(description="Optional operator or agent identifier that recorded validation.")] = None,
-    client_id: Annotated[str | None, Field(description="Optional client id associated with the validation record.")] = None,
-    session_id: Annotated[str | None, Field(description="Optional session id associated with the validation record.")] = None,
-) -> MergeQueueEntryResult:
-    """Record post-merge validation metadata on a merge queue record without running commands or modifying source files."""
-    return _record_tool_call(
-        "workspace_record_task_validation",
-        {
-            "task_id": task_id,
-            "cwd": cwd,
-            "project_id": project_id,
-            "validation_status": validation_status,
-            "validation_commands": validation_commands,
-            "validation_summary": validation_summary,
-            "validated_by": validated_by,
-            "client_id": client_id,
-            "session_id": session_id,
-        },
-        lambda: MergeQueueEntryResult(
-            **_record_task_validation(
-                task_id,
-                cwd=cwd,
-                project_id=project_id,
-                validation_status=validation_status,
-                validation_commands=validation_commands,
-                validation_summary=validation_summary,
-                validated_by=validated_by,
-                client_id=client_id,
-                session_id=session_id,
-            )
-        ),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_task_validation_status(
-    task_id: Annotated[str, Field(description="Task id for the merge queue validation record.")],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-) -> MergeQueueEntryResult:
-    """Return post-merge validation metadata for a merge queue record without running commands or modifying source files."""
-    return _record_tool_call(
-        "workspace_task_validation_status",
-        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
-        lambda: MergeQueueEntryResult(**_task_validation_status(task_id, cwd=cwd, project_id=project_id)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_task_validation_result_hint(
-    task_id: Annotated[
-        str | None,
-        Field(description="Task id whose latest validation command bundle should be summarized when bundle_id is omitted."),
-    ] = None,
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-    bundle_id: Annotated[
-        str | None,
-        Field(description="Optional command bundle id to summarize directly instead of searching by task id."),
-    ] = None,
-) -> TaskValidationResultHintResult:
-    """Read a validation command bundle result and suggest a manual validation record update.
-
-    This helper does not run commands and does not update merge queue validation
-    metadata. Operators must review the hint and call
-    workspace_record_task_validation separately.
-    """
-    return _record_tool_call(
-        "workspace_task_validation_result_hint",
-        {"task_id": task_id, "cwd": cwd, "project_id": project_id, "bundle_id": bundle_id},
-        lambda: TaskValidationResultHintResult(
-            **_task_validation_result_hint(task_id=task_id, cwd=cwd, project_id=project_id, bundle_id=bundle_id)
-        ),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
-def workspace_propose_task_validation_command_and_wait(
-    task_id: Annotated[str, Field(description="Task id for the merged task whose source-level validation command should be proposed.")],
-    argv: Annotated[
-        list[str],
-        Field(
-            min_length=1,
-            max_length=MAX_EXEC_ARGV_ITEMS,
-            description=(
-                "Exactly one argv-based source validation command proposal. This only creates a local pending bundle. "
-                "It does not run until approved at http://127.0.0.1:8790/pending."
-            ),
-        ),
-    ],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-    command_name: Annotated[
-        str | None,
-        Field(description="Optional display name for the validation command step. Defaults to Run source validation."),
-    ] = None,
-    command_timeout_seconds: Annotated[int, Field(ge=1, le=MAX_COMMAND_TIMEOUT_SECONDS)] = 60,
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
-    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
-) -> CommandBundleStatusResult:
-    """Create one pending source-level validation command proposal for a merged task.
-
-    This tool only creates a local pending proposal. It never executes the
-    command in ChatGPT and it does not update validation_status automatically.
-    The command runs only after local /pending approval.
-    """
-
-    def action() -> CommandBundleStatusResult:
-        proposal = _prepare_task_validation_command_proposal(
-            task_id,
-            cwd=cwd,
-            project_id=project_id,
-            argv=argv,
-            command_name=command_name,
-            command_timeout_seconds=command_timeout_seconds,
-        )
-        return _workspace_stage_command_bundle_and_wait_impl(
-            str(proposal["title"]),
-            str(proposal["cwd"]),
-            [proposal["step"]],
-            timeout_seconds,
-            poll_interval_seconds,
-            proposal["metadata"],
-        )
-
-    return _record_tool_call(
-        "workspace_propose_task_validation_command_and_wait",
-        {
-            "task_id": task_id,
-            "cwd": cwd,
-            "project_id": project_id,
-            "argv": argv,
-            "command_name": command_name,
-            "command_timeout_seconds": command_timeout_seconds,
-            "timeout_seconds": timeout_seconds,
-            "poll_interval_seconds": poll_interval_seconds,
-        },
-        action,
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_list_merge_queue(
-    project_id: Annotated[str | None, Field(description="Optional project id filter. Empty strings are ignored.")] = None,
-) -> MergeQueueListResult:
-    """List merge queue records without applying changes."""
-    entries = [MergeQueueEntryResult(**entry) for entry in _list_merge_queue(project_id=project_id)]
-    return _record_tool_call(
-        "workspace_list_merge_queue",
-        {"project_id": project_id},
-        lambda: MergeQueueListResult(entries=entries, count=len(entries)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_task_orchestration_summary(
-    project_id: Annotated[str | None, Field(description="Optional project id filter. Empty strings are ignored.")] = None,
-) -> TaskOrchestrationSummaryResult:
-    """Summarize task workspace and merge queue records for orchestrator review without applying changes."""
-    return _record_tool_call(
-        "workspace_task_orchestration_summary",
-        {"project_id": project_id},
-        lambda: TaskOrchestrationSummaryResult(**_task_orchestration_summary(project_id=project_id)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_task_cleanup_preview(
-    project_id: Annotated[str | None, Field(description="Optional project id filter. Empty strings are ignored.")] = None,
-) -> TaskCleanupPreviewResult:
-    """Preview archived task worktree physical cleanup candidates without deleting files or removing worktrees."""
-    return _record_tool_call(
-        "workspace_task_cleanup_preview",
-        {"project_id": project_id},
-        lambda: TaskCleanupPreviewResult(**_task_cleanup_preview(project_id=project_id)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_propose_task_cleanup_and_wait(
-    task_id: Annotated[str, Field(description="Task id for the ready archived task worktree cleanup.")],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
-    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
-) -> CommandBundleStatusResult:
-    """Create one pending command proposal to physically clean up a ready archived task worktree.
-
-    The cleanup does not run in ChatGPT. It runs only after local /pending approval.
-    """
-
-    def action() -> CommandBundleStatusResult:
-        preview = _task_cleanup_preview(project_id=project_id)
-        normalized_cwd = cwd.strip() or "."
-        matches = [
-            entry
-            for entry in preview.get("entries", [])
-            if entry.get("task_id") == task_id and entry.get("source_cwd") == normalized_cwd
-        ]
-        if not matches:
-            raise FileNotFoundError("cleanup preview entry not found for task/source/project.")
-        entry = matches[0]
-        if not bool(entry.get("cleanup_ready")):
-            blockers = entry.get("cleanup_blockers", [])
-            recommended_action = entry.get("recommended_action")
-            raise ValueError(
-                "task workspace is not ready for physical cleanup "
-                f"(blockers={blockers}, recommended_action={recommended_action})"
-            )
-        title = f"Clean task worktree: {task_id}"
-        step = CommandBundleStep(
-            name=title,
-            argv=[
-                "python",
-                str(Path(__file__).resolve().parent / "terminal_bridge" / "task_cleanup_apply.py"),
-                "--task-id",
-                task_id,
-                "--cwd",
-                cwd,
-                *(["--project-id", project_id] if project_id else []),
-            ],
-            timeout_seconds=120,
-        )
-        metadata = {
-            "task_id": task_id,
-            "project_id": project_id,
-            "workspace_mode": "direct",
-            "source_cwd": cwd,
-            "effective_cwd": cwd,
-        }
-        return _workspace_stage_command_bundle_and_wait_impl(
-            title,
-            cwd,
-            [step],
-            timeout_seconds,
-            poll_interval_seconds,
-            metadata,
-        )
-
-    return _record_tool_call(
-        "workspace_propose_task_cleanup_and_wait",
-        {
-            "task_id": task_id,
-            "cwd": cwd,
-            "project_id": project_id,
-            "timeout_seconds": timeout_seconds,
-            "poll_interval_seconds": poll_interval_seconds,
-        },
-        action,
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_propose_task_worktree_merge_and_wait(
-    task_id: Annotated[str, Field(description="Task id for the queued task worktree merge.")],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
-    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
-) -> CommandBundleStatusResult:
-    """Create one pending command proposal to apply a queued task worktree merge to the source project.
-
-    The merge does not run in ChatGPT. It runs only after local /pending approval.
-    """
-    return _record_tool_call(
-        "workspace_propose_task_worktree_merge_and_wait",
-        {
-            "task_id": task_id,
-            "cwd": cwd,
-            "project_id": project_id,
-            "timeout_seconds": timeout_seconds,
-            "poll_interval_seconds": poll_interval_seconds,
-        },
-        lambda: _workspace_propose_task_worktree_merge_and_wait_impl(
-            task_id,
-            cwd,
-            project_id,
-            timeout_seconds,
-            poll_interval_seconds,
-        ),
-    )
-
-
-def _workspace_propose_task_worktree_merge_and_wait_impl(
-    task_id: str,
-    cwd: str,
-    project_id: str | None,
-    timeout_seconds: int,
-    poll_interval_seconds: float,
-) -> CommandBundleStatusResult:
-    queued = _read_merge_queue_entry(task_id, cwd=cwd, project_id=project_id)
-    if queued.get("status") != "queued":
-        raise ValueError("merge queue entry must be queued before proposing a source merge.")
-    title = f"Merge task worktree: {task_id}"
-    step = CommandBundleStep(
-        name=title,
-        argv=[
-            "python",
-            str(Path(__file__).resolve().parent / "terminal_bridge" / "merge_queue_apply.py"),
-            "--task-id",
-            task_id,
-            "--cwd",
-            cwd,
-            *(["--project-id", project_id] if project_id else []),
-        ],
-        timeout_seconds=120,
-    )
-    metadata = {
-        "task_id": task_id,
-        "project_id": project_id,
-        "workspace_mode": "direct",
-        "source_cwd": cwd,
-        "effective_cwd": cwd,
-    }
-    return _workspace_stage_command_bundle_and_wait_impl(
-        title,
-        cwd,
-        [step],
-        timeout_seconds,
-        poll_interval_seconds,
-        metadata,
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
-def workspace_prepare_safe_task_merge_and_wait(
-    task_id: Annotated[str, Field(description="Task id for the ready task worktree to inspect, queue, and propose for source merge.")],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
-    poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
-) -> SafeTaskMergePreparationResult:
-    """Safely inspect, preflight, queue, and stage a task merge proposal.
-
-    This high-level wrapper never applies source changes in ChatGPT. If the task is
-    ready, it creates or refreshes the merge queue record and stages the existing
-    source-merge command proposal for local /pending approval. If blockers are
-    found, it returns them without creating a queue record or proposal.
-    """
-
-    def action() -> SafeTaskMergePreparationResult:
-        return SafeTaskMergePreparationResult(
-            **_prepare_safe_task_merge_and_wait(
-                task_id,
-                cwd=cwd,
-                project_id=project_id,
-                timeout_seconds=timeout_seconds,
-                poll_interval_seconds=poll_interval_seconds,
-                proposal_callback=lambda: _workspace_propose_task_worktree_merge_and_wait_impl(
-                    task_id,
-                    cwd,
-                    project_id,
-                    timeout_seconds,
-                    poll_interval_seconds,
-                ),
-            )
-        )
-
-    return _record_tool_call(
-        "workspace_prepare_safe_task_merge_and_wait",
-        {
-            "task_id": task_id,
-            "cwd": cwd,
-            "project_id": project_id,
-            "timeout_seconds": timeout_seconds,
-            "poll_interval_seconds": poll_interval_seconds,
-        },
-        action,
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_archive_task_workspace(
-    task_id: Annotated[str, Field(description="Task id for the task workspace record to archive.")],
-    cwd: Annotated[str, Field(description="Relative source workspace directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-    reason: Annotated[str | None, Field(description="Optional archive reason stored in the record.")] = None,
-) -> TaskWorkspaceStatusResult:
-    """Archive a task workspace record without deleting source files or the worktree directory."""
-    return _record_tool_call(
-        "workspace_archive_task_workspace",
-        {"task_id": task_id, "cwd": cwd, "project_id": project_id, "reason": reason},
-        lambda: TaskWorkspaceStatusResult(**_archive_task_workspace(task_id, cwd=cwd, project_id=project_id, reason=reason)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_archive_merge_queue_entry(
-    task_id: Annotated[str, Field(description="Task id for the merge queue record to archive.")],
-    cwd: Annotated[str, Field(description="Relative source git repository directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-    reason: Annotated[str | None, Field(description="Optional archive reason stored in the queue record.")] = None,
-) -> MergeQueueEntryResult:
-    """Archive a merge queue record without applying changes or deleting files."""
-    return _record_tool_call(
-        "workspace_archive_merge_queue_entry",
-        {"task_id": task_id, "cwd": cwd, "project_id": project_id, "reason": reason},
-        lambda: MergeQueueEntryResult(**_archive_merge_queue_entry(task_id, cwd=cwd, project_id=project_id, reason=reason)),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_task_workspace_status(
-    task_id: Annotated[str, Field(description="Task id for the isolated task workspace.")],
-    cwd: Annotated[str, Field(description="Relative source workspace directory under WORKSPACE_ROOT.")] = ".",
-    project_id: Annotated[str | None, Field(description="Optional project id. Defaults to the cwd-based project id.")] = None,
-) -> TaskWorkspaceStatusResult:
-    """Return the task workspace record status for a task/source/project tuple."""
-    return _record_tool_call(
-        "workspace_task_workspace_status",
-        {"task_id": task_id, "cwd": cwd, "project_id": project_id},
-        lambda: TaskWorkspaceStatusResult(**_read_task_workspace(task_id, cwd=cwd, project_id=project_id)),
-    )
-
-
-def _task_workspace_list_result(project_id: str | None = None) -> TaskWorkspaceListResult:
-    records = _list_task_workspaces(project_id=project_id)
-    return TaskWorkspaceListResult(
-        entries=[TaskWorkspaceStatusResult(**record) for record in records],
-        count=len(records),
-    )
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-def workspace_list_task_workspaces(
-    project_id: Annotated[str | None, Field(description="Optional exact project id filter. Empty strings are ignored.")] = None,
-) -> TaskWorkspaceListResult:
-    """List known runtime task workspace records."""
-    return _record_tool_call(
-        "workspace_list_task_workspaces",
-        {"project_id": project_id},
-        lambda: _task_workspace_list_result(project_id),
     )
 
 
@@ -3132,15 +2184,14 @@ def _proposal_metadata_input(
     client_id: str | None = None,
     session_id: str | None = None,
     project_id: str | None = None,
-    workspace_mode: str | None = None,
 ) -> dict[str, object] | None:
+    """Normalize logical routing metadata for concurrent direct-mode sessions."""
     metadata: dict[str, object] = {}
     for key, value in {
         "task_id": task_id,
         "client_id": client_id,
         "session_id": session_id,
         "project_id": project_id,
-        "workspace_mode": workspace_mode,
     }.items():
         if value is None:
             continue
@@ -3150,12 +2201,6 @@ def _proposal_metadata_input(
         if not normalized:
             continue
         metadata[key] = normalized
-
-    mode = metadata.get("workspace_mode")
-    if mode is not None and mode not in {"direct", "task-workspace"}:
-        raise ValueError("workspace_mode currently supports 'direct' or 'task-workspace'.")
-    if mode == "task-workspace" and metadata.get("task_id") is None:
-        raise ValueError("workspace_mode='task-workspace' requires task_id.")
 
     return metadata or None
 
@@ -4014,11 +3059,10 @@ def workspace_propose_command_and_wait(
         Field(description="Optional display name for the command step. Defaults to title."),
     ] = None,
     command_timeout_seconds: Annotated[int, Field(ge=1, le=MAX_COMMAND_TIMEOUT_SECONDS)] = 60,
-    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
-    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
-    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
-    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
+    task_id: Annotated[str | None, Field(description="Optional logical task id used to distinguish concurrent work. Reuse it only for calls belonging to the same task; empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
     timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
@@ -4033,7 +3077,6 @@ def workspace_propose_command_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
-        workspace_mode=workspace_mode,
     )
     step = _proposal_command_step(title, argv, command_name, command_timeout_seconds)
     return _record_tool_call(
@@ -4083,11 +3126,10 @@ def workspace_propose_file_write_and_wait(
     ],
     overwrite: Annotated[bool, Field(description="Whether the proposal may overwrite an existing file.")] = False,
     create_parent_dirs: Annotated[bool, Field(description="Whether the proposal may create missing parent directories.")] = True,
-    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
-    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
-    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
-    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
+    task_id: Annotated[str | None, Field(description="Optional logical task id used to distinguish concurrent work. Reuse it only for calls belonging to the same task; empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
     timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
@@ -4102,7 +3144,6 @@ def workspace_propose_file_write_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
-        workspace_mode=workspace_mode,
     )
     action = _proposal_file_write_action(
         title,
@@ -4161,11 +3202,10 @@ def workspace_propose_file_replace_and_wait(
     replace_all: Annotated[bool, Field(description="Replace all occurrences instead of only the first.")] = False,
     timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
-    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
-    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
-    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
-    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
+    task_id: Annotated[str | None, Field(description="Optional logical task id used to distinguish concurrent work. Reuse it only for calls belonging to the same task; empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
 ) -> CommandBundleStatusResult:
     """Create exactly one file replacement proposal in the local pending UI and briefly wait.
 
@@ -4178,7 +3218,6 @@ def workspace_propose_file_replace_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
-        workspace_mode=workspace_mode,
     )
     action = _proposal_file_replace_action(
         title,
@@ -4226,11 +3265,10 @@ def workspace_propose_patch_and_wait(
     patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
     timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
-    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
-    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
-    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
-    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
+    task_id: Annotated[str | None, Field(description="Optional logical task id used to distinguish concurrent work. Reuse it only for calls belonging to the same task; empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
 ) -> CommandBundleStatusResult:
     """Create one patch proposal in the local pending UI and briefly wait.
 
@@ -4243,7 +3281,6 @@ def workspace_propose_patch_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
-        workspace_mode=workspace_mode,
     )
     return _record_tool_call(
         "workspace_propose_patch_and_wait",
@@ -4282,11 +3319,10 @@ def workspace_propose_git_commit_and_wait(
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
     timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
-    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
-    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
-    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
-    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
+    task_id: Annotated[str | None, Field(description="Optional logical task id used to distinguish concurrent work. Reuse it only for calls belonging to the same task; empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
 ) -> CommandBundleStatusResult:
     """Create one git commit proposal in the local pending UI and briefly wait.
 
@@ -4299,7 +3335,6 @@ def workspace_propose_git_commit_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
-        workspace_mode=workspace_mode,
     )
     return _record_tool_call(
         "workspace_propose_git_commit_and_wait",
@@ -4334,11 +3369,10 @@ def workspace_propose_git_push_and_wait(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     remote: Annotated[str, Field(min_length=1, max_length=80, description="Git remote name, usually origin.")] = "origin",
     branch: Annotated[str, Field(min_length=1, max_length=120, description="Git branch name, usually main.")] = "main",
-    task_id: Annotated[str | None, Field(description="Optional proposal metadata task id. Empty strings are ignored.")] = None,
-    client_id: Annotated[str | None, Field(description="Optional proposal metadata client id. Empty strings are ignored.")] = None,
-    session_id: Annotated[str | None, Field(description="Optional proposal metadata session id. Empty strings are ignored.")] = None,
-    project_id: Annotated[str | None, Field(description="Optional proposal metadata project id. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional proposal metadata workspace mode. Supports direct or task-workspace; task-workspace requires task_id.")] = None,
+    task_id: Annotated[str | None, Field(description="Optional logical task id used to distinguish concurrent work. Reuse it only for calls belonging to the same task; empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
     timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
@@ -4353,7 +3387,6 @@ def workspace_propose_git_push_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
-        workspace_mode=workspace_mode,
     )
     safe_remote, safe_branch, title, step = _proposal_git_push(remote, branch)
     return _record_tool_call(
@@ -4387,11 +3420,10 @@ def workspace_propose_git_push_and_wait(
 )
 def workspace_list_command_bundles(
     limit: Annotated[int, Field(ge=1, le=200)] = 50,
-    task_id: Annotated[str | None, Field(description="Optional metadata task_id filter. Empty strings are ignored.")] = None,
-    client_id: Annotated[str | None, Field(description="Optional metadata client_id filter. Empty strings are ignored.")] = None,
-    session_id: Annotated[str | None, Field(description="Optional metadata session_id filter. Empty strings are ignored.")] = None,
-    project_id: Annotated[str | None, Field(description="Optional metadata project_id filter. Empty strings are ignored.")] = None,
-    workspace_mode: Annotated[str | None, Field(description="Optional metadata workspace_mode filter. Empty strings are ignored.")] = None,
+    task_id: Annotated[str | None, Field(description="Optional logical task_id filter. Empty strings are ignored.")] = None,
+    client_id: Annotated[str | None, Field(description="Optional caller/platform client_id filter. Empty strings are ignored.")] = None,
+    session_id: Annotated[str | None, Field(description="Optional conversation/session_id filter. Empty strings are ignored.")] = None,
+    project_id: Annotated[str | None, Field(description="Optional logical project_id filter. Empty strings are ignored.")] = None,
 ) -> CommandBundleListResult:
     """List recent command bundles across pending/applied/rejected/failed states.
 
@@ -4406,7 +3438,6 @@ def workspace_list_command_bundles(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
-        workspace_mode=workspace_mode,
     )
 
 

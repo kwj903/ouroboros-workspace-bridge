@@ -2,9 +2,9 @@
 
 ## Status
 
-Implemented on the `cleanup-update` branch and pending merge to `main`.
+Implemented and maintained on `main`.
 
-The shipped implementation includes configurable cleanup policy, count-based cleanup, Management > Storage Cleanup, History/Results pagination, and Management > Worktree Task management for actual Git task branch/worktree state versus archived Workspace Bridge records.
+The shipped implementation includes configurable cleanup policy, count-based cleanup, Management > Storage Cleanup, and History/Results pagination.
 
 This plan defines the durable product and implementation direction for keeping Workspace Terminal Bridge runtime history usable as bundle records, tool call records, handoffs, payloads, and backups accumulate over time.
 
@@ -341,23 +341,6 @@ git diff --check
 ```
 
 For touched Python files, also run targeted ruff checks.
-
-## Parallel work split
-
-The `cleanup-update` branch should act as the orchestrator branch. Worker sessions should be isolated with task workspaces. Each worker should make focused changes and then queue a safe merge back to `cleanup-update`.
-
-Recommended worker tasks:
-
-1. `cleanup-policy-core`
-   - Runtime cleanup policy model, persistence, count-based candidates, clear-history candidate mode, CLI integration, core tests.
-2. `cleanup-management-ui`
-   - Management navigation/page, policy form, preview/apply endpoints, confirmation UX, UI tests.
-3. `cleanup-history-pagination`
-   - History/results limit/page behavior, query preservation, rendering updates, pagination tests.
-4. `cleanup-docs-validation`
-   - User/operator docs, CHANGELOG, final verification, release notes preparation after code merges.
-
-Worker tasks should not commit or push independently unless explicitly instructed. Each worker should update its active task document and use the task workspace merge flow for orchestrator review.
 
 ## Completion criteria
 

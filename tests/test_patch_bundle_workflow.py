@@ -47,10 +47,6 @@ BUNDLE_TOOLS = {
     "workspace_wait_command_bundle_status",
     "workspace_list_command_bundles",
     "workspace_cancel_command_bundle",
-    "workspace_prepare_task_workspace",
-    "workspace_create_task_worktree",
-    "workspace_task_workspace_status",
-    "workspace_list_task_workspaces",
 }
 
 INTENT_TOOLS = {
@@ -128,7 +124,7 @@ class ToolSurfaceTests(unittest.TestCase):
 
         self.assertFalse(DIRECT_RISKY_TOOLS.intersection(tools))
         self.assertTrue(BUNDLE_TOOLS.issubset(tools))
-        self.assertTrue(INTENT_TOOLS.issubset(tools))
+        self.assertFalse(INTENT_TOOLS.intersection(tools))
         self.assertTrue(RECOVERY_TOOLS.issubset(tools))
         self.assertFalse(PRIMITIVE_STAGE_TOOLS.intersection(tools))
 
@@ -179,14 +175,16 @@ class ToolSurfaceTests(unittest.TestCase):
         self.assertIsNone(result.git_status)
         self.assertIsNone(result.git_status_summary)
 
-    def test_intent_tools_are_read_only_public_tools(self) -> None:
+    def test_intent_tools_are_internal_helpers(self) -> None:
         with open(server.__file__, encoding="utf-8") as handle:
             source = handle.read()
 
+        public_tools = set(server.workspace_info().tools)
         for tool_name in INTENT_TOOLS:
-            self.assertIn(tool_name, server.workspace_info().tools)
+            self.assertNotIn(tool_name, public_tools)
             function_index = source.index(f"def {tool_name}(")
             decorator_block = source[max(0, function_index - 260) : function_index]
+            self.assertIn("@_internal_tool(", decorator_block)
             self.assertIn('"readOnlyHint": True', decorator_block)
             self.assertIn('"destructiveHint": False', decorator_block)
             self.assertIn('"idempotentHint": True', decorator_block)
@@ -292,9 +290,6 @@ class PatchBundleStagingTests(unittest.TestCase):
         self.assertEqual(metadata["client_id"], "default")
         self.assertEqual(metadata["session_id"], "default")
         self.assertTrue(str(metadata["project_id"]).startswith("sha256:"))
-        self.assertEqual(metadata["workspace_mode"], "direct")
-        self.assertEqual(metadata["source_cwd"], self.project_cwd())
-        self.assertEqual(metadata["effective_cwd"], self.project_cwd())
         self.assertEqual(result.metadata, metadata)
 
     def test_propose_command_bundle_records_explicit_metadata_and_keys_by_it(self) -> None:
@@ -323,7 +318,6 @@ class PatchBundleStagingTests(unittest.TestCase):
                 client_id="client-a",
                 session_id="session-a",
                 project_id="project-alpha",
-                workspace_mode="direct",
             )
         finally:
             server._workspace_wait_command_bundle_status_impl = original_wait_impl
@@ -340,51 +334,8 @@ class PatchBundleStagingTests(unittest.TestCase):
         self.assertEqual(metadata["client_id"], "client-a")
         self.assertEqual(metadata["session_id"], "session-a")
         self.assertEqual(metadata["project_id"], "project-alpha")
-        self.assertEqual(metadata["workspace_mode"], "direct")
         self.assertEqual(second.metadata, metadata)
 
-    def test_propose_command_bundle_records_task_workspace_metadata(self) -> None:
-        original_wait_impl = server._workspace_wait_command_bundle_status_impl
-
-        def immediate_wait(bundle_id: str, timeout_seconds: int, poll_interval_seconds: float) -> server.CommandBundleStatusResult:
-            return server._workspace_command_bundle_status_impl(bundle_id)
-
-        server._workspace_wait_command_bundle_status_impl = immediate_wait
-        try:
-            result = server.workspace_propose_command_and_wait(
-                title=f"Task workspace command {uuid4().hex[:8]}",
-                cwd=self.project_cwd(),
-                argv=["git", "status", "--short"],
-                timeout_seconds=1,
-                poll_interval_seconds=0.2,
-                task_id="task-workspace-a",
-                client_id="client-a",
-                session_id="session-a",
-                project_id="project-alpha",
-                workspace_mode="task-workspace",
-            )
-        finally:
-            server._workspace_wait_command_bundle_status_impl = original_wait_impl
-
-        self.bundle_ids.append(result.bundle_id)
-        _, record = server._find_command_bundle(result.bundle_id)
-        metadata = record.get("metadata")
-
-        self.assertIsInstance(metadata, dict)
-        self.assertEqual(metadata["task_id"], "task-workspace-a")
-        self.assertEqual(metadata["workspace_mode"], "task-workspace")
-        self.assertEqual(metadata["source_cwd"], self.project_cwd())
-        self.assertEqual(metadata["effective_cwd"], self.project_cwd())
-        self.assertEqual(result.metadata, metadata)
-
-    def test_task_workspace_requires_task_id(self) -> None:
-        with self.assertRaisesRegex(ValueError, "requires task_id"):
-            server.workspace_propose_command_and_wait(
-                title="Missing task id",
-                cwd=self.project_cwd(),
-                argv=["git", "status", "--short"],
-                workspace_mode="task-workspace",
-            )
 
     def test_rejects_invalid_patch_path(self) -> None:
         patch = new_file_patch("../outside.md")

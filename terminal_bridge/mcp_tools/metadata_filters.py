@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
-METADATA_FILTER_KEYS = ("task_id", "client_id", "session_id", "project_id", "workspace_mode")
+METADATA_FILTER_KEYS = ("task_id", "client_id", "session_id", "project_id")
 
 
 def active_metadata_filters(filters: Mapping[str, str | None]) -> dict[str, str]:

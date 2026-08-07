@@ -228,7 +228,7 @@ my-terminal-tool/
 
 Core implementation files:
 
-- `server.py`: MCP tool registration, public wrapper signatures, and tool-facing orchestration.
+- `server.py`: MCP tool registration, public wrapper signatures, proposal routing, and logical session/task metadata.
 - `terminal_bridge/mcp_tools/`: helper modules used by `server.py` for read-only inspection, proposal construction, command-bundle status/wait flows, and runtime status views. Public MCP tool names and schemas remain defined in `server.py`.
 - `scripts/command_bundle_review_server.py`: local HTTP review server routes and request handling.
 - `terminal_bridge/mcp_runtime.py`: shared MCP runtime helpers for audit logging, tool-call journal wrapping, runtime directories, and command-bundle result conversion.

@@ -47,6 +47,26 @@ class BundleWatcherHelperTests(unittest.TestCase):
 
             self.assertEqual(bundle_watcher.current_pending_bundle_ids(pending_dir), {"cmd-custom", "cmd-two"})
 
+    def test_startup_seen_pending_bundle_ids_reprocesses_auto_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pending_dir = Path(tmp)
+            normal_record = {**low_risk_command_bundle(), "bundle_id": "cmd-normal"}
+            yolo_record = {**low_risk_command_bundle(), "bundle_id": "cmd-yolo", "risk": "blocked"}
+            (pending_dir / "cmd-normal.json").write_text(json.dumps(normal_record), encoding="utf-8")
+            (pending_dir / "cmd-yolo.json").write_text(json.dumps(yolo_record), encoding="utf-8")
+            (pending_dir / "cmd-incomplete.json").write_text("{broken-json", encoding="utf-8")
+
+            def fake_load_effective_mode(record: dict[str, object] | None) -> approval_modes.ApprovalModeResolution:
+                mode = "yolo" if record and record.get("bundle_id") == "cmd-yolo" else "normal"
+                return approval_modes.ApprovalModeResolution(mode=mode, scope_type="global")
+
+            seen = bundle_watcher.startup_seen_pending_bundle_ids(
+                pending_dir,
+                load_effective_mode=fake_load_effective_mode,
+            )
+
+            self.assertEqual(seen, {"cmd-normal"})
+
     def test_handle_pending_bundle_auto_applies_when_mode_allows(self) -> None:
         calls: list[tuple[str, str]] = []
         notifications: list[str] = []
@@ -128,6 +148,35 @@ class BundleWatcherHelperTests(unittest.TestCase):
         self.assertEqual(notifications, ["cmd-test"])
         self.assertEqual(opened, ["cmd-test"])
 
+    def test_handle_pending_bundle_yolo_failure_never_falls_back_to_manual(self) -> None:
+        calls: list[tuple[str, str]] = []
+        notifications: list[str] = []
+        opened: list[str] = []
+
+        def fake_auto_apply(bundle_id: str, _runner: Path, _project_root: Path, source: str, _prefix: str) -> bool:
+            calls.append((bundle_id, source))
+            return False
+
+        record = {**low_risk_command_bundle(), "risk": "blocked"}
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = bundle_watcher.handle_pending_bundle(
+                "cmd-test",
+                record,
+                approval_mode="yolo",
+                runner=Path("runner.py"),
+                project_root=Path("."),
+                notify_enabled=True,
+                notify_bundle=notifications.append,
+                open_mode="bundle",
+                open_bundle=opened.append,
+                auto_apply_func=fake_auto_apply,
+            )
+
+        self.assertEqual(result, "auto-apply-failed")
+        self.assertEqual(calls, [("cmd-test", "mode=yolo")])
+        self.assertEqual(notifications, [])
+        self.assertEqual(opened, [])
+
     def test_handle_pending_bundle_uses_shared_approval_decision(self) -> None:
         original = bundle_watcher.should_auto_approve
         calls: list[tuple[dict[str, object], str]] = []
@@ -196,6 +245,51 @@ class BundleWatcherHelperTests(unittest.TestCase):
 
             self.assertEqual(seen, {"cmd-test"})
             self.assertEqual(notifications, ["cmd-test"])
+
+    def test_watch_pending_bundles_retries_incomplete_json_before_marking_seen(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pending_dir = Path(tmp)
+            bundle_path = pending_dir / "cmd-test.json"
+            bundle_path.write_text("{broken-json", encoding="utf-8")
+            seen: set[str] = set()
+            auto_applied: list[str] = []
+
+            class RepairThenStop:
+                def __init__(self) -> None:
+                    self.wait_calls = 0
+
+                def is_set(self) -> bool:
+                    return False
+
+                def wait(self, _timeout: float) -> bool:
+                    self.wait_calls += 1
+                    if self.wait_calls == 1:
+                        bundle_path.write_text(json.dumps(low_risk_command_bundle()), encoding="utf-8")
+                        return False
+                    return True
+
+            def fake_auto_apply(bundle_id: str, _runner: Path, _project_root: Path, _source: str, _prefix: str) -> bool:
+                auto_applied.append(bundle_id)
+                return True
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                bundle_watcher.watch_pending_bundles(
+                    pending_dir=pending_dir,
+                    runner=Path("runner.py"),
+                    project_root=Path("."),
+                    seen_bundle_ids=seen,
+                    poll_seconds=0.01,
+                    notify_enabled=True,
+                    notify_bundle=None,
+                    open_mode="dashboard_once",
+                    open_bundle=None,
+                    stop_event=RepairThenStop(),
+                    load_mode=lambda: "yolo",
+                    auto_apply_func=fake_auto_apply,
+                )
+
+            self.assertEqual(seen, {"cmd-test"})
+            self.assertEqual(auto_applied, ["cmd-test"])
 
     def test_watch_pending_bundles_uses_effective_mode_from_bundle_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

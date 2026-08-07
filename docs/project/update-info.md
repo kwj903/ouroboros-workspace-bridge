@@ -1,6 +1,6 @@
 # Update Info
 
-Version: 0.5.0
+Version: 0.6.0
 
 For live local version and git state, run:
 
@@ -12,6 +12,8 @@ uv run woojae version
 
 Recent Commits is a generated snapshot. Run `uv run python scripts/update_version_info.py` before releases or documentation refreshes.
 
+- ee75b4a feat: add managed public tunnel operator (#2)
+- 0bd5b87 feat: add managed public tunnel operator
 - 2ac0e6c Handle reused Windows service PIDs
 - 220c67e Harden Windows Git output decoding
 - 123822d Fix Windows locale test regressions
@@ -30,8 +32,6 @@ Recent Commits is a generated snapshot. Run `uv run python scripts/update_versio
 - cfc17d0 feat: finalize cleanup management UI
 - 5521e88 feat: add storage cleanup management UI
 - 8ea7903 feat: paginate bundle history view
-- ca620f1 feat: add runtime cleanup policy core
-- 1f87c13 docs: plan runtime storage cleanup management
 
 ## How to Update Existing Installation
 

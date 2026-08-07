@@ -242,21 +242,23 @@ class ApprovalModeDecisionTests(unittest.TestCase):
                 self.assertFalse(approval_modes.bundle_touches_sensitive_path(record))
                 self.assertTrue(approval_modes.should_auto_approve(record, "yolo"))
 
-    def test_yolo_rejects_blocked_bundles(self) -> None:
+    def test_yolo_auto_approves_blocked_bundles(self) -> None:
         record = bundle_record(risk="blocked")
 
-        self.assertFalse(approval_modes.should_auto_approve(record, "yolo"))
+        self.assertTrue(approval_modes.should_auto_approve(record, "yolo"))
 
-    def test_yolo_rejects_sensitive_paths(self) -> None:
+    def test_yolo_auto_approves_sensitive_paths(self) -> None:
         record = bundle_record(risk="high", steps=[{"type": "write_file", "risk": "medium", "path": ".env"}])
 
-        self.assertFalse(approval_modes.should_auto_approve(record, "yolo"))
+        self.assertTrue(approval_modes.bundle_touches_sensitive_path(record))
+        self.assertTrue(approval_modes.should_auto_approve(record, "yolo"))
 
         for path in (".git/config", ".aws/credentials", ".gnupg/pubring.kbx"):
             with self.subTest(path=path):
                 record = bundle_record(risk="high", steps=[{"type": "write_file", "risk": "medium", "path": path}])
 
-                self.assertFalse(approval_modes.should_auto_approve(record, "yolo"))
+                self.assertTrue(approval_modes.bundle_touches_sensitive_path(record))
+                self.assertTrue(approval_modes.should_auto_approve(record, "yolo"))
 
 
 class ApprovalModeReviewUiTests(unittest.TestCase):

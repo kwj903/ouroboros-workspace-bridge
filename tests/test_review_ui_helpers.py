@@ -19,7 +19,6 @@ from terminal_bridge import approval_modes, config, handoffs, safety, tool_calls
 from terminal_bridge import review_layout
 from terminal_bridge import review_intents as intents
 from terminal_bridge import review_notifications as notifications
-from terminal_bridge.task_workspaces import TaskWorkspaceResolution
 
 
 class ReviewServerHelperTests(unittest.TestCase):
@@ -98,7 +97,6 @@ class ReviewServerHelperTests(unittest.TestCase):
     def test_bundle_metadata_badges_render_defaults_for_old_bundle(self) -> None:
         html = review.bundle_metadata_badges_html({"bundle_id": "cmd-old", "cwd": "."})
 
-        self.assertIn("mode: direct", html)
         self.assertIn("project: sha256:", html)
         self.assertIn("task: default", html)
         self.assertIn("client: default", html)
@@ -107,7 +105,6 @@ class ReviewServerHelperTests(unittest.TestCase):
     def test_metadata_badges_compact_project_id(self) -> None:
         html = review.metadata_badges_html(
             {
-                "workspace_mode": "direct",
                 "project_id": "sha256:1234567890abcdef",
                 "task_id": "task-a",
                 "client_id": "client-a",
@@ -118,669 +115,6 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("project: sha256:12345678", html)
         self.assertNotIn("1234567890abcdef", html)
 
-    def test_bundle_task_workspace_html_skips_direct_mode(self) -> None:
-        html = review.bundle_task_workspace_html(
-            {
-                "bundle_id": "cmd-direct",
-                "cwd": ".",
-                "metadata": {"workspace_mode": "direct", "task_id": "task-a"},
-            }
-        )
-
-        self.assertEqual(html, "")
-
-    def test_bundle_task_workspace_html_renders_resolution(self) -> None:
-        record = {
-            "bundle_id": "cmd-task",
-            "cwd": ".",
-            "metadata": {
-                "workspace_mode": "task-workspace",
-                "task_id": "task-a",
-                "project_id": "project-alpha",
-            },
-        }
-        resolution = TaskWorkspaceResolution(
-            workspace_mode="task-workspace",
-            status="missing",
-            reason="missing",
-            exists=False,
-            task_id="task-a",
-            project_id="project-alpha",
-            source_cwd=".",
-            workspace_key="task-a-123456789abc",
-            workspace_path=str(review.RUNTIME_ROOT / "task_workspaces" / "task-a-123456789abc" / "repo"),
-            record_path=str(review.RUNTIME_ROOT / "task_workspaces" / "task-a-123456789abc" / "workspace.json"),
-        )
-
-        with patch.object(review, "resolve_task_workspace_for_bundle", lambda item: resolution):
-            html = review.bundle_task_workspace_html(record)
-
-        self.assertIn("Task workspace: missing", html)
-        self.assertIn("workspace: runtime/task_workspaces/task-a-123456789abc/repo", html)
-
-    def test_bundle_task_workspace_html_renders_worktree_branch(self) -> None:
-        record = {
-            "bundle_id": "cmd-task",
-            "cwd": ".",
-            "metadata": {
-                "workspace_mode": "task-workspace",
-                "task_id": "task-a",
-                "project_id": "project-alpha",
-            },
-        }
-        resolution = TaskWorkspaceResolution(
-            workspace_mode="task-workspace",
-            status="worktree",
-            reason="found",
-            exists=True,
-            task_id="task-a",
-            project_id="project-alpha",
-            source_cwd=".",
-            workspace_key="task-a-123456789abc",
-            workspace_path=str(review.RUNTIME_ROOT / "task_workspaces" / "task-a-123456789abc" / "repo"),
-            record_path=str(review.RUNTIME_ROOT / "task_workspaces" / "task-a-123456789abc" / "workspace.json"),
-            record={
-                "worktree_branch": "task/task-a-123456789abc",
-                "base_ref": "main",
-            },
-        )
-
-        with patch.object(review, "resolve_task_workspace_for_bundle", lambda item: resolution):
-            html = review.bundle_task_workspace_html(record)
-
-        self.assertIn("Task workspace: worktree", html)
-        self.assertIn("branch: task/task-a-123456789abc", html)
-        self.assertIn("base: main", html)
-
-    def test_bundle_task_workspace_html_renders_worktree_inspection_summary(self) -> None:
-        record = {
-            "bundle_id": "cmd-task",
-            "cwd": ".",
-            "metadata": {
-                "workspace_mode": "task-workspace",
-                "task_id": "task-a",
-                "project_id": "project-alpha",
-                "source_cwd": ".",
-            },
-        }
-        resolution = TaskWorkspaceResolution(
-            workspace_mode="task-workspace",
-            status="worktree",
-            reason="found",
-            exists=True,
-            task_id="task-a",
-            project_id="project-alpha",
-            source_cwd=".",
-            workspace_key="task-a-123456789abc",
-            workspace_path=str(review.RUNTIME_ROOT / "task_workspaces" / "task-a-123456789abc" / "repo"),
-            record_path=str(review.RUNTIME_ROOT / "task_workspaces" / "task-a-123456789abc" / "workspace.json"),
-            record={
-                "worktree_branch": "task/task-a-123456789abc",
-                "base_ref": "main",
-            },
-        )
-        inspected = {
-            "dirty": True,
-            "changed_file_count": 2,
-            "diff_stat": " README.md | 1 +\n new.txt | 1 +",
-        }
-
-        with (
-            patch.object(review, "resolve_task_workspace_for_bundle", lambda item: resolution),
-            patch.object(review, "inspect_task_worktree", lambda *args, **kwargs: inspected),
-        ):
-            html = review.bundle_task_workspace_html(record)
-
-        self.assertIn("dirty", html)
-        self.assertIn("files: 2", html)
-        self.assertIn("README.md | 1 +", html)
-
-    def test_task_orchestration_summary_html_renders_empty_state(self) -> None:
-        html = review.task_orchestration_summary_html(
-            {
-                "project_id": None,
-                "entries": [],
-                "count": 0,
-                "active_count": 0,
-                "archived_count": 0,
-                "anomaly_count": 0,
-            }
-        )
-
-        self.assertIn("Worktree task 현황", html)
-        self.assertIn("worktree task 기록이 없습니다", html)
-        self.assertIn("total: 0", html)
-
-    def test_task_orchestration_summary_html_renders_entry_types_and_anomalies(self) -> None:
-        html = review.task_orchestration_summary_html(
-            {
-                "project_id": "project-alpha",
-                "count": 3,
-                "active_count": 2,
-                "archived_count": 1,
-                "anomaly_count": 1,
-                "entries": [
-                    {
-                        "project_id": "project-alpha",
-                        "source_cwd": "project",
-                        "task_id": "task-both",
-                        "task_workspace_status": "worktree",
-                        "worktree_status": "ready",
-                        "worktree_branch": "task/task-both",
-                        "workspace_path": "/tmp/runtime/task_workspaces/task-both/repo",
-                        "merge_queue_status": "queued",
-                        "conflict_risk": "low",
-                        "recommended_action": "merge_queue",
-                        "changed_file_count": 2,
-                        "source_head_changed": False,
-                        "source_dirty": False,
-                        "overlapping_files": [],
-                        "operator_attention": False,
-                        "operator_attention_reasons": [],
-                        "validation_status": "passed",
-                        "validation_commands": ["uv run python -m unittest"],
-                        "validation_summary": "passed",
-                        "validated_at": "2026-06-02T01:00:00+00:00",
-                        "validated_by": "operator-a",
-                        "archived": False,
-                        "has_task_workspace_record": True,
-                        "has_merge_queue_record": True,
-                        "anomaly": False,
-                        "anomaly_reasons": [],
-                    },
-                    {
-                        "project_id": "project-alpha",
-                        "source_cwd": "project",
-                        "task_id": "task-workspace-only",
-                        "task_workspace_status": "created",
-                        "worktree_status": None,
-                        "worktree_branch": None,
-                        "workspace_path": "/tmp/runtime/task_workspaces/task-workspace-only/repo",
-                        "merge_queue_status": None,
-                        "conflict_risk": None,
-                        "recommended_action": None,
-                        "changed_file_count": None,
-                        "source_head_changed": None,
-                        "source_dirty": None,
-                        "overlapping_files": [],
-                        "operator_attention": False,
-                        "operator_attention_reasons": [],
-                        "validation_status": "unknown",
-                        "validation_commands": [],
-                        "validation_summary": None,
-                        "validated_at": None,
-                        "validated_by": None,
-                        "archived": True,
-                        "has_task_workspace_record": True,
-                        "has_merge_queue_record": False,
-                        "anomaly": False,
-                        "anomaly_reasons": [],
-                    },
-                    {
-                        "project_id": "project-alpha",
-                        "source_cwd": "project",
-                        "task_id": "task-queue-only",
-                        "task_workspace_status": "missing",
-                        "worktree_status": None,
-                        "worktree_branch": None,
-                        "workspace_path": "/tmp/runtime/task_workspaces/task-queue-only/repo",
-                        "merge_queue_status": "queued",
-                        "conflict_risk": "high",
-                        "recommended_action": "manual_conflict_review",
-                        "changed_file_count": 1,
-                        "source_head_changed": True,
-                        "source_dirty": True,
-                        "overlapping_files": ["README.md"],
-                        "operator_attention": True,
-                        "operator_attention_reasons": [
-                            "high_risk",
-                            "source_dirty",
-                            "source_head_changed",
-                            "overlapping_files",
-                        ],
-                        "validation_status": "failed",
-                        "validation_commands": ["uv run python scripts/smoke_check.py"],
-                        "validation_summary": "smoke failed",
-                        "validated_at": "2026-06-02T02:00:00+00:00",
-                        "validated_by": "operator-b",
-                        "archived": False,
-                        "has_task_workspace_record": False,
-                        "has_merge_queue_record": True,
-                        "anomaly": True,
-                        "anomaly_reasons": ["missing_task_workspace_record"],
-                    },
-                ],
-            }
-        )
-
-        self.assertIn("Worktree task 현황", html)
-        self.assertIn("project: project-alpha", html)
-        self.assertIn("workspace+queue", html)
-        self.assertIn("workspace-only", html)
-        self.assertIn("queue-only", html)
-        self.assertIn("task-both", html)
-        self.assertIn("source: project", html)
-        self.assertIn("workspace: worktree", html)
-        self.assertIn("worktree: ready", html)
-        self.assertIn("queue: queued", html)
-        self.assertIn("risk: low", html)
-        self.assertIn("action: merge_queue", html)
-        self.assertIn("files: 2", html)
-        self.assertIn("validation: passed", html)
-        self.assertIn("validation: failed", html)
-        self.assertIn("validated by: operator-b", html)
-        self.assertIn("archived: yes", html)
-        self.assertIn("attention: conflict review", html)
-        self.assertIn("source dirty", html)
-        self.assertIn("head drift", html)
-        self.assertIn("overlap: README.md", html)
-        self.assertIn("anomaly: missing_task_workspace_record", html)
-
-    def test_task_orchestration_summary_html_renders_cleanup_readiness(self) -> None:
-        summary = {
-            "project_id": "project-alpha",
-            "count": 2,
-            "active_count": 0,
-            "archived_count": 2,
-            "anomaly_count": 0,
-            "attention_count": 0,
-            "entries": [
-                {
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-cleanup-ready",
-                    "task_workspace_status": "archived",
-                    "worktree_status": "ready",
-                    "worktree_branch": "task/task-cleanup-ready",
-                    "workspace_path": "/tmp/runtime/task_workspaces/task-cleanup-ready/repo",
-                    "merge_queue_status": "merged",
-                    "conflict_risk": "low",
-                    "recommended_action": "merged",
-                    "changed_file_count": 2,
-                    "source_head_changed": False,
-                    "source_dirty": False,
-                    "overlapping_files": [],
-                    "operator_attention": False,
-                    "operator_attention_reasons": [],
-                    "validation_status": "passed",
-                    "validation_commands": [],
-                    "validation_summary": "passed",
-                    "validated_at": "2026-06-02T01:00:00+00:00",
-                    "validated_by": "operator-a",
-                    "archived": True,
-                    "has_task_workspace_record": True,
-                    "has_merge_queue_record": True,
-                    "anomaly": False,
-                    "anomaly_reasons": [],
-                },
-                {
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-cleanup-blocked",
-                    "task_workspace_status": "archived",
-                    "worktree_status": "ready",
-                    "worktree_branch": "task/task-cleanup-blocked",
-                    "workspace_path": "/tmp/runtime/task_workspaces/task-cleanup-blocked/repo",
-                    "merge_queue_status": "merged",
-                    "conflict_risk": "low",
-                    "recommended_action": "merged",
-                    "changed_file_count": 1,
-                    "source_head_changed": False,
-                    "source_dirty": False,
-                    "overlapping_files": [],
-                    "operator_attention": True,
-                    "operator_attention_reasons": ["validation_failed"],
-                    "validation_status": "failed",
-                    "validation_commands": [],
-                    "validation_summary": "failed",
-                    "validated_at": "2026-06-02T02:00:00+00:00",
-                    "validated_by": "operator-b",
-                    "archived": True,
-                    "has_task_workspace_record": True,
-                    "has_merge_queue_record": True,
-                    "anomaly": False,
-                    "anomaly_reasons": [],
-                },
-            ],
-        }
-        cleanup_preview = {
-            "project_id": "project-alpha",
-            "count": 2,
-            "ready_count": 1,
-            "blocked_count": 1,
-            "entries": [
-                {
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-cleanup-ready",
-                    "queue_status": "merged",
-                    "workspace_status": "archived",
-                    "validation_status": "passed",
-                    "cleanup_ready": True,
-                    "cleanup_risk": "low",
-                    "cleanup_blockers": [],
-                    "recommended_action": "ready_for_physical_cleanup_review",
-                },
-                {
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-cleanup-blocked",
-                    "queue_status": "merged",
-                    "workspace_status": "archived",
-                    "validation_status": "failed",
-                    "cleanup_ready": False,
-                    "cleanup_risk": "high",
-                    "cleanup_blockers": ["validation_failed", "worktree_dirty"],
-                    "recommended_action": "resolve_failed_validation_before_cleanup",
-                },
-            ],
-        }
-
-        html = review.task_orchestration_summary_html(summary, cleanup_preview=cleanup_preview)
-
-        self.assertIn("cleanup ready: 1", html)
-        self.assertIn("cleanup blocked: 1", html)
-        self.assertIn("cleanup ready: yes", html)
-        self.assertIn("cleanup risk: low", html)
-        self.assertIn("cleanup blockers: 0", html)
-        self.assertIn("cleanup action: ready_for_physical_cleanup_review", html)
-        self.assertIn("cleanup validation: passed", html)
-        self.assertIn("cleanup queue: merged", html)
-        self.assertIn("cleanup workspace: archived", html)
-        self.assertIn("cleanup ready: no", html)
-        self.assertIn("cleanup risk: high", html)
-        self.assertIn("cleanup blockers: 2 validation_failed", html)
-        self.assertIn("cleanup action: resolve_failed_validation_before_cleanup", html)
-
-    def test_task_orchestration_summary_html_renders_validation_result_hints(self) -> None:
-        summary = {
-            "project_id": "project-alpha",
-            "count": 2,
-            "active_count": 1,
-            "archived_count": 1,
-            "anomaly_count": 0,
-            "attention_count": 0,
-            "entries": [
-                {
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-validation-ready",
-                    "task_workspace_status": "archived",
-                    "worktree_status": "ready",
-                    "merge_queue_status": "merged",
-                    "conflict_risk": "low",
-                    "recommended_action": "merged",
-                    "changed_file_count": 1,
-                    "source_head_changed": False,
-                    "source_dirty": False,
-                    "overlapping_files": [],
-                    "operator_attention": False,
-                    "operator_attention_reasons": [],
-                    "validation_status": "unknown",
-                    "validation_commands": [],
-                    "validation_summary": None,
-                    "validated_at": None,
-                    "validated_by": None,
-                    "archived": True,
-                    "has_task_workspace_record": True,
-                    "has_merge_queue_record": True,
-                    "anomaly": False,
-                    "anomaly_reasons": [],
-                },
-                {
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-validation-missing",
-                    "task_workspace_status": "archived",
-                    "worktree_status": "ready",
-                    "merge_queue_status": "merged",
-                    "conflict_risk": "low",
-                    "recommended_action": "merged",
-                    "changed_file_count": 1,
-                    "source_head_changed": False,
-                    "source_dirty": False,
-                    "overlapping_files": [],
-                    "operator_attention": False,
-                    "operator_attention_reasons": [],
-                    "validation_status": "unknown",
-                    "validation_commands": [],
-                    "validation_summary": None,
-                    "validated_at": None,
-                    "validated_by": None,
-                    "archived": True,
-                    "has_task_workspace_record": True,
-                    "has_merge_queue_record": True,
-                    "anomaly": False,
-                    "anomaly_reasons": [],
-                },
-            ],
-        }
-        validation_result_hints = {
-            "entries": [
-                {
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-validation-ready",
-                    "bundle_id": "cmd-validation-pass",
-                    "bundle_status": "applied",
-                    "inferred_status": "passed",
-                    "recommended_next_action": "record_passed_validation",
-                    "suggested_record_input": {
-                        "task_id": "task-validation-ready",
-                        "cwd": "project",
-                        "project_id": "project-alpha",
-                        "validation_status": "passed",
-                        "validation_commands": ["uv run python -m unittest"],
-                        "validation_summary": "Validation command bundle cmd-validation-pass exited with code 0.",
-                    },
-                }
-            ]
-        }
-
-        html = review.task_orchestration_summary_html(summary, validation_result_hints=validation_result_hints)
-
-        self.assertIn("validation: unknown", html)
-        self.assertIn("validation bundle: cmd-validation-pass", html)
-        self.assertIn("validation inferred: passed", html)
-        self.assertIn("validation next: record_passed_validation", html)
-        self.assertIn("record suggestion: available", html)
-        self.assertIn("validation hint: not loaded", html)
-
-    def test_task_orchestration_summary_html_loads_cleanup_preview_for_dashboard(self) -> None:
-        summary = {
-            "project_id": "project-alpha",
-            "count": 1,
-            "active_count": 0,
-            "archived_count": 1,
-            "anomaly_count": 0,
-            "attention_count": 0,
-            "entries": [
-                {
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-cleanup-ready",
-                    "task_workspace_status": "archived",
-                    "worktree_status": "ready",
-                    "merge_queue_status": "merged",
-                    "conflict_risk": "low",
-                    "recommended_action": "merged",
-                    "changed_file_count": 1,
-                    "source_head_changed": False,
-                    "source_dirty": False,
-                    "overlapping_files": [],
-                    "operator_attention": False,
-                    "operator_attention_reasons": [],
-                    "validation_status": "passed",
-                    "validation_commands": [],
-                    "validation_summary": "passed",
-                    "validated_at": None,
-                    "validated_by": None,
-                    "archived": True,
-                    "has_task_workspace_record": True,
-                    "has_merge_queue_record": True,
-                    "anomaly": False,
-                    "anomaly_reasons": [],
-                },
-            ],
-        }
-        cleanup_preview = {
-            "project_id": "project-alpha",
-            "count": 1,
-            "ready_count": 1,
-            "blocked_count": 0,
-            "entries": [
-                {
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-cleanup-ready",
-                    "queue_status": "merged",
-                    "workspace_status": "archived",
-                    "validation_status": "passed",
-                    "cleanup_ready": True,
-                    "cleanup_risk": "low",
-                    "cleanup_blockers": [],
-                    "recommended_action": "ready_for_physical_cleanup_review",
-                },
-            ],
-        }
-
-        with (
-            patch.object(review, "task_orchestration_summary", return_value=summary) as summary_mock,
-            patch.object(review, "task_cleanup_preview", return_value=cleanup_preview) as cleanup_mock,
-            patch.object(review, "task_validation_result_hint", return_value={"bundle_status": "not_found"}) as hint_mock,
-        ):
-            html = review.task_orchestration_summary_html(project_id="project-alpha")
-
-        summary_mock.assert_called_once_with(project_id="project-alpha", runtime_root=review.RUNTIME_ROOT)
-        cleanup_mock.assert_called_once_with(project_id="project-alpha", runtime_root=review.RUNTIME_ROOT)
-        hint_mock.assert_called_once_with(
-            task_id="task-cleanup-ready",
-            cwd="project",
-            project_id="project-alpha",
-            runtime_root=review.RUNTIME_ROOT,
-        )
-        self.assertIn("cleanup ready: yes", html)
-        self.assertIn("cleanup action: ready_for_physical_cleanup_review", html)
-        self.assertIn("validation bundle: none", html)
-        self.assertIn("validation inferred: unknown", html)
-
-    def test_task_orchestration_summary_html_loads_validation_result_hints_for_dashboard(self) -> None:
-        summary = {
-            "project_id": "project-alpha",
-            "count": 1,
-            "active_count": 0,
-            "archived_count": 1,
-            "anomaly_count": 0,
-            "attention_count": 0,
-            "entries": [
-                {
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-validation-ready",
-                    "task_workspace_status": "archived",
-                    "worktree_status": "ready",
-                    "merge_queue_status": "merged",
-                    "conflict_risk": "low",
-                    "recommended_action": "merged",
-                    "changed_file_count": 1,
-                    "source_head_changed": False,
-                    "source_dirty": False,
-                    "overlapping_files": [],
-                    "operator_attention": False,
-                    "operator_attention_reasons": [],
-                    "validation_status": "unknown",
-                    "validation_commands": [],
-                    "validation_summary": None,
-                    "validated_at": None,
-                    "validated_by": None,
-                    "archived": True,
-                    "has_task_workspace_record": True,
-                    "has_merge_queue_record": True,
-                    "anomaly": False,
-                    "anomaly_reasons": [],
-                },
-            ],
-        }
-
-        with (
-            patch.object(review, "task_orchestration_summary", return_value=summary) as summary_mock,
-            patch.object(review, "task_cleanup_preview", return_value={"entries": [], "ready_count": 0, "blocked_count": 0}),
-            patch.object(
-                review,
-                "task_validation_result_hint",
-                return_value={
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-validation-ready",
-                    "bundle_id": "cmd-validation-pass",
-                    "bundle_status": "applied",
-                    "inferred_status": "passed",
-                    "recommended_next_action": "record_passed_validation",
-                    "suggested_record_input": {"validation_status": "passed"},
-                },
-            ) as hint_mock,
-        ):
-            html = review.task_orchestration_summary_html(project_id="project-alpha")
-
-        summary_mock.assert_called_once_with(project_id="project-alpha", runtime_root=review.RUNTIME_ROOT)
-        hint_mock.assert_called_once_with(
-            task_id="task-validation-ready",
-            cwd="project",
-            project_id="project-alpha",
-            runtime_root=review.RUNTIME_ROOT,
-        )
-        self.assertIn("validation bundle: cmd-validation-pass", html)
-        self.assertIn("validation inferred: passed", html)
-        self.assertIn("record suggestion: available", html)
-
-    def test_task_orchestration_summary_html_falls_back_when_validation_hint_unavailable(self) -> None:
-        summary = {
-            "project_id": "project-alpha",
-            "count": 1,
-            "active_count": 0,
-            "archived_count": 1,
-            "anomaly_count": 0,
-            "attention_count": 0,
-            "entries": [
-                {
-                    "project_id": "project-alpha",
-                    "source_cwd": "project",
-                    "task_id": "task-validation-error",
-                    "task_workspace_status": "archived",
-                    "worktree_status": "ready",
-                    "merge_queue_status": "merged",
-                    "conflict_risk": "low",
-                    "recommended_action": "merged",
-                    "changed_file_count": 1,
-                    "source_head_changed": False,
-                    "source_dirty": False,
-                    "overlapping_files": [],
-                    "operator_attention": False,
-                    "operator_attention_reasons": [],
-                    "validation_status": "unknown",
-                    "validation_commands": [],
-                    "validation_summary": None,
-                    "validated_at": None,
-                    "validated_by": None,
-                    "archived": True,
-                    "has_task_workspace_record": True,
-                    "has_merge_queue_record": True,
-                    "anomaly": False,
-                    "anomaly_reasons": [],
-                },
-            ],
-        }
-
-        with (
-            patch.object(review, "task_orchestration_summary", return_value=summary),
-            patch.object(review, "task_cleanup_preview", return_value={"entries": [], "ready_count": 0, "blocked_count": 0}),
-            patch.object(review, "task_validation_result_hint", side_effect=ValueError("hint failed")),
-        ):
-            html = review.task_orchestration_summary_html(project_id="project-alpha")
-
-        self.assertIn("Worktree task 현황", html)
-        self.assertIn("task-validation-error", html)
-        self.assertIn("validation hint: unavailable", html)
 
     def test_bundle_metadata_filter_uses_and_conditions(self) -> None:
         rows = [
@@ -788,7 +122,6 @@ class ReviewServerHelperTests(unittest.TestCase):
                 "bundle_id": "cmd-a",
                 "cwd": ".",
                 "metadata": {
-                    "workspace_mode": "direct",
                     "project_id": "project-a",
                     "task_id": "task-a",
                     "client_id": "client-a",
@@ -799,7 +132,6 @@ class ReviewServerHelperTests(unittest.TestCase):
                 "bundle_id": "cmd-b",
                 "cwd": ".",
                 "metadata": {
-                    "workspace_mode": "direct",
                     "project_id": "project-a",
                     "task_id": "task-a",
                     "client_id": "client-a",
@@ -811,7 +143,6 @@ class ReviewServerHelperTests(unittest.TestCase):
         filtered = review.filter_bundle_records_by_metadata(
             rows,
             {
-                "workspace_mode": "direct",
                 "project_id": "project-a",
                 "task_id": "task-a",
                 "client_id": "client-a",
@@ -831,7 +162,6 @@ class ReviewServerHelperTests(unittest.TestCase):
         filtered = review.filter_bundle_records_by_metadata(
             rows,
             {
-                "workspace_mode": "direct",
                 "client_id": "default",
                 "session_id": "",
                 "project_id": None,
@@ -852,7 +182,7 @@ class ReviewServerHelperTests(unittest.TestCase):
                 "risk": "low",
                 "updated_at": "2026-01-02T00:00:00+00:00",
                 "steps": [],
-                "metadata": {"client_id": "client-a", "session_id": "session-a", "workspace_mode": "direct"},
+                "metadata": {"client_id": "client-a", "session_id": "session-a"},
             },
         )
         self.write_bundle_record(
@@ -865,7 +195,7 @@ class ReviewServerHelperTests(unittest.TestCase):
                 "risk": "low",
                 "updated_at": "2026-01-03T00:00:00+00:00",
                 "steps": [],
-                "metadata": {"client_id": "client-a", "session_id": "session-b", "workspace_mode": "direct"},
+                "metadata": {"client_id": "client-a", "session_id": "session-b"},
             },
         )
         self.write_bundle_record(
@@ -878,7 +208,7 @@ class ReviewServerHelperTests(unittest.TestCase):
                 "risk": "low",
                 "updated_at": "2026-01-04T00:00:00+00:00",
                 "steps": [],
-                "metadata": {"client_id": "client-a", "session_id": "session-a", "workspace_mode": "direct"},
+                "metadata": {"client_id": "client-a", "session_id": "session-a"},
             },
         )
         filters = review.metadata_filter_params(parse_qs("client_id=client-a&session_id=session-a"))
@@ -898,15 +228,13 @@ class ReviewServerHelperTests(unittest.TestCase):
 
     def test_metadata_filter_params_support_query_strings_and_status_links(self) -> None:
         filters = review.metadata_filter_params(
-            parse_qs("client_id=client-a&session_id=%20&workspace_mode=direct")
+            parse_qs("client_id=client-a&session_id=%20")
         )
 
         self.assertEqual(filters["client_id"], "client-a")
-        self.assertEqual(filters["workspace_mode"], "direct")
         html = review.status_filter_links_html("pending", filters)
 
         self.assertIn("client_id=client-a", html)
-        self.assertIn("workspace_mode=direct", html)
         self.assertNotIn("session_id=", html)
 
     def test_history_pagination_defaults_to_newest_100(self) -> None:
@@ -934,7 +262,7 @@ class ReviewServerHelperTests(unittest.TestCase):
 
     def test_history_pagination_preserves_status_and_metadata_filters(self) -> None:
         filters = review.metadata_filter_params(
-            parse_qs("client_id=client-a&session_id=session-a&workspace_mode=direct")
+            parse_qs("client_id=client-a&session_id=session-a")
         )
 
         url = review.history_pagination_url("/history", filters, status_filter="failed", page=2, limit=25)
@@ -949,7 +277,6 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertIn("limit=25", url)
         self.assertIn("client_id=client-a", url)
         self.assertIn("session_id=session-a", url)
-        self.assertIn("workspace_mode=direct", url)
         self.assertIn("status=failed", html)
         self.assertIn("client_id=client-a", html)
         self.assertIn("전체 26개 중 1–25개 표시", html)

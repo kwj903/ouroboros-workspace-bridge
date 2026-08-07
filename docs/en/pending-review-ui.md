@@ -42,14 +42,6 @@ Use **Manage > Storage Cleanup** to inspect and prune runtime data that accumula
 
 Pending bundles, session settings, secrets, and active pid files are preserved by cleanup actions.
 
-## Worktree Task management
-
-Use **Manage > Worktree Task management** to separate actual Git state from Workspace Bridge task records.
-
-- The actual Git state card reads the current branch, `task/*` branches, and task worktrees directly from the repository.
-- Remaining task branches and task worktrees can be deleted from the management UI after explicit checkbox confirmation.
-- Archived Worktree Task history is audit metadata; it does not necessarily mean a branch or worktree still exists.
-
 ## Approval mode
 
 Start with **Normal** mode.
@@ -58,15 +50,18 @@ Start with **Normal** mode.
 | --- | --- |
 | Normal | Manual review for every pending bundle. |
 | Safe Auto | Conservative handling for simple low-risk command checks. |
-| YOLO | Auto-approves pending bundles unless they are hard-blocked. Use it only for trusted development sessions. |
+| YOLO | Sends every valid pending bundle to the runner without manual approval. Use it only for trusted development sessions. |
 
-YOLO is intentionally more flexible for local development. The hard-blocked set is narrow:
+YOLO is an **approval all-pass mode**. A pending bundle's `low`/`medium`/`high`/`blocked` risk or sensitive-path label no longer causes a manual approval prompt.
 
-- Still hard-blocked: paths outside `WORKSPACE_ROOT`, exact `.env`, `.git`, `.aws`, `.gnupg`, `sudo`, `su`, `dd`, `mkfs`, `diskutil`.
-- Not hard-blocked for development flow: `.env.example`, `.env.local`, `.ssh`, `.venv`, `node_modules`, `ssh`, `scp`, `sftp`, `rsync`, shell `-c/-lc`, package install/sync commands, and ordinary git operations.
-- Non-blocked work may still be labeled `medium` or `high` risk. YOLO may auto-approve those bundles, while Safe Auto remains conservative.
+- Every newly created pending bundle is automatically submitted to the runner.
+- Eligible YOLO bundles that were already pending before a review/watcher restart are resumed automatically.
+- If a bundle JSON file is temporarily unreadable while it is still being written, the watcher retries it on a later poll instead of consuming it as a manual-review item.
+- Runner path/command validation and actual command failures still fail the bundle. YOLO does not turn those execution failures back into approval prompts.
 
-If a red warning is shown, it usually means the current approval mode is less conservative. Switch back to **Normal** unless you intentionally changed it.
+In other words, YOLO skips approval; it does not pretend that invalid paths, unexecutable commands, or failed processes succeeded.
+
+If a red warning is shown, it means the approval stage is in all-pass mode. Switch back to **Normal** unless you intentionally changed it.
 
 ## Empty pending list
 
