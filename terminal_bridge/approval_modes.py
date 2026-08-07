@@ -397,16 +397,19 @@ def is_safe_auto_eligible(record: dict[str, object]) -> bool:
 
 def should_auto_approve(record: dict[str, object], mode: str) -> bool:
     normalized = normalize_approval_mode(mode)
-    if normalized == "normal":
-        return False
     if record.get("status") != "pending":
         return False
+    if normalized == "normal":
+        return False
+    if normalized == "yolo":
+        # YOLO is an approval bypass, not another risk tier. Every valid pending
+        # bundle is sent to the runner without requiring a human approval click.
+        # Execution-time validation may still fail the bundle explicitly.
+        return True
     if record.get("risk") == "blocked":
         return False
     if bundle_touches_sensitive_path(record):
         return False
     if normalized == "safe-auto":
         return is_safe_auto_eligible(record)
-    if normalized == "yolo":
-        return True
     return False

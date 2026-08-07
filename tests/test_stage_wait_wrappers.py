@@ -4,7 +4,6 @@ import inspect
 import json
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 import unittest
 
 import server
@@ -239,7 +238,9 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertIn("workspace_propose_patch_and_wait", tools)
         self.assertIn("workspace_propose_git_commit_and_wait", tools)
         self.assertIn("workspace_propose_git_push_and_wait", tools)
-        self.assertIn("workspace_propose_task_validation_command_and_wait", tools)
+        self.assertNotIn("workspace_prepare_task_workspace", tools)
+        self.assertNotIn("workspace_create_task_worktree", tools)
+        self.assertNotIn("workspace_task_orchestration_summary", tools)
         self.assertIn("workspace_list_tool_calls", tools)
         self.assertIn("workspace_tool_call_status", tools)
         self.assertNotIn("workspace_stage_command_bundle_and_wait", tools)
@@ -264,7 +265,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             server.workspace_propose_git_commit_and_wait,
             server.workspace_propose_git_push_and_wait,
         ]
-        metadata_fields = {"task_id", "client_id", "session_id", "project_id", "workspace_mode"}
+        metadata_fields = {"task_id", "client_id", "session_id", "project_id"}
 
         for wrapper in wrappers:
             with self.subTest(wrapper=wrapper.__name__):
@@ -384,14 +385,12 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             "client_id": " client-a ",
             "session_id": " session-a ",
             "project_id": " project-alpha ",
-            "workspace_mode": " direct ",
         }
         expected_metadata = {
             "task_id": "task-1",
             "client_id": "client-a",
             "session_id": "session-a",
             "project_id": "project-alpha",
-            "workspace_mode": "direct",
         }
 
         def fake_command_stage(
@@ -498,15 +497,9 @@ class StageAndWaitWrapperTests(unittest.TestCase):
                 client_id="\t",
                 session_id="\n",
                 project_id="  ",
-                workspace_mode=" ",
             )
         )
 
-    def test_proposal_metadata_input_accepts_direct_workspace_mode(self) -> None:
-        self.assertEqual(
-            server._proposal_metadata_input(workspace_mode=" direct "),
-            {"workspace_mode": "direct"},
-        )
 
     def test_proposal_metadata_input_normalizes_scope_fields(self) -> None:
         self.assertEqual(
@@ -515,29 +508,14 @@ class StageAndWaitWrapperTests(unittest.TestCase):
                 client_id=" client-a ",
                 session_id=" ",
                 project_id="project-alpha",
-                workspace_mode="direct",
             ),
             {
                 "task_id": "task-1",
                 "client_id": "client-a",
                 "project_id": "project-alpha",
-                "workspace_mode": "direct",
             },
         )
 
-    def test_proposal_metadata_input_accepts_task_workspace_with_task_id(self) -> None:
-        self.assertEqual(
-            server._proposal_metadata_input(task_id=" task-1 ", workspace_mode=" task-workspace "),
-            {"task_id": "task-1", "workspace_mode": "task-workspace"},
-        )
-
-    def test_proposal_metadata_input_rejects_task_workspace_without_task_id(self) -> None:
-        with self.assertRaisesRegex(ValueError, "requires task_id"):
-            server._proposal_metadata_input(workspace_mode="task-workspace")
-
-    def test_proposal_metadata_input_rejects_unknown_workspace_mode(self) -> None:
-        with self.assertRaisesRegex(ValueError, "supports 'direct' or 'task-workspace'"):
-            server._proposal_metadata_input(task_id="task-1", workspace_mode="isolated")
 
     def test_propose_git_push_rejects_flag_like_remote(self) -> None:
         with self.assertRaises(ValueError):
@@ -640,6 +618,61 @@ class ToolCallJournalTests(unittest.TestCase):
             tool_calls.read_tool_call("call-99999999-999999-bad")
 
 
+class DirectSessionIsolationTests(unittest.TestCase):
+    def test_public_proposal_wrappers_do_not_expose_workspace_mode(self) -> None:
+        wrappers = [
+            server.workspace_propose_command_and_wait,
+            server.workspace_propose_file_write_and_wait,
+            server.workspace_propose_file_replace_and_wait,
+            server.workspace_propose_patch_and_wait,
+            server.workspace_propose_git_commit_and_wait,
+            server.workspace_propose_git_push_and_wait,
+        ]
+
+        for wrapper in wrappers:
+            with self.subTest(wrapper=wrapper.__name__):
+                self.assertNotIn("workspace_mode", inspect.signature(wrapper).parameters)
+
+    def test_metadata_changes_keep_identical_requests_separate(self) -> None:
+        payload = {
+            "kind": "command_bundle",
+            "title": "same command",
+            "cwd": "project",
+            "steps": [{"type": "command", "argv": ["git", "status"]}],
+        }
+        session_a = server._proposal_metadata_input(
+            task_id="task-a", client_id="chatgpt", session_id="session-a", project_id="project-alpha"
+        )
+        session_b = server._proposal_metadata_input(
+            task_id="task-a", client_id="chatgpt", session_id="session-b", project_id="project-alpha"
+        )
+
+        key_a = server._request_key(server._request_payload_with_metadata(payload, session_a))
+        key_a_repeat = server._request_key(server._request_payload_with_metadata(payload, session_a))
+        key_b = server._request_key(server._request_payload_with_metadata(payload, session_b))
+
+        self.assertEqual(key_a, key_a_repeat)
+        self.assertNotEqual(key_a, key_b)
+
+    def test_new_bundle_metadata_rejects_removed_task_workspace_mode(self) -> None:
+        from terminal_bridge.bundles import _merge_command_bundle_metadata
+
+        with self.assertRaisesRegex(ValueError, "task-workspace.*removed"):
+            _merge_command_bundle_metadata(
+                "project",
+                {"task_id": "task-a", "workspace_mode": "task-workspace"},
+                validate_workspace_mode=True,
+            )
+
+        legacy = _merge_command_bundle_metadata(
+            "project",
+            {"task_id": "task-a", "workspace_mode": "task-workspace"},
+            validate_workspace_mode=False,
+        )
+        self.assertEqual(legacy["workspace_mode"], "task-workspace")
+
+
+
 class CommandBundleMetadataTests(unittest.TestCase):
     def test_status_from_old_record_without_metadata_uses_defaults(self) -> None:
         record: dict[str, object] = {
@@ -658,7 +691,6 @@ class CommandBundleMetadataTests(unittest.TestCase):
 
         self.assertEqual(result.metadata, _default_command_bundle_metadata("project"))
         self.assertEqual(result.metadata["client_id"], "default")
-        self.assertEqual(result.metadata["workspace_mode"], "direct")
 
     def test_list_command_bundles_exposes_metadata_and_handles_old_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -727,8 +759,7 @@ class CommandBundleMetadataTests(unittest.TestCase):
                         "client_id": "client-a",
                         "session_id": "session-a",
                         "project_id": "project-alpha",
-                        "workspace_mode": "direct",
-                    },
+                            },
                 },
                 {
                     "bundle_id": "cmd-b",
@@ -781,9 +812,8 @@ class CommandBundleMetadataTests(unittest.TestCase):
             self.assertEqual(run_list(client_id="client-a"), ["cmd-a", "cmd-b"])
             self.assertEqual(run_list(session_id="session-a"), ["cmd-a", "cmd-c"])
             self.assertEqual(run_list(project_id="project-alpha"), ["cmd-a", "cmd-b"])
-            self.assertEqual(run_list(workspace_mode="task-workspace"), ["cmd-b"])
             self.assertEqual(run_list(task_id="task-1"), ["cmd-a", "cmd-b"])
-            self.assertEqual(run_list(task_id="task-1", session_id="session-b", workspace_mode="task-workspace"), ["cmd-b"])
+            self.assertEqual(run_list(task_id="task-1", session_id="session-b"), ["cmd-b"])
             self.assertEqual(run_list(client_id="default", project_id=legacy_project_id), ["cmd-old"])
             self.assertEqual(run_list(client_id=""), ["cmd-old", "cmd-a", "cmd-b", "cmd-c"])
 
@@ -800,7 +830,6 @@ class CommandBundleMetadataTests(unittest.TestCase):
             client_id: str | None = None,
             session_id: str | None = None,
             project_id: str | None = None,
-            workspace_mode: str | None = None,
         ) -> CommandBundleListResult:
             captured.update(
                 {
@@ -809,7 +838,6 @@ class CommandBundleMetadataTests(unittest.TestCase):
                     "client_id": client_id,
                     "session_id": session_id,
                     "project_id": project_id,
-                    "workspace_mode": workspace_mode,
                 }
             )
             return CommandBundleListResult(entries=[], count=0)
@@ -822,7 +850,6 @@ class CommandBundleMetadataTests(unittest.TestCase):
                 client_id="client-a",
                 session_id="session-a",
                 project_id="project-alpha",
-                workspace_mode="direct",
             )
         finally:
             server._bundle_list_command_bundles = original_list_command_bundles
@@ -836,6 +863,5 @@ class CommandBundleMetadataTests(unittest.TestCase):
                 "client_id": "client-a",
                 "session_id": "session-a",
                 "project_id": "project-alpha",
-                "workspace_mode": "direct",
             },
         )

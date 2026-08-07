@@ -72,6 +72,33 @@ def pending_bundle_records(pending_dir: Path) -> list[tuple[str, Path, dict[str,
     return rows
 
 
+def startup_seen_pending_bundle_ids(
+    pending_dir: Path,
+    *,
+    load_effective_mode: EffectiveModeLoader = load_effective_approval_mode,
+) -> set[str]:
+    """Return pending ids that should stay untouched when a watcher starts.
+
+    Normal/manual bundles are treated as already seen so restarting the review
+    service does not re-notify them. Bundles that are eligible for an automatic
+    mode are intentionally omitted so Safe Auto/YOLO can resume them after a
+    watcher restart. Incomplete JSON is also omitted and retried on a later poll.
+    """
+
+    seen: set[str] = set()
+    for bundle_id, _path, record in pending_bundle_records(pending_dir):
+        if record is None:
+            continue
+        try:
+            resolution = load_effective_mode(record)
+        except Exception:
+            seen.add(bundle_id)
+            continue
+        if not should_auto_approve(record, resolution.mode):
+            seen.add(bundle_id)
+    return seen
+
+
 def auto_apply_bundle(
     bundle_id: str,
     runner: Path,
@@ -118,11 +145,19 @@ def handle_pending_bundle(
     approval_resolution: ApprovalModeResolution | None = None,
 ) -> str:
     effective_mode = approval_resolution.mode if approval_resolution is not None else approval_mode
-    if record is not None and should_auto_approve(record, effective_mode):
+    if record is None:
+        print(f"{log_prefix}bundle record is not ready yet; retrying later: {bundle_id}")
+        return "deferred"
+
+    if should_auto_approve(record, effective_mode):
         source = approval_resolution.source_label if approval_resolution is not None else f"mode={approval_mode}"
         print(f"{log_prefix}approval mode {effective_mode}: 자동 승인 시도: {bundle_id}")
         if auto_apply_func(bundle_id, runner, project_root, source, log_prefix):
             return "auto-applied"
+
+        if effective_mode == "yolo":
+            print(f"{log_prefix}YOLO auto-approval failed; manual approval fallback suppressed: {bundle_id}")
+            return "auto-apply-failed"
 
         print(f"{log_prefix}auto-approval failed; falling back to manual review: {bundle_id}")
 
@@ -159,6 +194,9 @@ def watch_pending_bundles(
         for bundle_id, _path, record in pending_bundle_records(pending_dir):
             if bundle_id in seen_bundle_ids:
                 continue
+            if record is None:
+                print(f"{log_prefix}pending bundle JSON is not ready yet; retrying later: {bundle_id}")
+                continue
 
             print(f"{log_prefix}새 승인 대기 번들: {bundle_id}")
             if load_mode is not None:
@@ -171,7 +209,7 @@ def watch_pending_bundles(
                 )
             else:
                 approval_resolution = load_effective_mode(record)
-            handle_pending_bundle(
+            outcome = handle_pending_bundle(
                 bundle_id,
                 record,
                 approval_mode=approval_resolution.mode,
@@ -185,7 +223,8 @@ def watch_pending_bundles(
                 auto_apply_func=auto_apply_func,
                 approval_resolution=approval_resolution,
             )
-            seen_bundle_ids.add(bundle_id)
+            if outcome != "deferred":
+                seen_bundle_ids.add(bundle_id)
 
         if stop_event is not None:
             if stop_event.wait(poll_seconds):

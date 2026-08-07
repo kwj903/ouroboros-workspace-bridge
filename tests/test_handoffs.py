@@ -158,7 +158,6 @@ class HandoffTests(unittest.TestCase):
         self.assertIsNotNone(by_bundle)
         assert by_bundle is not None
         self.assertEqual(by_bundle.bundle_id, "cmd-one")
-        self.assertEqual(by_bundle.metadata["workspace_mode"], "direct")
         self.assertEqual(listed.count, 2)
         self.assertTrue(all(entry.handoff_id.startswith("handoff-") for entry in listed.entries))
 
@@ -206,9 +205,8 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(bundle_ids(client_id="client-a"), ["cmd-a", "cmd-b"])
         self.assertEqual(bundle_ids(session_id="session-a"), ["cmd-a", "cmd-c"])
         self.assertEqual(bundle_ids(project_id="project-alpha"), ["cmd-a", "cmd-b"])
-        self.assertEqual(bundle_ids(workspace_mode="task-workspace"), ["cmd-b"])
         self.assertEqual(bundle_ids(task_id="task-1"), ["cmd-a", "cmd-b"])
-        self.assertEqual(bundle_ids(task_id="task-1", session_id="session-b", workspace_mode="task-workspace"), ["cmd-b"])
+        self.assertEqual(bundle_ids(task_id="task-1", session_id="session-b"), ["cmd-b"])
         self.assertEqual(bundle_ids(client_id="default"), [])
         self.assertEqual(bundle_ids(client_id=" "), ["cmd-old", "cmd-a", "cmd-b", "cmd-c"])
 

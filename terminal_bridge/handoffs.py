@@ -162,7 +162,6 @@ def list_handoffs(
     client_id: str | None = None,
     session_id: str | None = None,
     project_id: str | None = None,
-    workspace_mode: str | None = None,
 ) -> list[dict[str, object]]:
     if limit < 1 or not HANDOFF_DIR.exists():
         return []
@@ -173,7 +172,6 @@ def list_handoffs(
         "client_id": client_id,
         "session_id": session_id,
         "project_id": project_id,
-        "workspace_mode": workspace_mode,
     }
     for path in HANDOFF_DIR.glob("handoff-*.json"):
         try:

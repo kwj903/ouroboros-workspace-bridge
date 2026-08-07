@@ -22,7 +22,6 @@ from terminal_bridge import (
     patches,
     payloads,
     safety,
-    tasks,
 )
 from terminal_bridge.models import (
     CommandBundleAction,
@@ -33,19 +32,9 @@ from terminal_bridge.models import (
     CommandBundleStep,
     FindFilesResult,
     HandoffEntry,
-    MergeQueueEntryResult,
     ProjectSnapshotResult,
     ReadManyFilesResult,
-    SafeTaskMergePreparationResult,
     SearchTextResult,
-    TaskCleanupPreviewResult,
-    TaskOrchestrationSummaryResult,
-    TaskStatusResult,
-    TaskValidationRecordSuggestion,
-    TaskValidationResultHintResult,
-    TaskWorkspaceStatusResult,
-    TaskWorktreeInspectionResult,
-    TaskWorktreeMergePreflightResult,
     TextPayloadStageResult,
     ToolCallStatusResult,
 )
@@ -198,23 +187,14 @@ class ResultModelSchemaTests(unittest.TestCase):
             CommandBundleStatusResult,
             CommandBundleListEntry,
             CommandBundleListResult,
-            SafeTaskMergePreparationResult,
-            TaskValidationResultHintResult,
-            TextPayloadStageResult,
+                            TextPayloadStageResult,
             ToolCallStatusResult,
             HandoffEntry,
             FindFilesResult,
             SearchTextResult,
             ReadManyFilesResult,
             ProjectSnapshotResult,
-            TaskStatusResult,
-            TaskWorkspaceStatusResult,
-            TaskWorktreeInspectionResult,
-            TaskWorktreeMergePreflightResult,
-            MergeQueueEntryResult,
-            TaskOrchestrationSummaryResult,
-            TaskCleanupPreviewResult,
-        )
+                                                                )
 
         missing = [
             f"{model.__name__}.{field_name}"
@@ -225,24 +205,11 @@ class ResultModelSchemaTests(unittest.TestCase):
 
         self.assertEqual(missing, [])
 
-    def test_shared_literal_aliases_keep_expected_enum_values(self) -> None:
-        expected_aliases = {
-            "RiskLevel": ("low", "medium", "high", "blocked"),
-            "ValidationStatus": ("unknown", "pending", "passed", "failed"),
-            "WorkspaceMode": ("direct", "task-workspace"),
-        }
-
-        for alias_name, values in expected_aliases.items():
-            with self.subTest(alias=alias_name):
-                self.assertEqual(get_args(getattr(model_types, alias_name, object)), values)
-
+    def test_shared_risk_literal_alias_keeps_expected_enum_values(self) -> None:
+        self.assertEqual(get_args(getattr(model_types, "RiskLevel", object)), ("low", "medium", "high", "blocked"))
         self.assertEqual(
             CommandBundleStageResult.model_fields["risk"].annotation,
             getattr(model_types, "RiskLevel", None),
-        )
-        self.assertEqual(
-            TaskValidationRecordSuggestion.model_fields["validation_status"].annotation,
-            getattr(model_types, "ValidationStatus", None),
         )
 
     def test_recovery_public_wrappers_return_named_result_models(self) -> None:
@@ -830,21 +797,6 @@ index 0000000..1111111
 
         with self.assertRaises(PermissionError):
             patches._clean_patch_path(".git/config")
-
-
-class RefactoredTaskHelperTests(unittest.TestCase):
-    def test_normalizes_task_id(self) -> None:
-        self.assertEqual(tasks._normalize_task_id("  task-refactor-ok  "), "task-refactor-ok")
-
-    def test_rejects_invalid_task_id(self) -> None:
-        with self.assertRaises(ValueError):
-            tasks._normalize_task_id("bad task id")
-
-    def test_task_path_uses_task_dir(self) -> None:
-        path = tasks._task_path("task-refactor-ok")
-
-        self.assertEqual(path.parent, config.TASK_DIR)
-        self.assertEqual(path.name, "task-refactor-ok.json")
 
 
 class RefactoredOperationHelperTests(unittest.TestCase):

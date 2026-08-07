@@ -4,6 +4,25 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 ## Unreleased
 
+## 0.6.0 - 2026-08-07
+
+### Changed
+
+- Concurrent ChatGPT sessions and other AI clients now use one direct workspace execution path with logical `task_id`, `client_id`, `session_id`, and `project_id` metadata for request identity, bundle/handoff filtering, and result separation.
+- Public proposal schemas describe `session_id` as the conversation separation key and no longer expose the retired `workspace_mode` routing option.
+- YOLO now acts as an approval all-pass mode: every valid pending bundle is submitted to the runner without requiring a manual approval click, including bundles labeled `blocked` or touching sensitive-path patterns.
+- Automatic approval modes now resume eligible bundles that were already pending when the review watcher starts instead of treating all pre-existing pending bundles as already seen.
+
+### Removed
+
+- Removed the task-workspace/worktree orchestrator, merge queue, worktree merge/preflight, task validation/cleanup lifecycle, Worktree Task management UI, and their public MCP tools. Historical runtime records are not deleted, but new work no longer creates or routes through them.
+- Removed the legacy task-workspace operator plans now that concurrent work is separated by logical metadata instead of physical Git worktrees.
+
+### Fixed
+
+- The pending watcher no longer consumes a bundle permanently when it observes the JSON file while it is still being written; unreadable/incomplete records are retried on a later poll.
+- YOLO no longer falls back to a manual review notification when the automatic runner invocation itself fails; execution failures remain failures rather than approval prompts.
+
 ## 0.5.0 - 2026-08-03
 
 ### Added

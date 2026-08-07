@@ -100,9 +100,6 @@ def _default_command_bundle_metadata(cwd: object) -> dict[str, object]:
         "client_id": "default",
         "session_id": "default",
         "project_id": _request_key({"kind": "project", "cwd": normalized_cwd}),
-        "workspace_mode": "direct",
-        "source_cwd": normalized_cwd,
-        "effective_cwd": normalized_cwd,
     }
 
 
@@ -129,9 +126,17 @@ def _merge_command_bundle_metadata(
         return defaults
 
     normalized = dict(defaults)
+    obsolete_routing_keys = {"workspace_mode", "source_cwd", "effective_cwd"}
     for key, value in raw_metadata.items():
-        if isinstance(key, str) and key not in defaults:
-            normalized[key] = value
+        if not isinstance(key, str) or key in defaults:
+            continue
+        if validate_workspace_mode and key in obsolete_routing_keys:
+            if key == "workspace_mode" and str(value or "").strip() not in {"", "direct"}:
+                raise ValueError("workspace_mode='task-workspace' has been removed; new bundles use direct mode only.")
+            continue
+        # Historical records may contain retired routing keys or custom metadata.
+        # Keep them readable without allowing them to affect new bundle routing.
+        normalized[key] = value
 
     task_id = _clean_command_bundle_metadata_text(
         raw_metadata.get("task_id"),
@@ -140,22 +145,10 @@ def _merge_command_bundle_metadata(
     )
     normalized["task_id"] = task_id
 
-    for key in ("client_id", "session_id", "project_id", "source_cwd", "effective_cwd"):
+    for key in ("client_id", "session_id", "project_id"):
         value = _clean_command_bundle_metadata_text(raw_metadata.get(key), key, strict=validate_workspace_mode)
         if value is not None:
             normalized[key] = value
-
-    workspace_mode = _clean_command_bundle_metadata_text(
-        raw_metadata.get("workspace_mode"),
-        "workspace_mode",
-        strict=validate_workspace_mode,
-    )
-    if workspace_mode is not None:
-        if validate_workspace_mode and workspace_mode not in {"direct", "task-workspace"}:
-            raise ValueError("workspace_mode currently supports 'direct' or 'task-workspace'.")
-        if validate_workspace_mode and workspace_mode == "task-workspace" and normalized.get("task_id") is None:
-            raise ValueError("workspace_mode='task-workspace' requires task_id.")
-        normalized["workspace_mode"] = workspace_mode
 
     return normalized
 

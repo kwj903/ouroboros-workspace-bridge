@@ -171,7 +171,6 @@ def list_command_bundles(
     client_id: str | None = None,
     session_id: str | None = None,
     project_id: str | None = None,
-    workspace_mode: str | None = None,
 ) -> CommandBundleListResult:
     entries: list[CommandBundleListEntry] = []
     filters = {
@@ -179,7 +178,6 @@ def list_command_bundles(
         "client_id": client_id,
         "session_id": session_id,
         "project_id": project_id,
-        "workspace_mode": workspace_mode,
     }
 
     for directory in command_bundle_dirs():

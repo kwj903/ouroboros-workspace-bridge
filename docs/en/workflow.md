@@ -44,12 +44,12 @@ The current default is the bundle-first MCP flow: ChatGPT submits a durable bund
    /pending
    /pending?bundle_id=<bundle_id>
    /pending?project_id=<project_id>
-   /history?client_id=<client_id>&workspace_mode=direct
+   /history?client_id=<client_id>&session_id=<session_id>
    ```
 
    The bundle-focused page shows `pending`, `applied`, `failed`, and `rejected` records. It includes a compact `Copy for ChatGPT` JSON block.
 
-   Pending and history cards show compact metadata badges for workspace mode, project, task, client, and session when available. Query filters are ANDed. Empty filter values are ignored.
+   Pending and history cards show compact metadata badges for project, task, client, and session when available. Query filters are ANDed. Empty filter values are ignored.
 
 4. Continue from the result.
 
@@ -67,6 +67,19 @@ The current default is the bundle-first MCP flow: ChatGPT submits a durable bund
    `workspace_next_handoff` is a backwards-compatible global latest handoff stream. In concurrent sessions, prefer `workspace_get_handoff_for_bundle(bundle_id)` or filtered `workspace_list_handoffs(...)` to avoid reading another session's latest result.
 
    Use `workspace_recover_last_activity` for debugging or interrupted calls, not as the normal continuation path.
+
+## Concurrent chats and AI platforms
+
+Workspace Bridge no longer creates task worktrees or merge queues for concurrent chats. All proposal bundles run through the same direct workspace path and therefore use the same approval mode, including YOLO.
+
+Use logical metadata on `workspace_propose_*_and_wait` calls to keep concurrent work distinguishable:
+
+- `client_id`: stable caller/platform name, for example `chatgpt` or another AI client.
+- `session_id`: distinct stable identifier for each chat/conversation. This is the primary separation key for simultaneous chats.
+- `task_id`: optional logical work-unit identifier when several calls belong to one task.
+- `project_id`: stable logical project identifier; if omitted, the bridge still derives a default project id from `cwd`.
+
+These identifiers are stored on bundles and handoffs, participate in request identity/deduplication, and can be used as list/history filters. The bridge transport cannot infer a ChatGPT conversation id automatically, so concurrent clients should provide a distinct `session_id` when they need guaranteed separation. No metadata value changes the filesystem target or creates a worktree.
 
 ## Tool Priority
 
@@ -121,7 +134,7 @@ Useful local routes:
 /pending
 /pending?bundle_id=<bundle_id>
 /pending?project_id=<project_id>
-/history?client_id=<client_id>&workspace_mode=direct
+/history?client_id=<client_id>&session_id=<session_id>
 /review-intent?token=...
 /review-intent/preview?token=...
 /intents/import

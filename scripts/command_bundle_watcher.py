@@ -96,6 +96,10 @@ def current_pending_bundle_ids() -> set[str]:
     return bundle_watcher.current_pending_bundle_ids(PENDING_DIR)
 
 
+def startup_seen_pending_bundle_ids() -> set[str]:
+    return bundle_watcher.startup_seen_pending_bundle_ids(PENDING_DIR)
+
+
 def auto_apply_bundle(bundle_id: str, source: str) -> None:
     bundle_watcher.auto_apply_bundle(bundle_id, RUNNER, PROJECT_ROOT, source)
 
@@ -106,7 +110,7 @@ def main() -> None:
     notify_enabled = parse_notify_flag(NOTIFY)
     notification_target = parse_notification_target(NOTIFICATION_TARGET)
     notification_click_action = parse_notification_click_action(NOTIFICATION_CLICK_ACTION)
-    seen: set[str] = set() if open_mode == "bundle" else current_pending_bundle_ids()
+    seen: set[str] = set() if open_mode == "bundle" else startup_seen_pending_bundle_ids()
 
     print(f"승인 대기 명령 번들 감시 중: {PENDING_DIR}")
     print(f"승인 UI 주소: {REVIEW_BASE_URL}")

@@ -44,12 +44,12 @@
    /pending
    /pending?bundle_id=<bundle_id>
    /pending?project_id=<project_id>
-   /history?client_id=<client_id>&workspace_mode=direct
+   /history?client_id=<client_id>&session_id=<session_id>
    ```
 
    bundle-focused page는 `pending`, `applied`, `failed`, `rejected` 상태의 bundle을 모두 보여줍니다. 이 화면에는 compact한 `Copy for ChatGPT` JSON 블록이 있습니다.
 
-   Pending/history 카드는 workspace mode, project, task, client, session metadata badge를 가능한 경우 표시합니다. Query filter는 AND 조건이며 빈 filter 값은 무시합니다.
+   Pending/history 카드는 project, task, client, session metadata badge를 가능한 경우 표시합니다. Query filter는 AND 조건이며 빈 filter 값은 무시합니다.
 
 4. 결과를 이어갑니다.
 
@@ -67,6 +67,19 @@
    `workspace_next_handoff`는 backwards-compatible global latest handoff stream입니다. 동시 세션에서는 다른 세션의 최신 결과를 읽지 않도록 `workspace_get_handoff_for_bundle(bundle_id)` 또는 filter가 적용된 `workspace_list_handoffs(...)`를 우선 사용하세요.
 
    `workspace_recover_last_activity`는 일반 continuation이 아니라 debug 또는 interrupted call 조사에 사용합니다.
+
+## 여러 채팅 세션과 AI 플랫폼 동시 사용
+
+Workspace Bridge는 더 이상 동시 채팅을 위해 task worktree나 merge queue를 만들지 않습니다. 모든 proposal bundle은 같은 direct workspace 실행 경로를 사용하므로 Normal/Safe Auto/YOLO 같은 approval mode도 동일하게 적용됩니다.
+
+여러 작업을 구분할 때는 `workspace_propose_*_and_wait` 호출의 논리 metadata를 사용합니다.
+
+- `client_id`: `chatgpt`처럼 AI 플랫폼/호출자를 나타내는 안정적인 값
+- `session_id`: 각 채팅/대화마다 다른 안정적인 값. 동시에 진행되는 채팅을 나누는 가장 중요한 키
+- `task_id`: 여러 호출이 하나의 작업에 속할 때 사용하는 선택적 논리 작업 ID
+- `project_id`: 같은 프로젝트를 묶는 안정적인 논리 ID. 생략하면 `cwd`를 기준으로 기본 project id가 계산됨
+
+이 값들은 bundle과 handoff에 저장되고 request identity/dedupe와 이력 필터에 사용됩니다. Bridge transport가 ChatGPT의 실제 conversation id를 자동으로 알 수는 없으므로, 동시에 여러 채팅을 확실히 분리해야 할 때는 각 호출자가 서로 다른 `session_id`를 제공해야 합니다. 이 metadata는 파일 시스템 경로나 실행 위치를 바꾸거나 worktree를 만들지 않습니다.
 
 ## Tool 우선순위
 
@@ -121,7 +134,7 @@ JSON POST imports to /intents/import
 /pending
 /pending?bundle_id=<bundle_id>
 /pending?project_id=<project_id>
-/history?client_id=<client_id>&workspace_mode=direct
+/history?client_id=<client_id>&session_id=<session_id>
 /review-intent?token=...
 /review-intent/preview?token=...
 /intents/import

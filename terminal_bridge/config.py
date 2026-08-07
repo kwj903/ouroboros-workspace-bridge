@@ -111,12 +111,6 @@ TRASH_DIR = RUNTIME_ROOT / "trash"
 # 장기 operation 상태를 저장하는 위치입니다. 작업 시작/완료/실패 상태 조회에 사용됩니다.
 OPERATION_DIR = RUNTIME_ROOT / "operations"
 
-# Codex-style task 기록 저장 위치입니다. 작업 계획, 진행 로그, 완료 상태가 저장됩니다.
-TASK_DIR = RUNTIME_ROOT / "tasks"
-
-# task-workspace 모드의 격리 git worktree들이 생성되는 위치입니다.
-TASK_WORKSPACES_DIR = RUNTIME_ROOT / "task_workspaces"
-
 # 긴 텍스트 payload chunk를 저장하는 위치입니다. 큰 patch/content를 ref로 넘길 때 사용됩니다.
 TEXT_PAYLOAD_DIR = RUNTIME_ROOT / "text_payloads"
 
