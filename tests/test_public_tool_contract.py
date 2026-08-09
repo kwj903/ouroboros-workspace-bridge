@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import server
 from terminal_bridge.public_tools import (
@@ -62,6 +63,20 @@ class PublicToolContractTests(unittest.TestCase):
         list_description = registered["workspace_list_command_bundles"].description or ""
         for state in ("pending", "running", "applied", "rejected", "failed", "interrupted"):
             self.assertIn(state, list_description)
+
+    def test_mcp_server_disables_uvicorn_access_log_for_query_token_safety(self) -> None:
+        async def dummy_app(scope, receive, send):
+            return None
+
+        with (
+            patch.object(server, "MCP_ACCESS_TOKEN", "test-token"),
+            patch.object(server.mcp, "streamable_http_app", return_value=dummy_app),
+            patch("uvicorn.run") as run,
+        ):
+            server._run_server()
+
+        self.assertEqual(run.call_count, 1)
+        self.assertFalse(run.call_args.kwargs["access_log"])
 
 
 if __name__ == "__main__":

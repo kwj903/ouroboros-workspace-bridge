@@ -740,7 +740,9 @@ def _run_server() -> None:
         lifespan=lifespan,
     )
 
-    uvicorn.run(app, host=MCP_HOST, port=MCP_PORT)
+    # Query-string access tokens are supported for connector compatibility. Disable
+    # Uvicorn access logs so request lines cannot persist those tokens in mcp.log.
+    uvicorn.run(app, host=MCP_HOST, port=MCP_PORT, access_log=False)
 
 
 def _ensure_workspace_root_exists() -> None:
