@@ -107,6 +107,8 @@ class RuntimeStorageTests(unittest.TestCase):
         self.write_file("intent_hmac_secret", "secret", days_old=365)
         self.write_file("processes/review.pid", "123", days_old=365)
         self.write_file("command_bundles/pending/cmd-pending.json", "{}", days_old=365)
+        self.write_file("command_bundles/running/cmd-running.json", "{}", days_old=365)
+        self.write_file("command_bundles/interrupted/cmd-interrupted.json", "{}", days_old=365)
 
         candidates = runtime_storage.cleanup_candidates(self.root, older_than_days=1, include_backups=True)
         paths = self.relative_candidate_paths(candidates)
@@ -116,6 +118,8 @@ class RuntimeStorageTests(unittest.TestCase):
         self.assertNotIn("intent_hmac_secret", paths)
         self.assertNotIn("processes/review.pid", paths)
         self.assertNotIn("command_bundles/pending/cmd-pending.json", paths)
+        self.assertNotIn("command_bundles/running/cmd-running.json", paths)
+        self.assertNotIn("command_bundles/interrupted/cmd-interrupted.json", paths)
 
     def test_old_completed_bundles_are_candidates(self) -> None:
         self.write_file("command_bundles/applied/cmd-applied.json", "{}", days_old=90)

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -43,7 +42,10 @@ from terminal_bridge.approval_modes import (
     save_approval_mode,
     save_scoped_approval_mode,
 )
-from terminal_bridge.bundles import _normalize_command_bundle_metadata
+from terminal_bridge.bundles import (
+    _command_bundle_generation,
+    _normalize_command_bundle_metadata,
+)
 from terminal_bridge.handoffs import handoff_json, list_handoffs, next_handoff
 from terminal_bridge.mcp_tools.metadata_filters import (
     METADATA_FILTER_KEYS,
@@ -66,9 +68,11 @@ RUNTIME_ROOT = Path(os.environ.get("MCP_TERMINAL_BRIDGE_RUNTIME_ROOT", str(DEFAU
 COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
 AUDIT_LOG = RUNTIME_ROOT / "audit.jsonl"
 PENDING_DIR = COMMAND_BUNDLES_DIR / "pending"
+RUNNING_DIR = COMMAND_BUNDLES_DIR / "running"
 APPLIED_DIR = COMMAND_BUNDLES_DIR / "applied"
 REJECTED_DIR = COMMAND_BUNDLES_DIR / "rejected"
 FAILED_DIR = COMMAND_BUNDLES_DIR / "failed"
+INTERRUPTED_DIR = COMMAND_BUNDLES_DIR / "interrupted"
 SUPERVISOR_SERVICES = ("review", "mcp", "ngrok")
 SUPERVISOR_RESTARTABLE_SERVICES = {"mcp", "ngrok"}
 SUPERVISOR_SERVICE_ACTIONS = {"start", "stop", "restart"}
@@ -77,7 +81,15 @@ HOST = os.environ.get("BUNDLE_REVIEW_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BUNDLE_REVIEW_PORT", "8790"))
 EVENT_POLL_SECONDS = 0.5
 EVENT_TIMEOUT_SECONDS = 25.0
-VALID_STATUS_FILTERS = {"all", "pending", "applied", "failed", "rejected"}
+VALID_STATUS_FILTERS = {
+    "all",
+    "pending",
+    "running",
+    "applied",
+    "failed",
+    "interrupted",
+    "rejected",
+}
 DEFAULT_HISTORY_LIMIT = 100
 MAX_HISTORY_LIMIT = 200
 CLEAR_HISTORY_CONFIRMATION = "DELETE HISTORY"
@@ -115,12 +127,16 @@ class BundleRowsState(TypedDict):
     latest_updated_at: str | None
 
 
+_command_bundle_state_lock = threading.Lock()
+_command_bundle_state_cache: dict[str, dict[str, object]] = {}
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def bundle_dirs() -> list[Path]:
-    return [PENDING_DIR, APPLIED_DIR, REJECTED_DIR, FAILED_DIR]
+    return [RUNNING_DIR, PENDING_DIR, APPLIED_DIR, REJECTED_DIR, FAILED_DIR, INTERRUPTED_DIR]
 
 
 def read_json(path: Path) -> dict[str, object]:
@@ -131,7 +147,9 @@ def find_bundle(bundle_id: str) -> tuple[Path, dict[str, object]]:
     for directory in bundle_dirs():
         path = directory / f"{bundle_id}.json"
         if path.exists():
-            return path, read_json(path)
+            record = read_json(path)
+            record["status"] = directory.name
+            return path, record
     raise FileNotFoundError(f"Bundle not found: {bundle_id}")
 
 
@@ -159,6 +177,7 @@ def _load_bundle_records(status_filter: str = "all") -> list[dict[str, object]]:
                 record = read_json(path)
             except Exception:
                 continue
+            record["status"] = directory_status
             record["_file"] = str(path)
             record["_directory_status"] = directory_status
             rows.append(record)
@@ -175,8 +194,10 @@ def _bundle_id_from_record(record: dict[str, object]) -> str | None:
 def _bundle_rows_state(rows: list[dict[str, object]]) -> BundleRowsState:
     counts = {
         "pending": 0,
+        "running": 0,
         "applied": 0,
         "failed": 0,
+        "interrupted": 0,
         "rejected": 0,
         "all": 0,
     }
@@ -308,41 +329,30 @@ def latest_pending_bundle_id() -> str | None:
 
 
 def command_bundle_revision() -> str:
-    parts: list[str] = []
-
-    for directory in bundle_dirs():
-        if not directory.exists():
-            continue
-
-        for path in sorted(directory.glob("cmd-*.json")):
-            status = directory.name
-            bundle_id = path.stem
-            updated_at = ""
-            try:
-                record = read_json(path)
-                status = str(record.get("status", status))
-                bundle_id = str(record.get("bundle_id", bundle_id))
-                updated_at = str(record.get("updated_at", ""))
-            except Exception:
-                updated_at = ""
-
-            try:
-                mtime_ns = path.stat().st_mtime_ns
-            except OSError:
-                mtime_ns = 0
-
-            parts.append(f"{status}\t{path.name}\t{bundle_id}\t{updated_at}\t{mtime_ns}")
-
-    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+    return _command_bundle_generation(
+        root=PENDING_DIR.parent,
+        directories=bundle_dirs(),
+        reconcile_directory_metadata=True,
+    )
 
 
-def command_bundle_state() -> dict[str, object]:
+def command_bundle_state(revision: str | None = None) -> dict[str, object]:
+    current_revision = revision or command_bundle_revision()
+    cache_key = str(PENDING_DIR.parent.resolve(strict=False))
+    with _command_bundle_state_lock:
+        cached = _command_bundle_state_cache.get(cache_key)
+        if cached is not None and cached.get("revision") == current_revision:
+            return dict(cached)
+
     pending = pending_bundles()
-    return {
-        "revision": command_bundle_revision(),
+    state: dict[str, object] = {
+        "revision": current_revision,
         "pending_count": len(pending),
         "latest_pending_bundle_id": str(pending[0].get("bundle_id", "")) if pending else None,
     }
+    with _command_bundle_state_lock:
+        _command_bundle_state_cache[cache_key] = state
+    return dict(state)
 
 
 def load_bundle_id(path: Path) -> str | None:
@@ -469,6 +479,9 @@ def copy_for_chatgpt_summary(record: dict[str, object]) -> dict[str, object]:
     elif status == "failed":
         ok = False
         next_step = "fix_failure"
+    elif status == "interrupted":
+        ok = False
+        next_step = "inspect_logs"
     elif status == "rejected":
         ok = False
         next_step = "inspect_logs"
@@ -738,8 +751,10 @@ def storage_cleanup_history_counts(root: Path | None = None) -> dict[str, int]:
     root = root or RUNTIME_ROOT
     counts = {
         "pending_bundles": _count_runtime_children(root / "command_bundles" / "pending"),
+        "running_bundles": _count_runtime_children(root / "command_bundles" / "running"),
         "applied_bundles": _count_runtime_children(root / "command_bundles" / "applied"),
         "failed_bundles": _count_runtime_children(root / "command_bundles" / "failed"),
+        "interrupted_bundles": _count_runtime_children(root / "command_bundles" / "interrupted"),
         "rejected_bundles": _count_runtime_children(root / "command_bundles" / "rejected"),
         "tool_calls": _count_runtime_children(root / "tool_calls"),
         "handoffs": _count_runtime_children(root / "handoffs"),
@@ -748,8 +763,10 @@ def storage_cleanup_history_counts(root: Path | None = None) -> dict[str, int]:
     }
     counts["total_bundle_history"] = (
         counts["pending_bundles"]
+        + counts["running_bundles"]
         + counts["applied_bundles"]
         + counts["failed_bundles"]
+        + counts["interrupted_bundles"]
         + counts["rejected_bundles"]
     )
     return counts
@@ -1156,8 +1173,10 @@ def start_embedded_watcher() -> tuple[threading.Event | None, threading.Thread |
 def status_label(value: object) -> str:
     mapping = {
         "pending": "승인 대기",
+        "running": "실행 중",
         "applied": "적용 완료",
         "failed": "실패",
+        "interrupted": "중단됨 · 검토 필요",
         "rejected": "거절됨",
         "unknown": "알 수 없음",
     }
@@ -1188,12 +1207,22 @@ def status_filter_links_html(
     labels = {
         "all": "전체",
         "pending": "승인 대기",
+        "running": "실행 중",
         "applied": "적용 완료",
         "failed": "실패",
+        "interrupted": "중단됨",
         "rejected": "거절됨",
     }
     links: list[str] = []
-    for status in ("all", "pending", "applied", "failed", "rejected"):
+    for status in (
+        "all",
+        "pending",
+        "running",
+        "applied",
+        "failed",
+        "interrupted",
+        "rejected",
+    ):
         label = labels[status]
         if status == current:
             links.append(
@@ -1721,6 +1750,13 @@ def run_runner(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def runner_action_succeeded(action: str, record: dict[str, object] | None) -> bool:
+    if not isinstance(record, dict):
+        return False
+    expected_status = "applied" if action == "approve" else "rejected"
+    return str(record.get("status", "unknown")) == expected_status
+
+
 def auto_apply_bundle(bundle_id: str, source: str) -> None:
     bundle_watcher.auto_apply_bundle(bundle_id, RUNNER, PROJECT_ROOT, source, "[review-ui] ")
 
@@ -2022,8 +2058,10 @@ def history_summary_html(state: dict[str, object]) -> str:
     <section class="stack">
       <div class="card-grid">
         {count_card("승인 대기", "pending", "/pending", "warn")}
+        {count_card("실행 중", "running", "/history?status=running", "warn")}
         {count_card("적용 완료", "applied", "/history?status=applied", "ok")}
         {count_card("실패", "failed", "/history?status=failed", "danger")}
+        {count_card("중단됨", "interrupted", "/history?status=interrupted", "danger")}
         {count_card("거절됨", "rejected", "/history?status=rejected", "neutral")}
         {count_card("전체", "all", "/history?status=all", "neutral")}
       </div>
@@ -2093,7 +2131,7 @@ def bundle_card_html(record: dict[str, object]) -> str:
     status = str(record.get("status", "unknown"))
     summary = summarize_bundle_result(record)
     error_summary = str(summary.get("error_summary", ""))
-    failed_class = " is-failed" if status == "failed" else ""
+    failed_class = " is-failed" if status in {"failed", "interrupted"} else ""
     error_block = (
         f'<p class="meta"><strong>오류 요약:</strong> {escape(error_summary)}</p>'
         if error_summary
@@ -2306,8 +2344,10 @@ def storage_history_counts_table_html(counts: Mapping[str, int], policy: Mapping
     rows = []
     items = (
         ("pending bundles", "pending_bundles", None),
+        ("running bundles", "running_bundles", None),
         ("applied bundles", "applied_bundles", "keep_applied"),
         ("failed bundles", "failed_bundles", "keep_failed"),
+        ("interrupted bundles", "interrupted_bundles", None),
         ("rejected bundles", "rejected_bundles", "keep_rejected"),
         ("total bundle history", "total_bundle_history", None),
         ("tool call records", "tool_calls", "keep_tool_calls"),
@@ -2929,11 +2969,13 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query)
             since = params.get("since", [""])[0]
             deadline = time.monotonic() + EVENT_TIMEOUT_SECONDS
-            state = command_bundle_state()
+            revision = command_bundle_revision()
 
-            while state["revision"] == since and time.monotonic() < deadline:
+            while revision == since and time.monotonic() < deadline:
                 time.sleep(EVENT_POLL_SECONDS)
-                state = command_bundle_state()
+                revision = command_bundle_revision()
+
+            state = command_bundle_state(revision)
 
             self.send_json(
                 {
@@ -3479,10 +3521,31 @@ class Handler(BaseHTTPRequestHandler):
                 "stderr": mask_sensitive_text(completed.stderr),
             }
 
-            if completed.returncode != 0:
+            try:
+                _, updated_record = find_bundle(bundle_id)
+            except FileNotFoundError:
+                updated_record = None
+
+            if not runner_action_succeeded(action, updated_record):
+                canonical_status = (
+                    str(updated_record.get("status", "unknown"))
+                    if isinstance(updated_record, dict)
+                    else "missing"
+                )
+                recorded_result = (
+                    result_html(updated_record.get("result"))
+                    if isinstance(updated_record, dict) and updated_record.get("result") is not None
+                    else ""
+                )
+                recorded_error = (
+                    mask_sensitive_text(updated_record.get("error", ""))
+                    if isinstance(updated_record, dict)
+                    else ""
+                )
                 body = f"""
                 <p><a href="/bundles/{escape(bundle_id)}">← 번들로 돌아가기</a> · <a href="/pending">승인 대기</a></p>
-                <h2>실행기 오류</h2>
+                <h2>번들 처리 실패</h2>
+                <p>Canonical status: <code>{escape(canonical_status)}</code></p>
                 <details open>
                   <summary>stdout</summary>
                   <pre>{escape(mask_sensitive_text(completed.stdout))}</pre>
@@ -3495,35 +3558,11 @@ class Handler(BaseHTTPRequestHandler):
                   <summary>Raw result</summary>
                   <pre>{escape(json.dumps(output, ensure_ascii=False, indent=2))}</pre>
                 </details>
+                {recorded_result}
+                {f'<h3>오류</h3><pre>{escape(recorded_error)}</pre>' if recorded_error else ''}
                 """
-                self.send_html("실행기 오류", body, status=500, active_nav="pending")
+                self.send_html("번들 처리 실패", body, status=500, active_nav="history")
                 return
-
-            if action == "approve":
-                try:
-                    _, updated_record = find_bundle(bundle_id)
-                except FileNotFoundError:
-                    updated_record = {}
-
-                if updated_record.get("status") == "failed":
-                    body = f"""
-                    <p><a href="/bundles/{escape(bundle_id)}">← 실패한 번들 보기</a> · <a href="/pending">승인 대기</a></p>
-                    <h2>번들 실행 실패</h2>
-                    <details open>
-                      <summary>stdout</summary>
-                      <pre>{escape(mask_sensitive_text(completed.stdout))}</pre>
-                    </details>
-                    <details open>
-                      <summary>stderr</summary>
-                      <pre>{escape(mask_sensitive_text(completed.stderr))}</pre>
-                    </details>
-                    <h3>기록된 결과</h3>
-                    {result_html(updated_record.get("result")) if updated_record.get("result") is not None else ""}
-                    <h3>오류</h3>
-                    <pre>{escape(mask_sensitive_text(updated_record.get("error", "")))}</pre>
-                    """
-                    self.send_html("번들 실행 실패", body, status=500, active_nav="history")
-                    return
 
             self.redirect("/pending")
             return

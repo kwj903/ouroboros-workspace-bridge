@@ -126,6 +126,9 @@ COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
 # 사용자 승인 대기 중인 번들 저장 위치입니다.
 COMMAND_BUNDLE_PENDING_DIR = COMMAND_BUNDLES_DIR / "pending"
 
+# 실행 소유권을 claim한 번들 저장 위치입니다.
+COMMAND_BUNDLE_RUNNING_DIR = COMMAND_BUNDLES_DIR / "running"
+
 # 정상 적용 완료된 번들 저장 위치입니다.
 COMMAND_BUNDLE_APPLIED_DIR = COMMAND_BUNDLES_DIR / "applied"
 
@@ -134,6 +137,9 @@ COMMAND_BUNDLE_REJECTED_DIR = COMMAND_BUNDLES_DIR / "rejected"
 
 # 실행 또는 적용 중 실패한 번들 저장 위치입니다.
 COMMAND_BUNDLE_FAILED_DIR = COMMAND_BUNDLES_DIR / "failed"
+
+# 실행 도중 중단되어 명시적 검토가 필요한 번들 저장 위치입니다.
+COMMAND_BUNDLE_INTERRUPTED_DIR = COMMAND_BUNDLES_DIR / "interrupted"
 
 # 단일 파일 읽기 응답의 최대 문자 수입니다. 너무 크게 잡으면 응답이 무거워집니다.
 MAX_READ_CHARS = 320_000

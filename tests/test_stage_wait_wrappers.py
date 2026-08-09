@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import tempfile
@@ -9,7 +10,11 @@ import unittest
 import server
 from terminal_bridge.bundles import _default_command_bundle_metadata
 from terminal_bridge import tool_calls
-from terminal_bridge.mcp_tools.bundles import command_bundle_status_from_record, list_command_bundles
+from terminal_bridge.mcp_tools.bundles import (
+    command_bundle_status_from_record,
+    list_command_bundles,
+    wait_command_bundle_status,
+)
 from terminal_bridge.models import (
     CommandBundleAction,
     CommandBundleListResult,
@@ -19,7 +24,7 @@ from terminal_bridge.models import (
 )
 
 
-class StageAndWaitWrapperTests(unittest.TestCase):
+class StageAndWaitWrapperTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.original_stage_command = server.workspace_stage_command_bundle
         self.original_stage_patch = server.workspace_stage_patch_bundle
@@ -83,7 +88,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             command_count=1,
         )
 
-    def test_command_bundle_and_wait_calls_stage_then_wait(self) -> None:
+    async def test_command_bundle_and_wait_calls_stage_then_wait(self) -> None:
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-command")
         steps = [CommandBundleStep(name="status", argv=["git", "status"])]
@@ -92,7 +97,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             calls["submit"] = {"title": title, "cwd": cwd, "steps": steps}
             return self.stage_result("cmd-test-command")
 
-        def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+        async def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
             calls["wait"] = {
                 "bundle_id": bundle_id,
                 "timeout_seconds": timeout_seconds,
@@ -103,7 +108,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         server._workspace_submit_command_bundle_impl = fake_submit
         server._workspace_wait_command_bundle_status_impl = fake_wait
 
-        result = server.workspace_stage_command_bundle_and_wait(
+        result = await server.workspace_stage_command_bundle_and_wait(
             title="Run status",
             cwd=".",
             steps=steps,
@@ -118,7 +123,49 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             {"bundle_id": "cmd-test-command", "timeout_seconds": 7, "poll_interval_seconds": 0.5},
         )
 
-    def test_patch_bundle_and_wait_calls_stage_then_wait(self) -> None:
+    async def test_wait_treats_running_as_in_progress_until_terminal_status(self) -> None:
+        records = iter(
+            [
+                {"bundle_id": "cmd-test", "status": "running"},
+                {"bundle_id": "cmd-test", "status": "applied"},
+            ]
+        )
+
+        result = await wait_command_bundle_status(
+            lambda _bundle_id: (Path("cmd-test.json"), next(records)),
+            "cmd-test",
+            timeout_seconds=1,
+            poll_interval_seconds=0,
+        )
+
+        self.assertEqual(result.status, "applied")
+
+    async def test_wait_sleep_allows_an_unrelated_awaitable_to_progress(self) -> None:
+        unrelated_progressed = False
+
+        def find_bundle(_bundle_id: str) -> tuple[Path, dict[str, object]]:
+            status = "applied" if unrelated_progressed else "pending"
+            return Path("cmd-test.json"), {"bundle_id": "cmd-test", "status": status}
+
+        async def unrelated_work() -> None:
+            nonlocal unrelated_progressed
+            await asyncio.sleep(0)
+            unrelated_progressed = True
+
+        result, _ = await asyncio.gather(
+            wait_command_bundle_status(
+                find_bundle,
+                "cmd-test",
+                timeout_seconds=1,
+                poll_interval_seconds=0.01,
+            ),
+            unrelated_work(),
+        )
+
+        self.assertTrue(unrelated_progressed)
+        self.assertEqual(result.status, "applied")
+
+    async def test_patch_bundle_and_wait_calls_stage_then_wait(self) -> None:
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-patch")
 
@@ -126,7 +173,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             calls["submit"] = {"title": title, "cwd": cwd, "patch": patch, "patch_ref": patch_ref}
             return self.stage_result("cmd-test-patch")
 
-        def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+        async def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
             calls["wait"] = {
                 "bundle_id": bundle_id,
                 "timeout_seconds": timeout_seconds,
@@ -137,7 +184,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         server._workspace_submit_patch_bundle_impl = fake_submit
         server._workspace_wait_command_bundle_status_impl = fake_wait
 
-        result = server.workspace_stage_patch_bundle_and_wait(
+        result = await server.workspace_stage_patch_bundle_and_wait(
             title="Apply patch",
             cwd=".",
             patch="diff --git a/file b/file",
@@ -156,7 +203,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             {"bundle_id": "cmd-test-patch", "timeout_seconds": 8, "poll_interval_seconds": 0.75},
         )
 
-    def test_action_bundle_and_wait_calls_stage_then_wait(self) -> None:
+    async def test_action_bundle_and_wait_calls_stage_then_wait(self) -> None:
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-action")
         actions = [CommandBundleAction(name="write", type="write_file", path="file.txt", content="hello")]
@@ -165,7 +212,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             calls["submit"] = {"title": title, "cwd": cwd, "actions": actions}
             return self.stage_result("cmd-test-action")
 
-        def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+        async def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
             calls["wait"] = {
                 "bundle_id": bundle_id,
                 "timeout_seconds": timeout_seconds,
@@ -176,7 +223,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         server._workspace_submit_action_bundle_impl = fake_submit
         server._workspace_wait_command_bundle_status_impl = fake_wait
 
-        result = server.workspace_stage_action_bundle_and_wait(
+        result = await server.workspace_stage_action_bundle_and_wait(
             title="Write file",
             cwd=".",
             actions=actions,
@@ -191,7 +238,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             {"bundle_id": "cmd-test-action", "timeout_seconds": 9, "poll_interval_seconds": 1.25},
         )
 
-    def test_commit_bundle_and_wait_uses_internal_default_prechecks(self) -> None:
+    async def test_commit_bundle_and_wait_uses_internal_default_prechecks(self) -> None:
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-commit")
 
@@ -199,7 +246,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             calls["submit"] = {"cwd": cwd, "paths": paths, "message": message}
             return self.stage_result("cmd-test-commit")
 
-        def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
+        async def fake_wait(bundle_id: str, *, timeout_seconds: int, poll_interval_seconds: float) -> CommandBundleStatusResult:
             calls["wait"] = {
                 "bundle_id": bundle_id,
                 "timeout_seconds": timeout_seconds,
@@ -210,7 +257,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         server._workspace_submit_commit_bundle_impl = fake_submit
         server._workspace_wait_command_bundle_status_impl = fake_wait
 
-        result = server.workspace_stage_commit_bundle_and_wait(
+        result = await server.workspace_stage_commit_bundle_and_wait(
             cwd=".",
             paths=["README.md"],
             message="Update docs",
@@ -265,20 +312,23 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             server.workspace_propose_git_commit_and_wait,
             server.workspace_propose_git_push_and_wait,
         ]
-        metadata_fields = {"task_id", "client_id", "session_id", "project_id"}
+        metadata_fields = {"task_id", "client_id", "session_id", "project_id", "retry_id"}
 
         for wrapper in wrappers:
             with self.subTest(wrapper=wrapper.__name__):
+                self.assertTrue(inspect.iscoroutinefunction(wrapper))
                 parameters = inspect.signature(wrapper).parameters
                 self.assertTrue(metadata_fields.issubset(parameters))
                 for field in metadata_fields:
                     self.assertIsNone(parameters[field].default)
 
-    def test_propose_command_wraps_one_command_step(self) -> None:
+        self.assertTrue(inspect.iscoroutinefunction(server.workspace_wait_command_bundle_status))
+
+    async def test_propose_command_wraps_one_command_step(self) -> None:
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-propose-command")
 
-        def fake_stage(title: str, cwd: str, steps: list[CommandBundleStep], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
+        async def fake_stage(title: str, cwd: str, steps: list[CommandBundleStep], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
             calls["stage"] = {
                 "title": title,
                 "cwd": cwd,
@@ -290,7 +340,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
 
         server._workspace_stage_command_bundle_and_wait_impl = fake_stage
 
-        result = server.workspace_propose_command_and_wait(
+        result = await server.workspace_propose_command_and_wait(
             title="Run status",
             cwd=".",
             argv=["git", "status", "--short"],
@@ -307,17 +357,17 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertEqual(calls["stage"]["title"], "Run status")
         self.assertEqual(calls["stage"]["timeout_seconds"], 7)
 
-    def test_propose_file_replace_wraps_one_action(self) -> None:
+    async def test_propose_file_replace_wraps_one_action(self) -> None:
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-propose-replace")
 
-        def fake_stage(title: str, cwd: str, actions: list[CommandBundleAction], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
+        async def fake_stage(title: str, cwd: str, actions: list[CommandBundleAction], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
             calls["stage"] = {"title": title, "cwd": cwd, "actions": actions}
             return expected
 
         server._workspace_stage_action_bundle_and_wait_impl = fake_stage
 
-        result = server.workspace_propose_file_replace_and_wait(
+        result = await server.workspace_propose_file_replace_and_wait(
             title="Replace text",
             cwd=".",
             path="README.md",
@@ -333,17 +383,17 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertEqual(actions[0].old_text, "old")
         self.assertEqual(actions[0].new_text, "new")
 
-    def test_propose_file_write_wraps_one_action(self) -> None:
+    async def test_propose_file_write_wraps_one_action(self) -> None:
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-propose-write")
 
-        def fake_stage(title: str, cwd: str, actions: list[CommandBundleAction], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
+        async def fake_stage(title: str, cwd: str, actions: list[CommandBundleAction], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
             calls["stage"] = {"title": title, "cwd": cwd, "actions": actions}
             return expected
 
         server._workspace_stage_action_bundle_and_wait_impl = fake_stage
 
-        result = server.workspace_propose_file_write_and_wait(
+        result = await server.workspace_propose_file_write_and_wait(
             title="Write file",
             cwd=".",
             path="notes.txt",
@@ -359,17 +409,17 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertEqual(actions[0].content, "hello")
         self.assertTrue(actions[0].overwrite)
 
-    def test_propose_git_push_wraps_one_command_step(self) -> None:
+    async def test_propose_git_push_wraps_one_command_step(self) -> None:
         calls: dict[str, object] = {}
         expected = self.status_result("cmd-test-propose-push")
 
-        def fake_stage(title: str, cwd: str, steps: list[CommandBundleStep], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
+        async def fake_stage(title: str, cwd: str, steps: list[CommandBundleStep], timeout_seconds: int, poll_interval_seconds: float, *_extra: object) -> CommandBundleStatusResult:
             calls["stage"] = {"title": title, "cwd": cwd, "steps": steps}
             return expected
 
         server._workspace_stage_command_bundle_and_wait_impl = fake_stage
 
-        result = server.workspace_propose_git_push_and_wait(cwd=".", remote="origin", branch="main")
+        result = await server.workspace_propose_git_push_and_wait(cwd=".", remote="origin", branch="main")
 
         self.assertIs(result, expected)
         steps = calls["stage"]["steps"]
@@ -377,7 +427,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertEqual(calls["stage"]["title"], "Push origin main")
         self.assertEqual(steps[0].argv, ["git", "push", "origin", "main"])
 
-    def test_proposal_wrappers_forward_metadata_to_stage_callbacks(self) -> None:
+    async def test_proposal_wrappers_forward_metadata_to_stage_callbacks(self) -> None:
         captured: list[tuple[str, dict[str, object] | None]] = []
         expected = self.status_result("cmd-test-metadata")
         metadata_args = {
@@ -385,15 +435,17 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             "client_id": " client-a ",
             "session_id": " session-a ",
             "project_id": " project-alpha ",
+            "retry_id": " attempt-2 ",
         }
         expected_metadata = {
             "task_id": "task-1",
             "client_id": "client-a",
             "session_id": "session-a",
             "project_id": "project-alpha",
+            "retry_id": "attempt-2",
         }
 
-        def fake_command_stage(
+        async def fake_command_stage(
             title: str,
             cwd: str,
             steps: list[CommandBundleStep],
@@ -404,7 +456,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             captured.append((title, metadata))
             return expected
 
-        def fake_action_stage(
+        async def fake_action_stage(
             title: str,
             cwd: str,
             actions: list[CommandBundleAction],
@@ -415,7 +467,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             captured.append((title, metadata))
             return expected
 
-        def fake_patch_stage(
+        async def fake_patch_stage(
             title: str,
             cwd: str,
             patch: str | None,
@@ -427,7 +479,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
             captured.append((title, metadata))
             return expected
 
-        def fake_commit_stage(
+        async def fake_commit_stage(
             cwd: str,
             paths: list[str],
             message: str,
@@ -444,13 +496,13 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         server._workspace_stage_commit_bundle_and_wait_impl = fake_commit_stage
 
         calls = [
-            server.workspace_propose_command_and_wait(
+            await server.workspace_propose_command_and_wait(
                 title="Run status",
                 cwd=".",
                 argv=["git", "status"],
                 **metadata_args,
             ),
-            server.workspace_propose_file_write_and_wait(
+            await server.workspace_propose_file_write_and_wait(
                 title="Write file",
                 cwd=".",
                 path="notes.txt",
@@ -458,7 +510,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
                 overwrite=True,
                 **metadata_args,
             ),
-            server.workspace_propose_file_replace_and_wait(
+            await server.workspace_propose_file_replace_and_wait(
                 title="Replace text",
                 cwd=".",
                 path="README.md",
@@ -466,19 +518,19 @@ class StageAndWaitWrapperTests(unittest.TestCase):
                 new_text="new",
                 **metadata_args,
             ),
-            server.workspace_propose_patch_and_wait(
+            await server.workspace_propose_patch_and_wait(
                 title="Apply patch",
                 cwd=".",
                 patch="diff --git a/file.txt b/file.txt",
                 **metadata_args,
             ),
-            server.workspace_propose_git_commit_and_wait(
+            await server.workspace_propose_git_commit_and_wait(
                 cwd=".",
                 paths=["README.md"],
                 message="Test metadata",
                 **metadata_args,
             ),
-            server.workspace_propose_git_push_and_wait(
+            await server.workspace_propose_git_push_and_wait(
                 cwd=".",
                 remote="origin",
                 branch="main",
@@ -497,6 +549,7 @@ class StageAndWaitWrapperTests(unittest.TestCase):
                 client_id="\t",
                 session_id="\n",
                 project_id="  ",
+                retry_id=" ",
             )
         )
 
@@ -508,26 +561,31 @@ class StageAndWaitWrapperTests(unittest.TestCase):
                 client_id=" client-a ",
                 session_id=" ",
                 project_id="project-alpha",
+                retry_id="attempt-2",
             ),
             {
                 "task_id": "task-1",
                 "client_id": "client-a",
                 "project_id": "project-alpha",
+                "retry_id": "attempt-2",
             },
         )
 
 
-    def test_propose_git_push_rejects_flag_like_remote(self) -> None:
+    async def test_propose_git_push_rejects_flag_like_remote(self) -> None:
         with self.assertRaises(ValueError):
-            server.workspace_propose_git_push_and_wait(cwd=".", remote="--force", branch="main")
+            await server.workspace_propose_git_push_and_wait(cwd=".", remote="--force", branch="main")
 
-    def test_instrumented_function_creates_completed_tool_call_record(self) -> None:
+    async def test_instrumented_function_creates_completed_tool_call_record(self) -> None:
         expected = self.status_result("cmd-test-journal")
 
         server._workspace_submit_command_bundle_impl = lambda *args, **kwargs: self.stage_result("cmd-test-journal")
-        server._workspace_wait_command_bundle_status_impl = lambda *args, **kwargs: expected
+        async def immediate_wait(*args: object, **kwargs: object) -> CommandBundleStatusResult:
+            return expected
 
-        result = server.workspace_stage_command_bundle_and_wait(
+        server._workspace_wait_command_bundle_status_impl = immediate_wait
+
+        result = await server.workspace_stage_command_bundle_and_wait(
             title="Run status",
             cwd=".",
             steps=[CommandBundleStep(name="status", argv=["git", "status"])],
@@ -541,11 +599,11 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertIsInstance(records[0]["duration_ms"], int)
         self.assertEqual(records[0]["result_summary"]["bundle_id"], "cmd-test-journal")
 
-    def test_failed_instrumentation_records_failed_status(self) -> None:
+    async def test_failed_instrumentation_records_failed_status(self) -> None:
         server._workspace_submit_command_bundle_impl = lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bad submit"))
 
         with self.assertRaises(ValueError):
-            server.workspace_stage_command_bundle_and_wait(
+            await server.workspace_stage_command_bundle_and_wait(
                 title="Bad stage",
                 cwd=".",
                 steps=[CommandBundleStep(name="status", argv=["git", "status"])],
@@ -557,6 +615,37 @@ class StageAndWaitWrapperTests(unittest.TestCase):
         self.assertEqual(records[0]["status"], "failed")
         self.assertIsInstance(records[0]["duration_ms"], int)
         self.assertIn("ValueError", records[0]["error"])
+
+    async def test_cancelled_async_instrumentation_records_failed_status(self) -> None:
+        wait_started = asyncio.Event()
+        never_finishes = asyncio.Event()
+        server._workspace_submit_command_bundle_impl = lambda *args, **kwargs: self.stage_result(
+            "cmd-test-cancelled"
+        )
+
+        async def blocking_wait(*args: object, **kwargs: object) -> CommandBundleStatusResult:
+            wait_started.set()
+            await never_finishes.wait()
+            return self.status_result("cmd-test-cancelled")
+
+        server._workspace_wait_command_bundle_status_impl = blocking_wait
+        task = asyncio.create_task(
+            server.workspace_stage_command_bundle_and_wait(
+                title="Cancelled wait",
+                cwd=".",
+                steps=[CommandBundleStep(name="status", argv=["git", "status"])],
+            )
+        )
+        await wait_started.wait()
+        task.cancel()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        records = tool_calls.list_tool_calls()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["status"], "failed")
+        self.assertIn("CancelledError", records[0]["error"])
 
 
 class ToolCallJournalTests(unittest.TestCase):

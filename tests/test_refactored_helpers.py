@@ -600,11 +600,16 @@ class RefactoredCommandHelperTests(unittest.TestCase):
 
 class RefactoredPayloadHelperTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.original_payload_dir = payloads.TEXT_PAYLOAD_DIR
+        payloads.TEXT_PAYLOAD_DIR = Path(self.tmp.name) / "text_payloads"
         self.payload_ids: list[str] = []
 
     def tearDown(self) -> None:
         for payload_id in self.payload_ids:
             shutil.rmtree(payloads._text_payload_dir(payload_id), ignore_errors=True)
+        payloads.TEXT_PAYLOAD_DIR = self.original_payload_dir
+        self.tmp.cleanup()
 
     def _payload_id(self) -> str:
         payload_id = f"txt-refactored-helper-{uuid4().hex[:8]}"
@@ -676,11 +681,16 @@ class RefactoredPayloadHelperTests(unittest.TestCase):
 
 class RefactoredBundleSerializationHelperTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.original_payload_dir = payloads.TEXT_PAYLOAD_DIR
+        payloads.TEXT_PAYLOAD_DIR = Path(self.tmp.name) / "text_payloads"
         self.payload_ids: list[str] = []
 
     def tearDown(self) -> None:
         for payload_id in self.payload_ids:
             shutil.rmtree(payloads._text_payload_dir(payload_id), ignore_errors=True)
+        payloads.TEXT_PAYLOAD_DIR = self.original_payload_dir
+        self.tmp.cleanup()
 
     def _complete_payload(self, text: str) -> str:
         payload_id = f"txt-refactored-bundle-{uuid4().hex[:8]}"

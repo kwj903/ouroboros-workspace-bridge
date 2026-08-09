@@ -256,9 +256,11 @@ For stable usage, create a reserved ngrok domain and set `NGROK_HOST` during `uv
 
 ## Approval Mode
 
-- Normal: default, manual approval.
-- Safe Auto: low-risk command-only bundles may be auto-approved. Normal or Safe Auto is recommended for regular users.
-- YOLO: for trusted short sessions only. Do not leave it on.
+- **Normal**: default. Every pending mutation requires a manual approval click.
+- **Safe Auto**: eligible low-risk command-only bundles may be auto-authorized; other bundles remain pending for manual review.
+- **YOLO**: approval all-pass mode. Every valid pending bundle is submitted to the runner without a manual click. Execution-time validation and real command failures still apply.
+
+Start with Normal. Use Safe Auto only after you understand the review flow, and keep YOLO limited to short trusted development sessions.
 
 Refresh the ChatGPT app MCP connection when:
 
@@ -271,11 +273,11 @@ Refresh the ChatGPT app MCP connection when:
 Recommended refresh flow:
 
 ```bash
-uv run woojae restart mcp
+uv run terminalbridge restart
 uv run terminalbridge status
 ```
 
-Then refresh the MCP connection in the ChatGPT app.
+Then refresh/reconnect the MCP connection in the ChatGPT app. For a schema/annotation change, the live connector should expose the canonical 31-tool default surface.
 
 ## Manual fallback commands
 
@@ -321,13 +323,13 @@ Default notification target is `/pending`. Use bundle-specific notification targ
 
 ## Safe bundle workflow
 
-ChatGPT should stage local changes as small bundles. The usual user flow is:
+ChatGPT should stage local changes as small bundles. The mode-aware user flow is:
 
-1. Inspect the pending bundle in the review UI.
-2. Approve only if the bundle is small, expected, and safe.
-3. Wait for the bundle to apply.
-4. Ask ChatGPT to check `workspace_command_bundle_status`.
-5. Continue to the next small step.
+1. Inspect the returned bundle ID and status.
+2. If Normal leaves it `pending`, inspect it in the review UI and approve only if it is small, expected, and safe.
+3. If Safe Auto/YOLO moves it to `running`, wait/poll instead of looking for a manual approval step.
+4. Confirm the terminal result with `workspace_command_bundle_status` when needed.
+5. Continue to the next small step only after the prior bundle is no longer `pending` or `running`.
 
 Avoid approving bundles that mix unrelated work such as file edits, tests, and commits in one request.
 

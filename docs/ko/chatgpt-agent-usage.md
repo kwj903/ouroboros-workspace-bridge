@@ -31,7 +31,7 @@ Ouroboros Workspace Bridge를 사용할 때는 아래 규칙을 최우선으로 
 - 하나의 proposal은 하나의 파일 수정, 명령, patch, commit, push만 수행한다.
 - 파일 수정, 테스트, git add, git commit, push를 절대 하나의 proposal에 섞지 않는다.
 - 커밋 proposal에는 테스트나 precheck 명령을 섞지 않는다.
-- pending bundle을 만든 뒤에는 사용자 승인/거부와 bundle status 확인 전까지 다음 mutation bundle을 만들지 않는다.
+- 관련 작업의 이전 bundle이 `pending` 또는 `running`인 동안에는 다음 mutation bundle을 만들지 않는다.
 - 효율성보다 안전한 단계 분리가 우선이다.
 - 불필요한 tool call을 늘리지 않는다. 짧은 수정에는 payload ref를 사용하지 않는다.
 
@@ -43,11 +43,23 @@ Ouroboros Workspace Bridge mutation tool을 호출하기 직전에 반드시 점
 - 목적별 proposal wrapper를 사용하고 있는가?
 - 파일 수정, 테스트, 커밋, push가 섞여 있지 않은가?
 - precheck_commands를 쓰고 있지 않은가?
-- pending proposal 승인/거부 확인 전 새 mutation proposal을 만들고 있지 않은가?
+- 관련 proposal이 아직 `pending` 또는 `running`인데 새 mutation proposal을 만들고 있지 않은가?
 - 짧은 수정인데 불필요하게 `workspace_stage_text_payload`를 쓰고 있지 않은가?
 - 긴 patch, 긴 old_text/new_text, 긴 bash 명령을 직접 넣고 있지 않은가?
 
 하나라도 아니면 tool call을 만들지 말고 더 작은 단계로 쪼갠다.
+
+## 세션 식별과 retry
+
+동시에 여러 채팅을 사용할 때 public wrapper가 해당 필드를 제공하면 안정적인 논리 metadata를 사용한다.
+
+- `client_id`: AI 플랫폼/호출자 식별자
+- `session_id`: 각 동시 채팅마다 다른 안정적인 ID. 가장 중요한 분리 키
+- `task_id`: 선택적 논리 작업 ID
+- `project_id`: 안정적인 논리 프로젝트 ID
+- `retry_id`: idempotent retry에는 같은 값을 재사용하고, final result 이후 의도적으로 새 시도를 하나 만들 때만 새 값을 사용
+
+이 metadata는 request/history identity를 분리하기 위한 값이며 worktree를 만들거나 filesystem target을 바꾸지 않는다.
 
 ## Payload ref 사용 기준
 
@@ -109,18 +121,21 @@ payload ref를 사용하는 경우:
    - 긴 본문/긴 patch: payload ref 사용 고려
 4. 파일 수정 bundle 생성
    - action 1개만 포함
-5. bundle status 확인
-6. 사용자 승인 대기
-7. 승인 후 bundle status 확인
+5. 반환된 bundle ID와 status 확인
+6. `pending`이면 Normal에서 manual review를 기다리고, `running`이면 terminal state를 wait/poll하며, 이미 final이면 결과를 바로 확인
+7. 필요하면 bundle status를 다시 확인
 8. git status 확인
 
 검증 흐름:
 
 1. command bundle 생성
    - step 1개만 포함
-2. 사용자 승인 대기
-3. 승인 후 bundle status 확인
-4. 다음 검증이 필요하면 별도 bundle로 진행
+2. 반환된 status 확인
+   - `pending`: review 필요
+   - `running`: 실행 중
+   - terminal state: 결과 확인 가능
+3. 필요하면 bundle status를 wait/poll
+4. 이전 결과가 명확해진 뒤 다음 검증을 별도 bundle로 진행
 
 커밋 흐름:
 
@@ -128,8 +143,8 @@ payload ref를 사용하는 경우:
 2. 필요한 검증 확인
 3. git status 확인
 4. 커밋 전용 bundle 생성
-5. 사용자 승인 대기
-6. 승인 후 bundle status 확인
+5. 반환된 status가 `pending`/`running`인 동안만 review 또는 wait/poll
+6. terminal bundle result 확인
 7. 최종 git status 확인
 
 ## 금지 패턴
@@ -143,7 +158,7 @@ payload ref를 사용하는 경우:
 - 파일 수정 + 커밋을 같은 bundle에 넣기
 - 긴 `bash -lc`에 여러 명령을 묶기
 - 긴 patch나 긴 old_text/new_text를 직접 tool call에 넣기
-- pending bundle이 있는데 다음 mutation bundle을 만드는 것
+- 관련 bundle이 `pending` 또는 `running`인데 다음 mutation bundle을 만드는 것
 - 검증 명령 여러 개를 하나의 command bundle에 넣는 것
 
 큰 텍스트나 큰 patch가 필요하면:
@@ -173,12 +188,12 @@ payload ref를 사용하는 경우:
 bundle을 만든 뒤에는 반드시 다음을 알려준다.
 
 - 생성된 bundle ID
-- 승인 위치
-- 승인 후 확인할 항목
+- 현재 status
+- 필요한 경우 review 위치
+- manual review가 아직 필요한지, 이미 running/final인지
 - 실패 시 확인할 status/log 명령
 
-사용자가 “진행해줘”, “직접 해줘”라고 해도 큰 bundle을 만들지 않는다.
-항상 작은 bundle 생성 → status 확인 → 사용자 승인 → status 확인 순서로 진행한다.
+사용자가 “진행해줘”, “직접 해줘”라고 해도 큰 bundle을 만들지 않는다. 작은 bundle을 만들고 반환 status에 따라 `pending -> review`, `running -> wait/poll`, `final -> 결과 확인` 순서로 진행한다. Safe Auto나 YOLO에서는 manual approval 클릭 없이 final result가 나올 수 있다.
 
 ## 로컬 세션 제어
 

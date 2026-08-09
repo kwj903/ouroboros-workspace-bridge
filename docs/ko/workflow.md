@@ -2,7 +2,7 @@
 
 이 문서는 ChatGPT에서 Ouroboros Workspace Bridge를 사용할 때의 기본 작업 흐름을 설명합니다.
 
-현재 기본값은 bundle-first MCP 흐름입니다. ChatGPT가 durable bundle을 제출하고, 실제 파일 수정, 명령 실행, 커밋은 local review UI에서 승인된 뒤에만 일어납니다. 이전 browser companion / `ouroboros-intent` prototype은 중단되었으며 정상 흐름으로 문서화하지 않습니다.
+현재 기본값은 bundle-first MCP 흐름입니다. ChatGPT가 durable bundle을 제출하고 local approval policy가 언제 실행할 수 있는지 결정합니다. **Normal**은 local UI의 수동 승인을 요구하고, **Safe Auto**와 **YOLO**는 조건에 맞는 pending bundle을 자동 승인할 수 있습니다. Runner는 실행 시점 검증을 담당하며 `running`과 terminal state를 기록합니다. 이전 browser companion / `ouroboros-intent` prototype은 중단되었으며 정상 흐름으로 문서화하지 않습니다.
 
 ## 일반 로컬 작업 흐름
 
@@ -30,13 +30,13 @@
    workspace_propose_git_push_and_wait
    ```
 
-   이 도구들은 local `/pending` review UI에 작은 pending proposal bundle을 만들고 잠깐 상태를 기다립니다. ChatGPT가 project file을 직접 수정하거나 command/git 작업을 직접 실행하지 않습니다. 실제 변경은 사용자가 local browser에서 승인한 뒤 local runner가 수행합니다.
+   이 도구들은 durable proposal bundle을 만들고 잠깐 status를 기다립니다. ChatGPT가 project file을 직접 수정하거나 command/git 작업을 직접 실행하지 않습니다. Normal에서는 사용자가 local browser에서 승인할 때까지 pending으로 남고, Safe Auto나 YOLO에서는 정책에 따라 자동 승인될 수 있습니다. Local runner가 `pending -> running`을 atomic하게 claim한 뒤 validation/rollback safeguard 아래에서 실행하고 terminal result를 기록합니다.
 
    public proposal wrapper는 generic internal bundle tool보다 더 작은 schema를 노출하도록 설계했습니다. 파일 수정 1개, 명령 1개, 커밋 1개, push 1개 단위로 사용하세요. 여러 수정, 여러 검증, 커밋은 반복 호출로 분리합니다.
 
    File action bundle은 `WORKSPACE_ROOT` 아래 non-git directory에서도 실행할 수 있습니다. 더 이상 `git status` 기반 clean-worktree preflight를 요구하지 않으며, file action rollback은 적용 전 file snapshot을 사용합니다.
 
-3. 로컬에서 검토하고 승인합니다.
+3. 로컬에서 bundle을 검토하거나 상태를 확인합니다.
 
    local pending review UI:
 
@@ -47,7 +47,7 @@
    /history?client_id=<client_id>&session_id=<session_id>
    ```
 
-   bundle-focused page는 `pending`, `applied`, `failed`, `rejected` 상태의 bundle을 모두 보여줍니다. 이 화면에는 compact한 `Copy for ChatGPT` JSON 블록이 있습니다.
+   bundle-focused/history view는 `pending`, `running`, `applied`, `failed`, `rejected`, `interrupted`를 이해합니다. Normal에서는 이 화면에서 승인/거절하고, auto-authorized bundle은 화면을 열기 전에 이미 `running` 또는 terminal state로 이동했을 수 있습니다. 이 화면에는 compact한 `Copy for ChatGPT` JSON 블록이 있습니다.
 
    Pending/history 카드는 project, task, client, session metadata badge를 가능한 경우 표시합니다. Query filter는 AND 조건이며 빈 filter 값은 무시합니다.
 
@@ -81,34 +81,27 @@ Workspace Bridge는 더 이상 동시 채팅을 위해 task worktree나 merge qu
 
 이 값들은 bundle과 handoff에 저장되고 request identity/dedupe와 이력 필터에 사용됩니다. Bridge transport가 ChatGPT의 실제 conversation id를 자동으로 알 수는 없으므로, 동시에 여러 채팅을 확실히 분리해야 할 때는 각 호출자가 서로 다른 `session_id`를 제공해야 합니다. 이 metadata는 파일 시스템 경로나 실행 위치를 바꾸거나 worktree를 만들지 않습니다.
 
+Proposal tool은 선택적 `retry_id`도 받습니다. 같은 요청의 기존 final result를 그대로 재사용하려면 생략하고, idempotent retry 호출에는 같은 값을 재사용하며, final result 이후 의도적으로 새 시도를 하나 만들 때만 새 값을 제공합니다. `retry_id`는 request identity만 바꾸며 `task_id`, `client_id`, `session_id`, `project_id`를 대체하지 않습니다.
+
 ## Tool 우선순위
 
 권장 순서:
 
 1. Read-only inspection tools
 2. `workspace_propose_*_and_wait` proposal tools
-3. Local pending review UI approval
+3. Local approval policy와 pending/history review UI
 4. Bundle status / recovery tools
 5. Handoff tools는 고급 continuation 또는 debug 용도
 6. Payload / patch helper tools는 큰 문서나 patch가 필요할 때만 사용
-7. Submit-first, signed intent, direct operation/trash tools는 기본 public MCP schema에 노출하지 않음
+7. Internal compatibility path는 기본 public MCP schema에 노출하지 않음
 
 `workspace_propose_*_and_wait` tools는 현재 기본 public mutation path입니다. 이 wrapper들은 `/pending` proposal을 만들고 잠깐 status를 기다립니다. 사용자가 승인하지 않아 pending으로 남으면 `workspace_command_bundle_status`, `workspace_wait_command_bundle_status`, `workspace_recover_last_activity`로 이어서 확인합니다.
 
-## Signed Intent / Direct Operation Tools
+## Public MCP 계약과 내부 호환 경로
 
-Signed intent preparation tools와 direct operation/trash tools는 기본 public MCP schema에서 숨깁니다.
+기본 ChatGPT connector는 `terminal_bridge/public_tools.py`에 정의된 canonical **31개 tool** surface를 노출합니다. `workspace_info`, smoke check, schema test가 모두 같은 manifest를 사용하므로 별도의 수동 tool 목록이 runtime과 어긋나지 않도록 했습니다.
 
-```text
-workspace_prepare_check_intent
-workspace_prepare_commit_current_changes_intent
-workspace_prepare_dev_session_intent
-workspace_get_operation
-workspace_list_operations
-workspace_list_trash
-```
-
-구현은 내부에 남겨둘 수 있지만 ChatGPT 기본 연결 앱에서는 혼선을 줄이기 위해 노출하지 않습니다. 기본 흐름은 `workspace_propose_*_and_wait` proposal tools와 local `/pending` review UI를 사용합니다.
+Generic stage/submit helper, signed-intent preparation helper, direct operation/trash 함수는 내부 compatibility code로 남아 있을 수 있지만 **기본 ChatGPT public tool이 아닙니다**. 일반 작업에서는 목적별 `workspace_propose_*_and_wait` family를 사용하세요.
 
 `/pending`의 advanced Intent Inbox와 `/intents/import` route는 내부/고급 흐름을 위해 유지될 수 있습니다.
 

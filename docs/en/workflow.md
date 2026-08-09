@@ -2,7 +2,7 @@
 
 This workflow is the default path for using Ouroboros Workspace Bridge from ChatGPT.
 
-The current default is the bundle-first MCP flow: ChatGPT submits a durable bundle, and the actual file change, command execution, or commit happens only after the local review UI approves it. The earlier browser companion / `ouroboros-intent` prototype is discontinued and should not be documented as the normal path.
+The current default is the bundle-first MCP flow: ChatGPT submits a durable bundle, and the local approval policy decides when it may run. **Normal** requires manual review in the local UI, while **Safe Auto** and **YOLO** can authorize eligible pending bundles automatically. The runner still owns execution-time validation and records `running` plus terminal states. The earlier browser companion / `ouroboros-intent` prototype is discontinued and should not be documented as the normal path.
 
 ## Normal Local Work
 
@@ -30,13 +30,13 @@ The current default is the bundle-first MCP flow: ChatGPT submits a durable bund
    workspace_propose_git_push_and_wait
    ```
 
-   These tools create small pending proposal bundles in the local `/pending` review UI and briefly wait for status. ChatGPT does not directly modify project files or directly run commands/git operations. Actual changes happen only after the user approves the proposal in the local browser and the local runner applies it.
+   These tools create durable proposal bundles and briefly wait for status. ChatGPT does not directly modify project files or directly run commands/git operations. In Normal mode the bundle remains pending until the user approves it in the local browser; Safe Auto or YOLO may authorize it automatically. The local runner atomically claims `pending -> running`, executes with validation/rollback safeguards, and publishes a terminal result.
 
    The public proposal wrappers intentionally expose smaller schemas than the generic internal bundle tools. Use one proposal per file edit, one proposal per command, one proposal per commit, and one proposal per push. Split multiple edits, checks, or commits into repeated calls.
 
    File action bundles can run in non-git directories under `WORKSPACE_ROOT`; they no longer require a `git status` clean-worktree preflight. Rollback for file actions uses file snapshots captured before applying the bundle.
 
-3. Review and approve locally.
+3. Review or observe the bundle locally.
 
    Open the local pending review UI:
 
@@ -47,7 +47,7 @@ The current default is the bundle-first MCP flow: ChatGPT submits a durable bund
    /history?client_id=<client_id>&session_id=<session_id>
    ```
 
-   The bundle-focused page shows `pending`, `applied`, `failed`, and `rejected` records. It includes a compact `Copy for ChatGPT` JSON block.
+   The bundle-focused and history views understand `pending`, `running`, `applied`, `failed`, `rejected`, and `interrupted`. Normal-mode work is approved or rejected here; auto-authorized work may move through `running` to a terminal state before you open the page. The page includes a compact `Copy for ChatGPT` JSON block.
 
    Pending and history cards show compact metadata badges for project, task, client, and session when available. Query filters are ANDed. Empty filter values are ignored.
 
@@ -81,34 +81,27 @@ Use logical metadata on `workspace_propose_*_and_wait` calls to keep concurrent 
 
 These identifiers are stored on bundles and handoffs, participate in request identity/deduplication, and can be used as list/history filters. The bridge transport cannot infer a ChatGPT conversation id automatically, so concurrent clients should provide a distinct `session_id` when they need guaranteed separation. No metadata value changes the filesystem target or creates a worktree.
 
+Proposal tools also accept an optional `retry_id`. Omit it to replay an existing final result for the same request, reuse the same value for idempotent retry calls, or provide a new value when you intentionally want one new attempt after a final result. `retry_id` changes only request identity; it does not replace `task_id`, `client_id`, `session_id`, or `project_id`.
+
 ## Tool Priority
 
 Preferred order:
 
 1. Read-only inspection tools
 2. `workspace_propose_*_and_wait` proposal tools
-3. Local pending review UI approval
+3. Local approval policy and pending/history review UI
 4. Bundle status / recovery tools
 5. Handoff tools for advanced continuation or debugging
 6. Payload / patch helper tools only when large documents or patches are needed
-7. Submit-first, signed intent, and direct operation/trash tools stay hidden from the default public MCP schema
+7. Internal compatibility paths stay hidden from the default public MCP schema
 
 `workspace_propose_*_and_wait` tools are the default public mutation path. They create `/pending` proposals and briefly wait for status. If a proposal remains pending, continue with `workspace_command_bundle_status`, `workspace_wait_command_bundle_status`, or `workspace_recover_last_activity`.
 
-## Signed Intent / Direct Operation Tools
+## Public MCP Contract and Internal Compatibility Paths
 
-Signed intent preparation tools and direct operation/trash tools are hidden from the default public MCP schema.
+The default ChatGPT connector exposes a canonical **31-tool** surface defined by `terminal_bridge/public_tools.py`. `workspace_info`, smoke checks, and schema tests all use that same manifest so documentation and runtime checks do not rely on a separate hand-maintained tool count.
 
-```text
-workspace_prepare_check_intent
-workspace_prepare_commit_current_changes_intent
-workspace_prepare_dev_session_intent
-workspace_get_operation
-workspace_list_operations
-workspace_list_trash
-```
-
-Their implementations may remain available internally, but they are not exposed in the default ChatGPT connector to reduce tool-selection confusion. The default flow uses `workspace_propose_*_and_wait` proposal tools and the local `/pending` review UI.
+Generic stage/submit helpers, signed-intent preparation helpers, and direct operation/trash functions may still exist as internal compatibility code, but they are **not public ChatGPT tools** and should not be referenced as part of the normal user workflow. Use the purpose-specific `workspace_propose_*_and_wait` family instead.
 
 The advanced Intent Inbox on `/pending` and the `/intents/import` route may remain available for internal or advanced workflows.
 

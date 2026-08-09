@@ -517,7 +517,12 @@ def is_deletable_candidate(candidate: CleanupCandidate, root: Path) -> bool:
         rel = path.resolve(strict=False).relative_to(root)
     except ValueError:
         return False
-    if rel.parts and rel.parts[0] == "command_bundles" and len(rel.parts) > 1 and rel.parts[1] == "pending":
+    if (
+        rel.parts
+        and rel.parts[0] == "command_bundles"
+        and len(rel.parts) > 1
+        and rel.parts[1] in {"pending", "running", "interrupted"}
+    ):
         return False
     if len(rel.parts) == 1 and rel.parts[0] in PROTECTED_ROOT_FILES:
         return False

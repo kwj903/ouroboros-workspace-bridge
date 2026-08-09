@@ -8,7 +8,7 @@ English | [한국어](README.ko.md)
 
 Local-first MCP bridge for safely letting ChatGPT work inside your workspace.
 
-Ouroboros Workspace Bridge lets ChatGPT inspect a local project and propose file edits or commands without applying them directly. Risky work is staged as a pending bundle, shown in a localhost review UI, and applied only after you approve it.
+Ouroboros Workspace Bridge lets ChatGPT inspect a local project and propose file edits or commands without applying them directly. Mutating work is staged as a durable bundle and governed by the local approval policy: **Normal** requires a manual review click, while **Safe Auto** and **YOLO** can authorize eligible bundles without that click. The local runner still performs execution-time validation, backup/rollback handling, and terminal-state recording.
 
 Part of Ouroboros by KwakWooJae.
 
@@ -18,7 +18,7 @@ Author: KwakWooJae
 
 - ChatGPT can inspect your local project under a configured `WORKSPACE_ROOT`.
 - File edits are staged as reviewable proposals.
-- Commands run only after local approval.
+- Commands run only after the configured local approval policy authorizes the bundle; Normal is manual, while Safe Auto/YOLO may auto-authorize.
 - Runtime data stays outside your repository.
 - Built for `uv run terminalbridge ...` operation with `uv run woojae ...` available for low-level diagnostics.
 
@@ -81,7 +81,7 @@ Use this workspace directory: /path/to/your/project
 Show me a brief overview of this directory's structure and tell me what kind of project it looks like.
 ```
 
-Approve only the expected pending bundle in the local review UI.
+With the default Normal mode, approve only the expected pending bundle in the local review UI. If Safe Auto or YOLO is intentionally enabled, verify the bundle's `running`/terminal status instead of expecting a manual approval step.
 
 Stop the local session:
 
@@ -123,22 +123,27 @@ After updates that change MCP tools, refresh or reconnect the ChatGPT app connec
 - A local MCP server is running for the configured workspace.
 - A localhost review UI is available.
 - A token-protected MCP URL can be added to ChatGPT as a custom app/connector.
-- Pending bundles are reviewed at `http://127.0.0.1:8790/pending`.
+- Pending and completed bundles are reviewed at `http://127.0.0.1:8790/pending` and the history views.
+- The default ChatGPT connector exposes a canonical **31-tool** MCP surface; `workspace_info` and smoke/schema checks use the same manifest.
 
 ## How it works
 
 ```text
 ChatGPT
   -> Local MCP bridge
-  -> Pending bundle
-  -> Local review UI approval
-  -> File change or command
+  -> Durable bundle
+  -> Approval policy
+       Normal: manual review
+       Safe Auto / YOLO: policy-based auto authorization
+  -> Atomic pending -> running claim
+  -> Local runner
+  -> applied / failed / interrupted
 ```
 
 ## Safety model
 
-- ChatGPT does not directly edit files or run commands.
-- Approve only small, expected bundles.
+- ChatGPT does not directly edit files or run commands; it submits proposals to the Bridge runtime.
+- Start with Normal mode and approve only small, expected bundles. If Safe Auto or YOLO is enabled, treat that mode itself as authorization for eligible pending bundles.
 - Reject bundles that mix unrelated edits, tests, commits, or surprising files.
 - Keep the review UI localhost-only.
 - Treat every public MCP endpoint, whether ngrok or your own domain, as externally reachable and token-protected.
@@ -151,7 +156,7 @@ ChatGPT
 
 CI runs the unit and smoke suites on GitHub-hosted Ubuntu, macOS, and Windows runners. Platform-specific desktop integrations still require local verification on the target machine.
 
-The official command form on every platform is `uv run woojae ...`. `scripts/dev_session.sh` and `scripts/dev_session.ps1` remain compatibility wrappers.
+Use `uv run terminalbridge ...` as the normal operator command for the complete connection stack on every platform. `uv run woojae ...` remains the lower-level diagnostic/update interface, and `scripts/dev_session.sh` / `scripts/dev_session.ps1` remain compatibility wrappers.
 
 ## Documentation
 
@@ -228,10 +233,15 @@ my-terminal-tool/
 
 Core implementation files:
 
-- `server.py`: MCP tool registration, public wrapper signatures, proposal routing, and logical session/task metadata.
-- `terminal_bridge/mcp_tools/`: helper modules used by `server.py` for read-only inspection, proposal construction, command-bundle status/wait flows, and runtime status views. Public MCP tool names and schemas remain defined in `server.py`.
-- `scripts/command_bundle_review_server.py`: local HTTP review server routes and request handling.
-- `terminal_bridge/mcp_runtime.py`: shared MCP runtime helpers for audit logging, tool-call journal wrapping, runtime directories, and command-bundle result conversion.
+- `server.py`: MCP registration, public wrapper signatures, annotations, validation, and thin adapters.
+- `terminal_bridge/public_tools.py`: canonical default 31-tool public MCP manifest and annotation policy helpers.
+- `terminal_bridge/bundles.py`: canonical filesystem bundle store for atomic JSON persistence, request identity/indexing, generation signaling, claim, transition, and finalization.
+- `terminal_bridge/bundle_service.py`: focused stage/find/status/list/cancel orchestration over the canonical bundle store.
+- `terminal_bridge/mcp_tools/`: helper modules for read-only inspection, proposal construction, async wait/status flows, and runtime status views.
+- `scripts/command_bundle_review_server.py`: local HTTP review server routes, bundle views, approval-mode handling, and long-poll state updates.
+- `scripts/command_bundle_runner.py`: validated single-workspace-cwd execution, snapshots/backups, rollback, and terminal bundle finalization.
+- `terminal_bridge/mcp_runtime.py`: shared MCP runtime helpers for audit logging, async-aware tool-call journaling, and runtime directory setup.
+- `terminal_bridge/operator_cli.py`: `terminalbridge` complete-stack operator CLI; `terminal_bridge/cli.py` keeps lower-level `woojae` diagnostics/update commands, with shared primitives in `terminal_bridge/cli_common.py`.
 - `terminal_bridge/review_layout.py`: review UI shell, navigation, and shared CSS.
 - `terminal_bridge/review_intents.py`: signed intent token import parsing helpers for the local review UI.
 

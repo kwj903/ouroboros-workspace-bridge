@@ -206,7 +206,7 @@ Use this workspace directory: /path/to/your/project
 Show me a brief overview of this directory's structure and tell me what kind of project it looks like.
 ```
 
-When the expected pending bundle appears, read it in the local review UI and approve it. This confirms that ChatGPT, the MCP bridge, and the review UI are connected end to end.
+With the default **Normal** mode, the expected bundle appears as `pending`; read it in the local review UI and approve it. If you intentionally enabled Safe Auto or YOLO, the bundle may already be `running` or final by the time you open the page, so verify its status/history instead. Either path confirms that ChatGPT, the MCP bridge, the approval policy, and the local runner are connected end to end.
 
 To print only a redacted URL preview:
 
@@ -216,9 +216,11 @@ uv run terminalbridge mcp-url
 
 ## Approval Mode
 
-- Normal: default, manual approval.
-- Safe Auto: low-risk command-only bundles may be auto-approved. Normal or Safe Auto is recommended for regular users.
-- YOLO: for trusted short sessions only. Do not leave it on.
+- **Normal**: default. Every pending mutation requires a manual approval click.
+- **Safe Auto**: conservatively auto-authorizes eligible low-risk command-only bundles; other bundles remain pending for manual review.
+- **YOLO**: approval all-pass mode. Every valid pending bundle is submitted to the runner without a manual approval click. Execution-time path/command validation and real command failures still apply.
+
+Start with Normal. Use Safe Auto only after you understand the review flow, and use YOLO only for short trusted development sessions.
 
 ## Temporary ngrok URL Caveat
 

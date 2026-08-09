@@ -13,10 +13,11 @@ Preferred flow:
 1. Inspect current state.
 2. Read the relevant files.
 3. Stage one small proposal bundle.
-4. Approve locally in the review UI.
-5. Check bundle status.
-6. Verify with one command at a time.
-7. Commit only after verification.
+4. Inspect the returned bundle status.
+5. In Normal mode, approve locally if it is `pending`; in Safe Auto/YOLO, it may already be `running` or terminal.
+6. Wait/poll until the prior bundle reaches a clear terminal result.
+7. Verify with one command at a time.
+8. Commit only after verification.
 
 Do not mix file edits, tests, and commits in the same bundle.
 
@@ -31,7 +32,7 @@ workspace_propose_git_commit_and_wait
 workspace_propose_git_push_and_wait
 ```
 
-Generic stage/submit tools, signed-intent preparation tools, and direct operation/trash tools may remain in the implementation for internal or advanced workflows, but they are hidden from the default public MCP schema.
+The canonical default public MCP surface contains 31 tools and is defined in `terminal_bridge/public_tools.py`; `workspace_info`, smoke checks, and schema tests share that manifest. Generic stage/submit tools, signed-intent preparation helpers, and direct operation/trash functions may remain in the implementation for internal or advanced compatibility, but they are hidden from the default public MCP schema.
 
 ## Read-only inspection
 
@@ -71,9 +72,9 @@ Rules:
 - One file edit purpose per proposal.
 - Do not include tests in the same proposal.
 - Do not include git add or commit in the same proposal.
-- The proposal does not directly edit project files; files change only after local approval.
+- The proposal does not directly edit project files. Normal requires manual review; Safe Auto/YOLO may authorize execution automatically.
 - File action apply captures target file snapshots before execution and rolls back action changes on failure.
-- Check bundle status after approval.
+- Treat `pending` and `running` as active states and continue only after the terminal result is clear.
 
 Large content can be stored first with `workspace_stage_text_payload`, then referenced by `content_ref`, `old_text_ref`, or `new_text_ref` through the internal bundle path when needed.
 
@@ -94,8 +95,8 @@ Rules:
 - One command per proposal.
 - Do not use long `bash -lc` chains.
 - Do not combine unit tests, smoke checks, and commits.
-- The proposal does not directly execute commands; commands run only after local approval.
-- Check command bundle status after approval.
+- The proposal does not directly execute commands. The local approval policy authorizes the bundle: Normal is manual, Safe Auto/YOLO may auto-authorize.
+- Treat `pending` and `running` as active states and check/wait for a terminal bundle result.
 
 If a verification sequence becomes long, create a small `scripts/check_*.sh` or `scripts/check_*.py` file first, then run that script as a single command proposal.
 
@@ -108,9 +109,9 @@ Recommended flow:
 1. Generate a unified diff.
 2. Prefer small patches when possible.
 3. Create the patch proposal with `workspace_propose_patch_and_wait`.
-4. Review and approve in the local review UI.
-5. Check bundle status.
-6. Inspect the resulting diff.
+4. Inspect the returned status; review/approve manually only when Normal leaves it `pending`.
+5. Wait/poll while it is `pending` or `running`.
+6. Inspect the terminal result and resulting diff.
 7. Run verification commands.
 
 The runner performs path safety checks, `git apply --check`, backup, and `git apply` during approval.
@@ -125,8 +126,8 @@ Recommended flow:
 2. Confirm only expected files changed.
 3. Run the needed verification commands.
 4. Create a commit-only proposal with `workspace_propose_git_commit_and_wait`.
-5. Approve locally.
-6. Check bundle status.
+5. Inspect the returned status and review manually only if Normal leaves it `pending`.
+6. Wait/poll until the commit bundle reaches a terminal state.
 7. Confirm final `workspace_git_status` is clean.
 
 Do not use `precheck_commands` in commit proposals. Verification should happen before the commit proposal as separate command bundles.
@@ -139,13 +140,17 @@ Do not use `precheck_commands` in commit proposals. Verification should happen b
 
 The large entrypoint files should stay thin enough to review:
 
-- `server.py` owns MCP tool registration, public wrapper signatures, and high-level orchestration.
+- `server.py` owns FastMCP registration, public wrapper signatures/annotations, validation, and thin adapters.
+- `terminal_bridge/public_tools.py` owns the canonical 31-tool default public manifest and annotation policy helpers.
+- `terminal_bridge/bundles.py` is the canonical filesystem store for atomic JSON persistence, generation signaling, request-key indexing, claim, transition, reject, and finalization.
+- `terminal_bridge/bundle_service.py` owns cohesive stage/find/status/list/cancel orchestration over the canonical store.
 - `terminal_bridge/mcp_tools/readonly.py` owns read-only inspection helper implementations used by public MCP wrappers.
-- `terminal_bridge/mcp_tools/proposals.py` owns proposal step/action construction and proposal wait delegation helpers.
-- `terminal_bridge/mcp_tools/bundles.py` owns command-bundle status, wait, list, cancel, and stage-and-wait helper implementations.
-- `terminal_bridge/mcp_tools/status.py` owns runtime status, audit, handoff, task, operation, backup/trash list, and git status/diff helper implementations.
-- `terminal_bridge/mcp_runtime.py` owns runtime directory setup, audit logging, tool-call journal wrapping, and command-bundle stage result conversion.
-- `scripts/command_bundle_review_server.py` owns local review HTTP routes.
+- `terminal_bridge/mcp_tools/proposals.py` owns proposal step/action construction and async proposal delegation helpers.
+- `terminal_bridge/mcp_tools/bundles.py` owns async wait/stage-and-wait helpers and delegates store-facing status/list work through `BundleService` where appropriate.
+- `terminal_bridge/mcp_tools/status.py` owns runtime status, audit, handoff, operation, backup/trash list, and git status/diff helper implementations.
+- `terminal_bridge/mcp_runtime.py` owns runtime directory setup plus sync/async-aware audit and tool-call journal wrapping.
+- `scripts/command_bundle_review_server.py` owns local review HTTP routes, generation-based long polling, and approval-mode UI behavior.
+- `scripts/command_bundle_runner.py` owns validated execution in one resolved workspace cwd plus snapshot/backup/rollback and terminal finalization.
 - `terminal_bridge/review_layout.py` owns the shared review UI shell, navigation, and CSS.
 - `terminal_bridge/review_intents.py` owns signed intent token import parsing for the local review UI.
 
@@ -211,22 +216,28 @@ workspace_git_status
 
 A payload ref by itself does not modify project files.
 
-## Task/session records
+## Task tracking and session identity
 
-Long maintenance work can be tracked through task tools.
-
-Useful tools:
+The removed public task/worktree tool family is no longer part of the current MCP contract. Development work on this repository is tracked in the repository-local `agent-work/` documents instead:
 
 ```text
-workspace_task_start
-workspace_task_status
-workspace_task_log_step
-workspace_task_update_plan
-workspace_task_finish
-workspace_list_tasks
+agent-work/CURRENT.md
+agent-work/tasks/
+agent-work/decisions/
+agent-work/handoffs/
 ```
 
-Use task records for multi-step efforts such as major refactors, new MCP tools, or UI workflow changes.
+For runtime proposal identity across concurrent ChatGPT sessions, use logical metadata on the public proposal wrappers:
+
+```text
+client_id
+session_id
+task_id
+project_id
+retry_id
+```
+
+`session_id` is the primary concurrent-chat separation key. These values affect request/history identity and filtering; they do not create task worktrees, merge queues, or alternate execution roots.
 
 ## Verification levels
 
@@ -259,8 +270,10 @@ MCP tool or server schema change:
 uv run python -m unittest discover -s tests
 uv run python scripts/smoke_check.py
 git diff --check
-scripts/dev_session.sh restart mcp
+uv run terminalbridge restart
 ```
+
+For a schema/annotation change, also run remote smoke when configured and verify that the live connector exposes the canonical tool set.
 
 After MCP schema changes, refresh the MCP connection in the ChatGPT app.
 
@@ -269,10 +282,10 @@ After MCP schema changes, refresh the MCP connection in the ChatGPT app.
 Restart only what is needed.
 
 - README/docs only: no MCP restart needed.
-- Review UI or watcher only: restart review session if manually testing UI behavior.
-- `server.py` or MCP tool schema: restart MCP and refresh the ChatGPT app.
-- ngrok configuration: restart ngrok.
-- confusing local process state: use `scripts/dev_session.sh restart-session`.
+- Review UI or watcher only: restart the managed stack when manually validating live behavior, or use the low-level `woojae` service controls only for focused diagnosis.
+- `server.py` or MCP tool schema/annotations: use `uv run terminalbridge restart`, then refresh/reconnect the ChatGPT app if the client caches schema.
+- Public connector configuration: use `uv run terminalbridge restart` so the selected ngrok/Cloudflare/external mode stays coherent.
+- Confusing local process state: use `uv run terminalbridge status`, `uv run terminalbridge doctor`, then `uv run terminalbridge restart` if needed.
 
 ## Safety model summary
 
@@ -282,7 +295,7 @@ Workspace Terminal Bridge uses several guardrails:
 - path traversal is blocked
 - sensitive directories and secret-like files are blocked
 - direct mutation, submit-first, signed-intent, and direct operation/trash tools are hidden by default
-- file changes are staged through local approval bundles
+- file changes are staged through local approval bundles; Normal is manual while Safe Auto/YOLO can authorize eligible bundles automatically
 - public action proposals enforce one action per call
 - public command proposals enforce one command step per call
 - file action bundles snapshot target files before apply and roll back action changes on failure

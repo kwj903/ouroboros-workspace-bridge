@@ -199,7 +199,7 @@ http://127.0.0.1:8790/pending
 이 디렉토리의 구성을 간단히 보여주고, 어떤 종류의 프로젝트인지 요약해줘.
 ```
 
-예상한 pending bundle이 올라오면 local review UI에서 내용을 읽고 승인합니다. 이 단계가 성공하면 ChatGPT, MCP bridge, review UI가 끝까지 연결된 것입니다.
+기본값인 **Normal** 모드에서는 예상한 bundle이 `pending`으로 올라오므로 local review UI에서 내용을 읽고 승인합니다. Safe Auto나 YOLO를 의도적으로 켠 상태라면 화면을 열었을 때 이미 `running` 또는 final 상태일 수 있으므로 status/history를 확인하세요. 어느 경우든 ChatGPT, MCP bridge, approval policy, local runner가 끝까지 연결되었는지 확인할 수 있습니다.
 
 redacted URL 미리보기만 보고 싶으면 다음 명령을 사용할 수 있습니다.
 
@@ -209,9 +209,11 @@ uv run terminalbridge mcp-url
 
 ## Approval mode
 
-- Normal: 기본값입니다. 모든 pending bundle을 직접 승인합니다.
-- Safe Auto: low-risk command-only 확인 bundle은 자동 승인될 수 있습니다. 일반 사용자에게는 Normal 또는 Safe Auto를 권장합니다.
-- YOLO: 신뢰할 수 있는 짧은 세션에서만 쓰세요. 켜둔 채로 오래 사용하지 마세요.
+- **Normal**: 기본값입니다. 모든 pending mutation에 사용자의 수동 승인 클릭이 필요합니다.
+- **Safe Auto**: 조건에 맞는 low-risk command-only bundle만 보수적으로 자동 승인하고, 나머지는 manual review를 위해 pending으로 남깁니다.
+- **YOLO**: 승인 단계 올패스 모드입니다. 모든 유효한 pending bundle을 수동 승인 클릭 없이 runner로 보냅니다. 실행 시점의 경로·명령 검증과 실제 command failure는 그대로 적용됩니다.
+
+처음에는 Normal을 사용하세요. Review 흐름을 충분히 이해한 뒤에만 Safe Auto를 사용하고, YOLO는 짧고 신뢰할 수 있는 개발 세션에서만 사용하세요.
 
 ## Temporary ngrok URL 주의
 

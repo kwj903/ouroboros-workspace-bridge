@@ -31,8 +31,9 @@ uv run terminalbridge doctor
 2. `http://127.0.0.1:8790/pending`이 로컬에서 열리는지 확인합니다.
 3. `uv run terminalbridge copy-url` 또는 `uv run terminalbridge mcp-url`로 MCP URL 정보를 확인합니다.
 4. ChatGPT custom app에 현재 MCP 서버 URL이 들어갔는지 확인합니다.
-5. ChatGPT에게 대상 작업 디렉토리의 간단한 구성 요약을 요청했을 때 pending bundle이 생기는지 확인합니다.
-6. 해당 bundle을 승인했을 때 review UI 이력에서 결과가 보이는지 확인합니다.
+5. ChatGPT에게 대상 작업 디렉토리의 간단한 구성 요약을 요청했을 때 bundle이 생성되는지 확인합니다. Normal에서는 보통 `pending`으로 남고, Safe Auto/YOLO에서는 곧바로 `running` 또는 terminal state로 이동할 수 있습니다.
+6. 현재 approval mode에 맞게 bundle을 처리하고 review/history에서 terminal result가 보이는지 확인합니다.
+7. connector refresh/reconnect 후 기본 MCP surface가 `workspace_info`가 보고하는 canonical 31개 tool과 일치하는지 확인합니다.
 
 어느 단계에서 실패했는지 먼저 좁힌 뒤, 그 단계부터 해결하세요.
 

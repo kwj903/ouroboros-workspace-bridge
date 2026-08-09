@@ -120,7 +120,7 @@ http://127.0.0.1:8790/pending
 이 디렉토리의 구성을 간단히 보여주고, 어떤 종류의 프로젝트인지 요약해줘.
 ```
 
-review UI에 예상한 command bundle이 올라오면 내용을 확인한 뒤 승인합니다.
+기본값인 Normal 모드에서는 예상한 pending bundle을 review UI에서 확인한 뒤 승인합니다. Safe Auto나 YOLO를 의도적으로 켠 상태라면 이미 `running` 또는 final 상태일 수 있으므로 status/history를 확인하세요.
 
 ## 자주 막히는 문제
 
@@ -160,6 +160,7 @@ uv run terminalbridge status
 - ngrok URL이 바뀌지 않았는지 또는 Cloudflare/external connector가 의도한 컴퓨터를 가리키는지 확인합니다.
 - ChatGPT 앱의 MCP 서버 URL을 최신 URL로 갱신했는지 확인합니다.
 - `http://127.0.0.1:8790/pending` 페이지가 열리는지 확인합니다.
+- reconnect/refresh 후 기본 connector가 canonical **31개 public tool**을 노출하는지 확인합니다. `workspace_info`는 smoke/schema check와 같은 tool set을 보고해야 합니다.
 
 ## 관련 문서
 

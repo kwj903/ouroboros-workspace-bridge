@@ -122,7 +122,7 @@ class CommandBundleStageResult(BaseModel):
     bundle_id: str = Field(description="Identifier used to check or wait for this bundle.")
     title: str = Field(description="Human-readable purpose of the staged bundle.")
     cwd: str = Field(description="Workspace-relative directory where the bundle will run.")
-    status: str = Field(description="Current bundle state after staging.")
+    status: str = Field(description="Current bundle state after staging; newly staged bundles are pending.")
     risk: RiskLevel = Field(description="Highest risk level assigned to the bundle.")
     approval_required: bool = Field(description="Whether local review approval is required before execution.")
     path: str = Field(description="Runtime record path for the staged bundle.")
@@ -134,7 +134,12 @@ class CommandBundleStatusResult(BaseModel):
     bundle_id: str = Field(description="Identifier of the bundle being reported.")
     title: str = Field(description="Human-readable purpose of the bundle.")
     cwd: str = Field(description="Workspace-relative directory where the bundle runs.")
-    status: str = Field(description="Current bundle state; use it to decide whether to wait, review, or inspect failure.")
+    status: str = Field(
+        description=(
+            "Current bundle state: pending, running, applied, failed, interrupted, or rejected. "
+            "Running is still in progress; interrupted requires explicit recovery review."
+        )
+    )
     risk: str = Field(description="Recorded bundle risk level; legacy records may contain broader values.")
     approval_required: bool = Field(description="Whether execution still depends on local review approval.")
     command_count: int = Field(description="Number of command or action steps in the bundle.")
@@ -152,7 +157,11 @@ class CommandBundleListEntry(BaseModel):
     bundle_id: str = Field(description="Identifier used to inspect this bundle.")
     title: str = Field(description="Human-readable purpose of the bundle.")
     cwd: str = Field(description="Workspace-relative directory associated with the bundle.")
-    status: str = Field(description="Current bundle state.")
+    status: str = Field(
+        description=(
+            "Current bundle state: pending, running, applied, failed, interrupted, or rejected."
+        )
+    )
     risk: str = Field(description="Recorded bundle risk level; legacy records may contain broader values.")
     command_count: int = Field(description="Number of command or action steps in the bundle.")
     updated_at: str = Field(description="Timestamp of the latest bundle state change.")
@@ -224,7 +233,9 @@ class RecoveryCommandBundleEntry(BaseModel):
     bundle_id: str = Field(description="Identifier used to inspect the recovered command bundle.")
     title: str = Field(description="Human-readable purpose of the command bundle.")
     cwd: str = Field(description="Workspace-relative directory associated with the command bundle.")
-    status: str = Field(description="Current or final command bundle state.")
+    status: str = Field(
+        description="Current or final command bundle state; interrupted entries require recovery review."
+    )
     risk: str = Field(description="Recorded command bundle risk level.")
     command_count: int = Field(description="Number of command or action steps in the bundle.")
     updated_at: str = Field(description="Timestamp of the latest command bundle update.")
@@ -334,7 +345,9 @@ class ToolCallListResult(BaseModel):
 class HandoffEntry(BaseModel):
     handoff_id: str = Field(description="Identifier of the handoff record.")
     bundle_id: str = Field(description="Command bundle associated with the handoff.")
-    status: str = Field(description="Current or final bundle state recorded by the handoff.")
+    status: str = Field(
+        description="Final bundle state recorded by the handoff, including interrupted recovery records."
+    )
     ok: bool | None = Field(description="Whether the completed handoff succeeded, or null while unresolved.")
     risk: str = Field(description="Recorded risk level for the handoff.")
     title: str = Field(description="Human-readable purpose of the handoff.")

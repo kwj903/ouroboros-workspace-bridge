@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 import json
 import os
-import socket
 import sys
 import tempfile
 import unittest
@@ -15,7 +14,7 @@ from uuid import uuid4
 import server
 from scripts import command_bundle_review_server as review
 from scripts import command_bundle_watcher as watcher
-from terminal_bridge import approval_modes, config, handoffs, safety, tool_calls
+from terminal_bridge import approval_modes, bundles as bundle_store, config, handoffs, safety, tool_calls
 from terminal_bridge import review_layout
 from terminal_bridge import review_intents as intents
 from terminal_bridge import review_notifications as notifications
@@ -28,20 +27,38 @@ class ReviewServerHelperTests(unittest.TestCase):
 
         self.original_dirs = (
             review.PENDING_DIR,
+            review.RUNNING_DIR,
             review.APPLIED_DIR,
             review.REJECTED_DIR,
             review.FAILED_DIR,
+            review.INTERRUPTED_DIR,
         )
         self.original_audit_log = review.AUDIT_LOG
         self.original_runtime_root = review.RUNTIME_ROOT
         self.original_handoff_dir = handoffs.HANDOFF_DIR
+        self.original_bundle_dirs = {
+            "COMMAND_BUNDLE_PENDING_DIR": bundle_store.COMMAND_BUNDLE_PENDING_DIR,
+            "COMMAND_BUNDLE_RUNNING_DIR": bundle_store.COMMAND_BUNDLE_RUNNING_DIR,
+            "COMMAND_BUNDLE_APPLIED_DIR": bundle_store.COMMAND_BUNDLE_APPLIED_DIR,
+            "COMMAND_BUNDLE_REJECTED_DIR": bundle_store.COMMAND_BUNDLE_REJECTED_DIR,
+            "COMMAND_BUNDLE_FAILED_DIR": bundle_store.COMMAND_BUNDLE_FAILED_DIR,
+            "COMMAND_BUNDLE_INTERRUPTED_DIR": bundle_store.COMMAND_BUNDLE_INTERRUPTED_DIR,
+        }
 
         review.PENDING_DIR = root / "pending"
+        review.RUNNING_DIR = root / "running"
         review.APPLIED_DIR = root / "applied"
         review.REJECTED_DIR = root / "rejected"
         review.FAILED_DIR = root / "failed"
+        review.INTERRUPTED_DIR = root / "interrupted"
         review.AUDIT_LOG = root / "audit.jsonl"
         handoffs.HANDOFF_DIR = root / "handoffs"
+        bundle_store.COMMAND_BUNDLE_PENDING_DIR = review.PENDING_DIR
+        bundle_store.COMMAND_BUNDLE_RUNNING_DIR = review.RUNNING_DIR
+        bundle_store.COMMAND_BUNDLE_APPLIED_DIR = review.APPLIED_DIR
+        bundle_store.COMMAND_BUNDLE_REJECTED_DIR = review.REJECTED_DIR
+        bundle_store.COMMAND_BUNDLE_FAILED_DIR = review.FAILED_DIR
+        bundle_store.COMMAND_BUNDLE_INTERRUPTED_DIR = review.INTERRUPTED_DIR
 
         for directory in review.bundle_dirs():
             directory.mkdir(parents=True, exist_ok=True)
@@ -49,13 +66,17 @@ class ReviewServerHelperTests(unittest.TestCase):
     def tearDown(self) -> None:
         (
             review.PENDING_DIR,
+            review.RUNNING_DIR,
             review.APPLIED_DIR,
             review.REJECTED_DIR,
             review.FAILED_DIR,
+            review.INTERRUPTED_DIR,
         ) = self.original_dirs
         review.AUDIT_LOG = self.original_audit_log
         review.RUNTIME_ROOT = self.original_runtime_root
         handoffs.HANDOFF_DIR = self.original_handoff_dir
+        for name, directory in self.original_bundle_dirs.items():
+            setattr(bundle_store, name, directory)
         self.tmp.cleanup()
 
     def write_bundle(self, status: str, bundle_id: str, updated_at: str) -> None:
@@ -288,9 +309,14 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertEqual(review.latest_pending_bundle_id(), "cmd-new")
 
     def test_command_bundle_revision_changes_with_state(self) -> None:
-        before = review.command_bundle_revision()
-        self.write_bundle("pending", "cmd-revision", "2026-01-01T00:00:00+00:00")
-        after = review.command_bundle_revision()
+        with patch.object(
+            review,
+            "read_json",
+            side_effect=AssertionError("generation polling must not parse bundle history"),
+        ):
+            before = review.command_bundle_revision()
+            self.write_bundle("pending", "cmd-revision", "2026-01-01T00:00:00+00:00")
+            after = review.command_bundle_revision()
 
         self.assertNotEqual(before, after)
 
@@ -302,6 +328,17 @@ class ReviewServerHelperTests(unittest.TestCase):
 
         self.assertEqual(state["pending_count"], 1)
         self.assertEqual(state["latest_pending_bundle_id"], "cmd-pending")
+
+    def test_command_bundle_state_reuses_rows_until_generation_changes(self) -> None:
+        self.write_bundle("pending", "cmd-cached", "2026-01-02T00:00:00+00:00")
+        revision = review.command_bundle_revision()
+
+        with patch.object(review, "pending_bundles", wraps=review.pending_bundles) as loader:
+            first = review.command_bundle_state(revision)
+            second = review.command_bundle_state(revision)
+
+        self.assertEqual(first, second)
+        self.assertEqual(loader.call_count, 1)
 
     def test_current_pending_bundle_ids_reads_existing_pending(self) -> None:
         self.write_bundle("pending", "cmd-existing", "2026-01-02T00:00:00+00:00")
@@ -321,6 +358,12 @@ class ReviewServerHelperTests(unittest.TestCase):
         self.assertEqual(counts["failed"], 1)
         self.assertEqual(counts["rejected"], 1)
         self.assertEqual(counts["all"], 4)
+
+    def test_runner_action_success_uses_canonical_terminal_status(self) -> None:
+        self.assertTrue(review.runner_action_succeeded("approve", {"status": "applied"}))
+        self.assertFalse(review.runner_action_succeeded("approve", {"status": "failed"}))
+        self.assertFalse(review.runner_action_succeeded("approve", {"status": "running"}))
+        self.assertTrue(review.runner_action_succeeded("reject", {"status": "rejected"}))
 
     def test_latest_bundle_id_and_updated_at(self) -> None:
         self.write_bundle("failed", "cmd-old-failed", "2026-01-01T00:00:00+00:00")
@@ -741,15 +784,8 @@ class ReviewServerHelperTests(unittest.TestCase):
 
     def test_tcp_port_reachable_false_for_invalid_or_unused_port(self) -> None:
         self.assertFalse(review.tcp_port_reachable("127.0.0.1", 0))
-
-        sock = socket.socket()
-        try:
-            sock.bind(("127.0.0.1", 0))
-            unused_port = int(sock.getsockname()[1])
-        finally:
-            sock.close()
-
-        self.assertFalse(review.tcp_port_reachable("127.0.0.1", unused_port, timeout_seconds=0.05))
+        with patch.object(review.socket, "create_connection", side_effect=OSError("unreachable")):
+            self.assertFalse(review.tcp_port_reachable("127.0.0.1", 65534, timeout_seconds=0.05))
 
     def test_server_state_does_not_include_token_value(self) -> None:
         original_token = os.environ.get("MCP_ACCESS_TOKEN")

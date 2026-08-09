@@ -16,25 +16,31 @@ class HandoffTests(unittest.TestCase):
         root = Path(self.tmp.name)
         self.original_runner_dirs = {
             "PENDING_DIR": runner.PENDING_DIR,
+            "RUNNING_DIR": runner.RUNNING_DIR,
             "APPLIED_DIR": runner.APPLIED_DIR,
             "REJECTED_DIR": runner.REJECTED_DIR,
             "FAILED_DIR": runner.FAILED_DIR,
+            "INTERRUPTED_DIR": runner.INTERRUPTED_DIR,
         }
         self.original_handoff_dir = handoffs.HANDOFF_DIR
 
         runner.PENDING_DIR = root / "pending"
+        runner.RUNNING_DIR = root / "running"
         runner.APPLIED_DIR = root / "applied"
         runner.REJECTED_DIR = root / "rejected"
         runner.FAILED_DIR = root / "failed"
+        runner.INTERRUPTED_DIR = root / "interrupted"
         handoffs.HANDOFF_DIR = root / "handoffs"
         for directory in (runner.PENDING_DIR, runner.APPLIED_DIR, runner.REJECTED_DIR, runner.FAILED_DIR):
             directory.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self) -> None:
         runner.PENDING_DIR = self.original_runner_dirs["PENDING_DIR"]
+        runner.RUNNING_DIR = self.original_runner_dirs["RUNNING_DIR"]
         runner.APPLIED_DIR = self.original_runner_dirs["APPLIED_DIR"]
         runner.REJECTED_DIR = self.original_runner_dirs["REJECTED_DIR"]
         runner.FAILED_DIR = self.original_runner_dirs["FAILED_DIR"]
+        runner.INTERRUPTED_DIR = self.original_runner_dirs["INTERRUPTED_DIR"]
         handoffs.HANDOFF_DIR = self.original_handoff_dir
         self.tmp.cleanup()
 

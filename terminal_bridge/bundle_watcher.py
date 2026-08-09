@@ -14,6 +14,13 @@ from terminal_bridge.approval_modes import (
     normalize_approval_mode,
     should_auto_approve,
 )
+from terminal_bridge.bundles import (
+    _find_command_bundle,
+    _interrupt_stale_running_bundles,
+)
+
+
+STALE_RUNNING_AFTER_SECONDS = 24 * 60 * 60
 
 
 class StopEvent(Protocol):
@@ -26,6 +33,7 @@ AutoApplyFunc = Callable[[str, Path, Path, str, str], bool]
 BundleCallback = Callable[[str], None]
 ModeLoader = Callable[[], str]
 EffectiveModeLoader = Callable[[dict[str, object] | None], ApprovalModeResolution]
+CanonicalStatusLoader = Callable[[str], str | None]
 
 
 def load_bundle_id(path: Path) -> str | None:
@@ -89,6 +97,9 @@ def startup_seen_pending_bundle_ids(
     for bundle_id, _path, record in pending_bundle_records(pending_dir):
         if record is None:
             continue
+        if str(record.get("status", "pending")) != "pending":
+            seen.add(bundle_id)
+            continue
         try:
             resolution = load_effective_mode(record)
         except Exception:
@@ -99,12 +110,21 @@ def startup_seen_pending_bundle_ids(
     return seen
 
 
+def canonical_bundle_status(bundle_id: str) -> str | None:
+    try:
+        _path, record = _find_command_bundle(bundle_id)
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+    return str(record.get("status", "unknown"))
+
+
 def auto_apply_bundle(
     bundle_id: str,
     runner: Path,
     project_root: Path,
     source: str,
     log_prefix: str = "",
+    status_loader: CanonicalStatusLoader = canonical_bundle_status,
 ) -> bool:
     try:
         completed = subprocess.run(
@@ -125,8 +145,20 @@ def auto_apply_bundle(
         print(f"{log_prefix}auto-approval failed before runner completed: {bundle_id}: {type(exc).__name__}")
         return False
 
-    print(f"{log_prefix}auto-approval {source}: {bundle_id}: exit={completed.returncode}")
-    return completed.returncode == 0
+    try:
+        status = status_loader(bundle_id)
+    except Exception as exc:
+        print(
+            f"{log_prefix}auto-approval could not read canonical status: "
+            f"{bundle_id}: {type(exc).__name__}"
+        )
+        return False
+
+    print(
+        f"{log_prefix}auto-approval {source}: {bundle_id}: "
+        f"exit={completed.returncode} status={status}"
+    )
+    return status == "applied"
 
 
 def handle_pending_bundle(
@@ -148,6 +180,9 @@ def handle_pending_bundle(
     if record is None:
         print(f"{log_prefix}bundle record is not ready yet; retrying later: {bundle_id}")
         return "deferred"
+    if str(record.get("status", "pending")) != "pending":
+        print(f"{log_prefix}bundle is no longer pending; automatic replay disabled: {bundle_id}")
+        return "not-pending"
 
     if should_auto_approve(record, effective_mode):
         source = approval_resolution.source_label if approval_resolution is not None else f"mode={approval_mode}"
@@ -187,6 +222,14 @@ def watch_pending_bundles(
     log_prefix: str = "",
     auto_apply_func: AutoApplyFunc = auto_apply_bundle,
 ) -> None:
+    interrupted = _interrupt_stale_running_bundles(
+        running_dir=pending_dir.parent / "running",
+        interrupted_dir=pending_dir.parent / "interrupted",
+        stale_after_seconds=STALE_RUNNING_AFTER_SECONDS,
+    )
+    for bundle_id in interrupted:
+        print(f"{log_prefix}stale running bundle marked interrupted; review required: {bundle_id}")
+
     while True:
         if stop_event is not None and stop_event.is_set():
             return

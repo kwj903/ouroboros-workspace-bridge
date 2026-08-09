@@ -6,11 +6,14 @@ import json
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from scripts import command_bundle_review_server as review
 from scripts import command_bundle_watcher as standalone_watcher
-from terminal_bridge import approval_modes, bundle_watcher
+from terminal_bridge import approval_modes, bundle_watcher, handoffs
 
 
 def low_risk_command_bundle() -> dict[str, object]:
@@ -67,6 +70,16 @@ class BundleWatcherHelperTests(unittest.TestCase):
 
             self.assertEqual(seen, {"cmd-normal"})
 
+    def test_startup_does_not_replay_pending_file_already_marked_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pending_dir = Path(tmp)
+            record = {**low_risk_command_bundle(), "status": "running"}
+            (pending_dir / "cmd-test.json").write_text(json.dumps(record), encoding="utf-8")
+
+            seen = bundle_watcher.startup_seen_pending_bundle_ids(pending_dir)
+
+            self.assertEqual(seen, {"cmd-test"})
+
     def test_handle_pending_bundle_auto_applies_when_mode_allows(self) -> None:
         calls: list[tuple[str, str]] = []
         notifications: list[str] = []
@@ -92,6 +105,28 @@ class BundleWatcherHelperTests(unittest.TestCase):
         self.assertEqual(result, "auto-applied")
         self.assertEqual(calls, [("cmd-test", "mode=safe-auto")])
         self.assertEqual(notifications, [])
+
+    def test_auto_apply_uses_canonical_terminal_status_not_exit_code(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+        with mock.patch.object(bundle_watcher.subprocess, "run", return_value=completed):
+            with contextlib.redirect_stdout(io.StringIO()):
+                failed = bundle_watcher.auto_apply_bundle(
+                    "cmd-test",
+                    Path("runner.py"),
+                    Path("."),
+                    "test",
+                    status_loader=lambda _bundle_id: "failed",
+                )
+                applied = bundle_watcher.auto_apply_bundle(
+                    "cmd-test",
+                    Path("runner.py"),
+                    Path("."),
+                    "test",
+                    status_loader=lambda _bundle_id: "applied",
+                )
+
+        self.assertFalse(failed)
+        self.assertTrue(applied)
 
     def test_handle_pending_bundle_normal_mode_does_not_auto_apply(self) -> None:
         calls: list[str] = []
@@ -348,6 +383,59 @@ class BundleWatcherHelperTests(unittest.TestCase):
             self.assertEqual(seen, {"cmd-test"})
             self.assertEqual(loaded_records, [record])
             self.assertEqual(auto_applied, [("cmd-test", "mode=safe-auto scope=task:task-a")])
+
+    def test_watcher_restart_marks_only_stale_running_interrupted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pending_dir = root / "pending"
+            running_dir = root / "running"
+            pending_dir.mkdir()
+            running_dir.mkdir()
+            old = datetime.now(timezone.utc) - timedelta(days=2)
+            record = {
+                **low_risk_command_bundle(),
+                "status": "running",
+                "updated_at": old.isoformat(),
+                "execution": {
+                    "execution_id": "exec-stale",
+                    "pid": 99_999_999,
+                    "started_at": old.isoformat(),
+                },
+            }
+            (running_dir / "cmd-test.json").write_text(json.dumps(record), encoding="utf-8")
+            (running_dir / ".cmd-test.claim").mkdir()
+            original_handoff_dir = handoffs.HANDOFF_DIR
+            handoffs.HANDOFF_DIR = root / "handoffs"
+
+            class AlreadyStopped:
+                def is_set(self) -> bool:
+                    return True
+
+                def wait(self, _timeout: float) -> bool:
+                    return True
+
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    bundle_watcher.watch_pending_bundles(
+                        pending_dir=pending_dir,
+                        runner=Path("runner.py"),
+                        project_root=Path("."),
+                        seen_bundle_ids=set(),
+                        poll_seconds=0.01,
+                        notify_enabled=False,
+                        notify_bundle=None,
+                        open_mode="dashboard_once",
+                        open_bundle=None,
+                        stop_event=AlreadyStopped(),
+                    )
+            finally:
+                handoffs.HANDOFF_DIR = original_handoff_dir
+
+            interrupted = json.loads(
+                (root / "interrupted" / "cmd-test.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(interrupted["status"], "interrupted")
+            self.assertFalse((pending_dir / "cmd-test.json").exists())
 
     def test_standalone_watcher_imports_shared_module(self) -> None:
         self.assertIs(standalone_watcher.bundle_watcher, bundle_watcher)

@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Callable
-from pathlib import Path
 
-from terminal_bridge.bundles import _find_command_bundle_by_request_key
 from terminal_bridge.config import (
     AUDIT_LOG,
     BACKUP_DIR,
     COMMAND_BUNDLE_APPLIED_DIR,
     COMMAND_BUNDLE_FAILED_DIR,
+    COMMAND_BUNDLE_INTERRUPTED_DIR,
     COMMAND_BUNDLE_PENDING_DIR,
     COMMAND_BUNDLE_REJECTED_DIR,
+    COMMAND_BUNDLE_RUNNING_DIR,
     HANDOFF_DIR,
     OPERATION_DIR,
     RUNTIME_ROOT,
@@ -19,7 +20,7 @@ from terminal_bridge.config import (
     TOOL_CALL_DIR,
     TRASH_DIR,
 )
-from terminal_bridge.models import CommandBundleStageResult, ToolCallStatusResult
+from terminal_bridge.models import ToolCallStatusResult
 from terminal_bridge.operations import _set_audit_callback as _set_operation_audit_callback
 from terminal_bridge.storage import _now_iso
 from terminal_bridge.tool_calls import (
@@ -38,9 +39,11 @@ def _ensure_runtime_dirs() -> None:
     TOOL_CALL_DIR.mkdir(parents=True, exist_ok=True)
     HANDOFF_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_PENDING_DIR.mkdir(parents=True, exist_ok=True)
+    COMMAND_BUNDLE_RUNNING_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_APPLIED_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_REJECTED_DIR.mkdir(parents=True, exist_ok=True)
     COMMAND_BUNDLE_FAILED_DIR.mkdir(parents=True, exist_ok=True)
+    COMMAND_BUNDLE_INTERRUPTED_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _audit(event: str, **data: object) -> None:
@@ -84,34 +87,20 @@ def _record_tool_call(tool_name: str, args: dict[str, object], action: Callable[
     _write_tool_call_completed(call_id, result)
     return result
 
+async def _record_tool_call_async(
+    tool_name: str,
+    args: dict[str, object],
+    action: Callable[[], object],
+) -> object:
+    """Journal an async-capable tool call after its final result is available."""
 
-def _command_bundle_stage_result(path: Path, record: dict[str, object]) -> CommandBundleStageResult:
-    bundle_id = str(record.get("bundle_id", path.stem))
-    steps = record.get("steps") if isinstance(record.get("steps"), list) else []
-    return CommandBundleStageResult(
-        bundle_id=bundle_id,
-        title=str(record.get("title", "")),
-        cwd=str(record.get("cwd", "")),
-        status=str(record.get("status", "unknown")),
-        risk=str(record.get("risk", "unknown")),
-        approval_required=bool(record.get("approval_required", False)),
-        path=str(path),
-        review_hint=f"uv run python scripts/command_bundle_runner.py preview {bundle_id}",
-        command_count=len(steps),
-    )
+    call_id = _write_tool_call_started(tool_name, args)
+    try:
+        pending_result = action()
+        result = await pending_result if inspect.isawaitable(pending_result) else pending_result
+    except BaseException as exc:
+        _write_tool_call_failed(call_id, exc)
+        raise
 
-
-def _dedupe_command_bundle(request_key: str, *, kind: str, title: str | None = None) -> CommandBundleStageResult | None:
-    existing = _find_command_bundle_by_request_key(request_key)
-    if existing is None:
-        return None
-
-    path, record = existing
-    _audit(
-        "dedupe_command_bundle",
-        request_key=request_key,
-        existing_bundle_id=str(record.get("bundle_id", path.stem)),
-        kind=kind,
-        requested_title=title,
-    )
-    return _command_bundle_stage_result(path, record)
+    _write_tool_call_completed(call_id, result)
+    return result

@@ -6,9 +6,9 @@
   <img src="assets/brand/ouroboros-by-KwakWooJae.png" alt="Ouroboros by KwakWooJae logo" width="220">
 </p>
 
-ChatGPT가 내 로컬 프로젝트를 바로 수정하지 않고, 변경 proposal을 만든 뒤 내가 localhost review UI에서 승인해야만 적용되게 해주는 로컬 MCP 브리지입니다.
+ChatGPT가 로컬 프로젝트를 직접 수정하는 대신 검토 가능한 proposal bundle을 만들고, 로컬 approval policy와 runner를 통해 안전하게 적용하도록 연결하는 MCP 브리지입니다.
 
-Ouroboros Workspace Bridge는 ChatGPT가 설정된 로컬 workspace를 살펴보고 파일 수정이나 명령 실행을 제안할 수 있게 해줍니다. 위험할 수 있는 작업은 바로 실행되지 않고 pending bundle로 올라오며, 사용자가 로컬 review UI에서 승인한 뒤에만 적용됩니다.
+Ouroboros Workspace Bridge는 ChatGPT가 설정된 로컬 workspace를 살펴보고 파일 수정이나 명령 실행을 제안할 수 있게 해줍니다. Mutation은 durable bundle로 기록되고 로컬 approval policy가 실행을 결정합니다. **Normal**은 사용자의 수동 승인 클릭을 요구하고, **Safe Auto**와 **YOLO**는 조건에 맞는 bundle을 클릭 없이 승인할 수 있습니다. 실제 runner는 실행 시점에 경로·명령을 다시 검증하고 backup/rollback과 최종 상태 기록을 수행합니다.
 
 Ouroboros by KwakWooJae의 일부입니다.
 
@@ -18,7 +18,7 @@ Ouroboros by KwakWooJae의 일부입니다.
 
 - ChatGPT가 설정된 `WORKSPACE_ROOT` 안의 로컬 프로젝트를 살펴볼 수 있습니다.
 - 파일 수정은 바로 적용되지 않고 검토 가능한 proposal로 만들어집니다.
-- 명령은 사용자가 로컬에서 승인한 뒤에만 실행됩니다.
+- 명령은 로컬 approval policy가 bundle을 승인한 뒤에만 실행됩니다. Normal은 수동 승인, Safe Auto/YOLO는 정책 기반 자동 승인을 사용할 수 있습니다.
 - 런타임 데이터는 repository 밖에 저장됩니다.
 - 공식 운영 흐름은 `uv run terminalbridge ...`이며, 저수준 진단에는 `uv run woojae ...`를 사용할 수 있습니다.
 
@@ -81,7 +81,7 @@ uv run terminalbridge setup-ui
 이 디렉토리의 구성을 간단히 보여주고, 어떤 종류의 프로젝트인지 요약해줘.
 ```
 
-로컬 review UI에서 예상한 pending bundle인지 확인한 뒤 승인하세요.
+기본 Normal 모드에서는 로컬 review UI에서 예상한 pending bundle인지 확인한 뒤 승인하세요. Safe Auto나 YOLO를 의도적으로 켠 상태라면 manual approval을 기다리지 말고 bundle의 `running`/terminal status를 확인하세요.
 
 로컬 세션 종료:
 
@@ -123,22 +123,27 @@ MCP tool이 바뀐 업데이트 후에는 ChatGPT app connector를 refresh/recon
 - 설정한 workspace를 대상으로 local MCP server가 실행됩니다.
 - localhost review UI가 열릴 준비가 됩니다.
 - ChatGPT custom app/connector에 넣을 token-protected MCP URL을 만들 수 있습니다.
-- Pending bundle은 `http://127.0.0.1:8790/pending`에서 검토합니다.
+- Pending 및 완료 bundle은 `http://127.0.0.1:8790/pending`과 history 화면에서 확인합니다.
+- 기본 ChatGPT connector는 canonical **31개 public MCP tool**을 노출하며 `workspace_info`와 smoke/schema check가 같은 manifest를 사용합니다.
 
 ## 동작 방식
 
 ```text
 ChatGPT
   -> Local MCP bridge
-  -> Pending bundle
-  -> Local review UI approval
-  -> File change or command
+  -> Durable bundle
+  -> Approval policy
+       Normal: 수동 review
+       Safe Auto / YOLO: 정책 기반 자동 승인
+  -> Atomic pending -> running claim
+  -> Local runner
+  -> applied / failed / interrupted
 ```
 
 ## 안전 모델
 
-- ChatGPT는 파일을 직접 수정하거나 명령을 직접 실행하지 않습니다.
-- 작고 예상 가능한 bundle만 승인하세요.
+- ChatGPT는 파일을 직접 수정하거나 명령을 직접 실행하지 않고 Bridge runtime에 proposal을 제출합니다.
+- 처음에는 Normal 모드를 사용하고 작고 예상 가능한 bundle만 승인하세요. Safe Auto나 YOLO를 켠 경우에는 해당 mode 자체가 조건에 맞는 pending bundle의 실행 승인으로 동작한다는 점을 전제로 사용하세요.
 - 관련 없는 수정, 테스트, 커밋, 예상 밖의 파일이 섞인 bundle은 거절하세요.
 - review UI는 localhost 전용으로 유지하세요.
 - ngrok이든 사용자 도메인이든 모든 공개 MCP endpoint를 외부에서 접근 가능한 token-protected URL로 취급하세요.
@@ -151,7 +156,7 @@ ChatGPT
 
 GitHub-hosted Ubuntu, macOS, Windows runner에서 unit test와 smoke test를 실행합니다. 플랫폼별 데스크톱 연동은 실제 대상 장비에서 추가 확인이 필요합니다.
 
-모든 플랫폼에서 공식 명령은 `uv run woojae ...`입니다. `scripts/dev_session.sh`와 `scripts/dev_session.ps1`은 기존 사용자를 위한 호환 wrapper입니다.
+모든 플랫폼에서 전체 연결 스택의 기본 운영 명령은 `uv run terminalbridge ...`입니다. `uv run woojae ...`는 저수준 진단·업데이트 인터페이스로 유지되며, `scripts/dev_session.sh`와 `scripts/dev_session.ps1`은 기존 사용자를 위한 호환 wrapper입니다.
 
 ## 문서
 
@@ -228,10 +233,15 @@ my-terminal-tool/
 
 핵심 구현 파일:
 
-- `server.py`: MCP tool 등록, public wrapper signature, tool-facing orchestration.
-- `terminal_bridge/mcp_tools/`: `server.py`가 사용하는 helper 모듈입니다. read-only inspection, proposal 조립, command-bundle status/wait 흐름, runtime status view 구현을 분리합니다. Public MCP tool 이름과 schema는 계속 `server.py`에 정의됩니다.
-- `scripts/command_bundle_review_server.py`: 로컬 HTTP review server route와 request handling.
-- `terminal_bridge/mcp_runtime.py`: audit log, tool-call journal wrapping, runtime directory, command-bundle result conversion을 위한 공통 MCP runtime helper.
+- `server.py`: MCP 등록, public wrapper signature, annotation, validation, thin adapter를 담당합니다.
+- `terminal_bridge/public_tools.py`: 기본 31개 public MCP tool의 canonical manifest와 annotation policy helper를 관리합니다.
+- `terminal_bridge/bundles.py`: atomic JSON persistence, request identity/index, generation signal, claim, transition, finalize를 담당하는 canonical filesystem bundle store입니다.
+- `terminal_bridge/bundle_service.py`: canonical store 위에서 stage/find/status/list/cancel orchestration을 담당합니다.
+- `terminal_bridge/mcp_tools/`: read-only inspection, proposal 조립, async wait/status, runtime status view helper를 분리합니다.
+- `scripts/command_bundle_review_server.py`: 로컬 HTTP review route, bundle view, approval mode, long-poll state update를 담당합니다.
+- `scripts/command_bundle_runner.py`: 검증된 단일 workspace cwd에서 실행하고 snapshot/backup/rollback과 terminal bundle finalization을 담당합니다.
+- `terminal_bridge/mcp_runtime.py`: audit log, async-aware tool-call journal, runtime directory setup을 위한 공통 MCP runtime helper입니다.
+- `terminal_bridge/operator_cli.py`: 전체 스택용 `terminalbridge` CLI, `terminal_bridge/cli.py`: 저수준 진단·업데이트용 `woojae` CLI이며 공통 primitive는 `terminal_bridge/cli_common.py`에서 공유합니다.
 - `terminal_bridge/review_layout.py`: review UI shell, navigation, shared CSS.
 - `terminal_bridge/review_intents.py`: 로컬 review UI의 signed intent token import parsing helper.
 

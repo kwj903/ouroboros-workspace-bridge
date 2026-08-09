@@ -77,7 +77,7 @@ def handoff_from_bundle_record(record: dict[str, object]) -> dict[str, object]:
         raise ValueError("bundle record is missing bundle_id.")
 
     status = str(record.get("status", "unknown"))
-    if status not in {"applied", "failed", "rejected"}:
+    if status not in {"applied", "failed", "interrupted", "rejected"}:
         raise ValueError(f"handoff requires a final bundle status, got: {status}")
 
     error = record.get("error")

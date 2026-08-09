@@ -14,6 +14,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from terminal_bridge import session_supervisor
 from terminal_bridge.public_access import PublicAccessConfigError
+from terminal_bridge.public_tools import DEFAULT_PUBLIC_MCP_TOOLS
 
 
 def redact_sensitive_text(value: str) -> str:
@@ -29,39 +30,7 @@ def format_command(command: list[str]) -> str:
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-EXPECTED_TOOLS = {
-    "workspace_project_snapshot",
-    "workspace_preview_patch",
-    "workspace_transport_probe",
-    "workspace_prepare_check_intent",
-    "workspace_prepare_commit_current_changes_intent",
-    "workspace_prepare_dev_session_intent",
-    "workspace_recover_last_activity",
-    "workspace_next_handoff",
-    "workspace_list_handoffs",
-    "workspace_list_tool_calls",
-    "workspace_tool_call_status",
-    "workspace_stage_text_payload",
-    "workspace_propose_command_and_wait",
-    "workspace_propose_file_write_and_wait",
-    "workspace_propose_file_replace_and_wait",
-    "workspace_propose_patch_and_wait",
-    "workspace_propose_git_commit_and_wait",
-    "workspace_propose_git_push_and_wait",
-    "workspace_command_bundle_status",
-    "workspace_wait_command_bundle_status",
-    "workspace_list_command_bundles",
-    "workspace_cancel_command_bundle",
-    "workspace_task_start",
-    "workspace_list_tasks",
-}
-
-DISALLOWED_TOOLS = {
-    "workspace_stage_command_bundle",
-    "workspace_stage_action_bundle",
-    "workspace_stage_patch_bundle",
-    "workspace_stage_commit_bundle",
-}
+EXPECTED_TOOLS = frozenset(DEFAULT_PUBLIC_MCP_TOOLS)
 
 
 def run_command(command: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess[str]:
@@ -133,11 +102,11 @@ def check_git_diff() -> None:
     require_success("git diff --check", result)
 
 
-async def call_workspace_info(
+async def call_public_tool_contract(
     base_url: str,
     token: str,
     timeout: int,
-) -> dict[str, object]:
+) -> tuple[dict[str, object], set[str]]:
     headers = {"Authorization": f"Bearer {token}"}
     async with streamablehttp_client(
         base_url,
@@ -147,6 +116,7 @@ async def call_workspace_info(
     ) as (read_stream, write_stream, _get_session_id):
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
+            listed = await session.list_tools()
             result = await session.call_tool("workspace_info", {})
 
     if result.isError:
@@ -154,26 +124,34 @@ async def call_workspace_info(
     structured = result.structuredContent
     if not isinstance(structured, dict):
         raise RuntimeError("workspace_info response did not include structuredContent.")
-    return structured
+    registered_tools = {str(tool.name) for tool in listed.tools}
+    return structured, registered_tools
+
+
+def _require_exact_tool_set(source: str, exposed_tools: set[str]) -> None:
+    missing = sorted(EXPECTED_TOOLS.difference(exposed_tools))
+    unexpected = sorted(exposed_tools.difference(EXPECTED_TOOLS))
+    if missing or unexpected:
+        raise RuntimeError(
+            f"{source} tool contract mismatch: missing={missing}, unexpected={unexpected}"
+        )
 
 
 def check_workspace_info(base_url: str, token: str, timeout: int) -> None:
-    structured = asyncio.run(call_workspace_info(base_url, token, timeout))
+    structured, registered_tools = asyncio.run(
+        call_public_tool_contract(base_url, token, timeout)
+    )
     tools = structured.get("tools")
     if not isinstance(tools, list):
         raise RuntimeError("workspace_info response did not include a tools list.")
 
-    exposed_tools = {str(tool) for tool in tools}
+    info_tools = {str(tool) for tool in tools}
+    _require_exact_tool_set("workspace_info", info_tools)
+    _require_exact_tool_set("MCP list_tools", registered_tools)
+    if info_tools != registered_tools:
+        raise RuntimeError("workspace_info and MCP list_tools disagree.")
 
-    missing = sorted(EXPECTED_TOOLS.difference(exposed_tools))
-    if missing:
-        raise RuntimeError(f"workspace_info is missing expected tools: {', '.join(missing)}")
-
-    exposed_disallowed = sorted(DISALLOWED_TOOLS.intersection(exposed_tools))
-    if exposed_disallowed:
-        raise RuntimeError(f"workspace_info exposed disallowed tools: {', '.join(exposed_disallowed)}")
-
-    print(f"workspace_info OK: {len(tools)} tools exposed")
+    print(f"public MCP contract OK: {len(tools)} tools exposed exactly")
 
 
 def main() -> int:

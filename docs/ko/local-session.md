@@ -10,7 +10,7 @@ cd ouroboros-workspace-bridge
 
 ## 권장 흐름
 
-공식 명령은 `uv run woojae ...`입니다. `scripts/dev_session.sh`와 `scripts/dev_session.ps1`은 기존 문서/자동화와 호환하기 위한 wrapper입니다.
+일반적인 전체 연결 스택 운영에는 `uv run terminalbridge ...`를 사용합니다. `uv run woojae ...`는 저수준 진단·업데이트용으로 유지하며, `scripts/dev_session.sh`와 `scripts/dev_session.ps1`은 기존 문서/자동화와 호환하기 위한 wrapper입니다.
 
 처음 한 번 설정합니다.
 
@@ -245,9 +245,11 @@ uv run terminalbridge mcp-url
 
 ## Approval mode
 
-- Normal: 기본값입니다. 모든 pending bundle을 직접 승인합니다.
-- Safe Auto: low-risk command-only bundle이 자동 승인될 수 있습니다. 일반 사용자에게는 Normal 또는 Safe Auto를 권장합니다.
-- YOLO: 신뢰할 수 있는 짧은 세션에서만 쓰세요. 켜둔 채 오래 사용하지 마세요.
+- **Normal**: 기본값입니다. 모든 pending mutation에 사용자의 수동 승인 클릭이 필요합니다.
+- **Safe Auto**: 조건에 맞는 low-risk command-only bundle만 자동 승인하고, 나머지는 manual review를 위해 pending으로 남깁니다.
+- **YOLO**: 승인 단계 올패스 모드입니다. 모든 유효한 pending bundle을 수동 승인 클릭 없이 runner로 보냅니다. 실행 시점 검증과 실제 command failure는 그대로 적용됩니다.
+
+처음에는 Normal을 사용하세요. Review 흐름을 충분히 이해한 뒤에만 Safe Auto를 사용하고, YOLO는 짧고 신뢰할 수 있는 개발 세션에서만 사용하세요.
 
 다음 경우 ChatGPT 앱의 MCP 연결을 refresh하세요.
 
@@ -259,17 +261,19 @@ uv run terminalbridge mcp-url
 권장 순서:
 
 ```bash
-uv run woojae restart mcp
+uv run terminalbridge restart
 uv run terminalbridge status
 ```
 
+그 다음 ChatGPT app의 MCP 연결을 refresh/reconnect합니다. Schema/annotation 변경이라면 live connector가 canonical 31개 default public tool을 노출하는지 확인합니다.
+
 ## 안전한 bundle 흐름
 
-1. ChatGPT가 pending bundle을 만듭니다.
-2. review UI에서 내용을 확인합니다.
-3. 작고 예상한 bundle만 승인합니다.
-4. 승인 후 bundle status를 확인합니다.
-5. 다음 작업으로 넘어갑니다.
+1. ChatGPT가 만든 bundle ID와 반환 status를 확인합니다.
+2. Normal에서 `pending`이면 review UI에서 내용을 확인하고 작고 예상한 bundle만 승인합니다.
+3. Safe Auto/YOLO에서 `running`으로 넘어갔다면 manual approval을 찾지 말고 terminal state를 wait/poll합니다.
+4. 필요하면 `workspace_command_bundle_status`로 최종 result를 확인합니다.
+5. 이전 bundle이 더 이상 `pending`/`running`이 아닐 때 다음 작업으로 넘어갑니다.
 
 파일 수정, 테스트, 커밋이 한 bundle에 섞여 있으면 승인하지 마세요.
 

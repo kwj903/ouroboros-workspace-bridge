@@ -10,12 +10,13 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import uuid4
 
 import server
 from scripts import command_bundle_runner as runner
 from terminal_bridge import bundles as bundle_store
-from terminal_bridge import config, payloads, safety, tool_calls
+from terminal_bridge import config, mcp_runtime, payloads, safety, tool_calls
 from terminal_bridge.models import IntentPreparationResult, RecoverySnapshotResult, TransportProbeResult
 
 
@@ -88,9 +89,11 @@ def isolate_runtime_storage(test_case: unittest.TestCase) -> Path:
     root = Path(runtime.name)
     bundle_dirs = {
         "COMMAND_BUNDLE_PENDING_DIR": root / "command_bundles" / "pending",
+        "COMMAND_BUNDLE_RUNNING_DIR": root / "command_bundles" / "running",
         "COMMAND_BUNDLE_APPLIED_DIR": root / "command_bundles" / "applied",
         "COMMAND_BUNDLE_REJECTED_DIR": root / "command_bundles" / "rejected",
         "COMMAND_BUNDLE_FAILED_DIR": root / "command_bundles" / "failed",
+        "COMMAND_BUNDLE_INTERRUPTED_DIR": root / "command_bundles" / "interrupted",
     }
     original_bundle_dirs = {name: getattr(bundle_store, name) for name in bundle_dirs}
     original_payload_dir = payloads.TEXT_PAYLOAD_DIR
@@ -114,6 +117,15 @@ def isolate_runtime_storage(test_case: unittest.TestCase) -> Path:
 
 
 class ToolSurfaceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.original_tool_call_dir = tool_calls.TOOL_CALL_DIR
+        self.tmp = tempfile.TemporaryDirectory()
+        tool_calls.TOOL_CALL_DIR = Path(self.tmp.name) / "tool_calls"
+
+    def tearDown(self) -> None:
+        tool_calls.TOOL_CALL_DIR = self.original_tool_call_dir
+        self.tmp.cleanup()
+
     def test_workspace_info_default_tool_list_is_bundle_first(self) -> None:
         original = server.MCP_EXPOSE_DIRECT_MUTATION_TOOLS
         server.MCP_EXPOSE_DIRECT_MUTATION_TOOLS = False
@@ -175,35 +187,33 @@ class ToolSurfaceTests(unittest.TestCase):
         self.assertIsNone(result.git_status)
         self.assertIsNone(result.git_status_summary)
 
-    def test_intent_tools_are_internal_helpers(self) -> None:
-        with open(server.__file__, encoding="utf-8") as handle:
-            source = handle.read()
-
+    def test_intent_tools_are_plain_internal_helpers(self) -> None:
         public_tools = set(server.workspace_info().tools)
+        registered_tools = {tool.name for tool in server.mcp._tool_manager.list_tools()}
+
+        self.assertFalse(hasattr(server, "_internal_tool"))
         for tool_name in INTENT_TOOLS:
             self.assertNotIn(tool_name, public_tools)
-            function_index = source.index(f"def {tool_name}(")
-            decorator_block = source[max(0, function_index - 260) : function_index]
-            self.assertIn("@_internal_tool(", decorator_block)
-            self.assertIn('"readOnlyHint": True', decorator_block)
-            self.assertIn('"destructiveHint": False', decorator_block)
-            self.assertIn('"idempotentHint": True', decorator_block)
-            self.assertIn('"openWorldHint": False', decorator_block)
+            self.assertNotIn(tool_name, registered_tools)
+            self.assertTrue(callable(getattr(server, tool_name)))
 
 
-class PatchBundleStagingTests(unittest.TestCase):
+class PatchBundleStagingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.runtime_root = isolate_runtime_storage(self)
         self.bundle_ids: list[str] = []
         self.payload_ids: list[str] = []
         self.original_audit = server._audit
+        self.original_runtime_audit = mcp_runtime._audit
         server._audit = lambda *args, **kwargs: None
+        mcp_runtime._audit = lambda *args, **kwargs: None
 
     def tearDown(self) -> None:
         server._audit = self.original_audit
+        mcp_runtime._audit = self.original_runtime_audit
 
         for bundle_id in self.bundle_ids:
-            for status in ("pending", "applied", "rejected", "failed"):
+            for status in ("pending", "running", "applied", "rejected", "failed", "interrupted"):
                 server._command_bundle_path(bundle_id, status).unlink(missing_ok=True)
 
         for payload_id in self.payload_ids:
@@ -263,15 +273,15 @@ class PatchBundleStagingTests(unittest.TestCase):
         self.assertNotIn("patch", step)
         self.assertEqual(step["files"], [patch_path])
 
-    def test_propose_command_bundle_records_default_metadata(self) -> None:
+    async def test_propose_command_bundle_records_default_metadata(self) -> None:
         original_wait_impl = server._workspace_wait_command_bundle_status_impl
 
-        def immediate_wait(bundle_id: str, timeout_seconds: int, poll_interval_seconds: float) -> server.CommandBundleStatusResult:
+        async def immediate_wait(bundle_id: str, timeout_seconds: int, poll_interval_seconds: float) -> server.CommandBundleStatusResult:
             return server._workspace_command_bundle_status_impl(bundle_id)
 
         server._workspace_wait_command_bundle_status_impl = immediate_wait
         try:
-            result = server.workspace_propose_command_and_wait(
+            result = await server.workspace_propose_command_and_wait(
                 title=f"Metadata command {uuid4().hex[:8]}",
                 cwd=self.project_cwd(),
                 argv=["git", "status", "--short"],
@@ -292,23 +302,23 @@ class PatchBundleStagingTests(unittest.TestCase):
         self.assertTrue(str(metadata["project_id"]).startswith("sha256:"))
         self.assertEqual(result.metadata, metadata)
 
-    def test_propose_command_bundle_records_explicit_metadata_and_keys_by_it(self) -> None:
+    async def test_propose_command_bundle_records_explicit_metadata_and_keys_by_it(self) -> None:
         original_wait_impl = server._workspace_wait_command_bundle_status_impl
 
-        def immediate_wait(bundle_id: str, timeout_seconds: int, poll_interval_seconds: float) -> server.CommandBundleStatusResult:
+        async def immediate_wait(bundle_id: str, timeout_seconds: int, poll_interval_seconds: float) -> server.CommandBundleStatusResult:
             return server._workspace_command_bundle_status_impl(bundle_id)
 
         server._workspace_wait_command_bundle_status_impl = immediate_wait
         try:
             title = f"Metadata keyed command {uuid4().hex[:8]}"
-            first = server.workspace_propose_command_and_wait(
+            first = await server.workspace_propose_command_and_wait(
                 title=title,
                 cwd=self.project_cwd(),
                 argv=["git", "status", "--short"],
                 timeout_seconds=1,
                 poll_interval_seconds=0.2,
             )
-            second = server.workspace_propose_command_and_wait(
+            second = await server.workspace_propose_command_and_wait(
                 title=title,
                 cwd=self.project_cwd(),
                 argv=["git", "status", "--short"],
@@ -391,7 +401,7 @@ class CommitBundleStagingTests(unittest.TestCase):
         server._audit = self.original_audit
 
         for bundle_id in self.bundle_ids:
-            for status in ("pending", "applied", "rejected", "failed"):
+            for status in ("pending", "running", "applied", "rejected", "failed", "interrupted"):
                 server._command_bundle_path(bundle_id, status).unlink(missing_ok=True)
 
     def project_cwd(self) -> str:
@@ -458,23 +468,26 @@ class CommitBundleStagingTests(unittest.TestCase):
             )
 
 
-class CommandBundleDedupeTests(unittest.TestCase):
+class CommandBundleDedupeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.runtime_root = isolate_runtime_storage(self)
         self.bundle_ids: list[str] = []
         self.original_audit = server._audit
+        self.original_runtime_audit = mcp_runtime._audit
         self.original_tool_call_dir = tool_calls.TOOL_CALL_DIR
         self.tmp_tool_calls = None
         server._audit = lambda *args, **kwargs: None
+        mcp_runtime._audit = lambda *args, **kwargs: None
 
     def tearDown(self) -> None:
         server._audit = self.original_audit
+        mcp_runtime._audit = self.original_runtime_audit
         tool_calls.TOOL_CALL_DIR = self.original_tool_call_dir
         if self.tmp_tool_calls is not None:
             self.tmp_tool_calls.cleanup()
 
         for bundle_id in self.bundle_ids:
-            for status in ("pending", "applied", "rejected", "failed"):
+            for status in ("pending", "running", "applied", "rejected", "failed", "interrupted"):
                 server._command_bundle_path(bundle_id, status).unlink(missing_ok=True)
 
     def project_cwd(self) -> str:
@@ -502,6 +515,147 @@ class CommandBundleDedupeTests(unittest.TestCase):
         self.assertTrue(str(record["request_key"]).startswith("sha256:"))
         self.assertEqual(record["request_key_version"], 1)
         self.assertIsNone(record["duplicate_of"])
+
+    def test_request_key_index_hit_skips_active_and_terminal_history_readers(self) -> None:
+        title = f"Indexed command {uuid4().hex[:8]}"
+        steps = [server.CommandBundleStep(name="status", argv=["git", "status", "--short"])]
+        staged = server.workspace_stage_command_bundle(title=title, cwd=self.project_cwd(), steps=steps)
+        self.bundle_ids.append(staged.bundle_id)
+        _, record = server._find_command_bundle(staged.bundle_id)
+        request_key = str(record["request_key"])
+
+        self.assertTrue(bundle_store._request_key_slot_path(request_key).exists())
+        with (
+            patch.object(
+                bundle_store,
+                "_scan_request_key_directories",
+                side_effect=AssertionError("active scan should not run on an index hit"),
+            ),
+            patch.object(
+                bundle_store,
+                "_scan_recent_terminal_bundles_by_request_key",
+                side_effect=AssertionError("terminal history should not run on an index hit"),
+            ),
+        ):
+            found = bundle_store._find_command_bundle_by_request_key(request_key)
+
+        self.assertIsNotNone(found)
+        assert found is not None
+        self.assertEqual(found[1]["bundle_id"], staged.bundle_id)
+
+    def test_request_key_index_miss_skips_terminal_history_when_no_terminal_rows_exist(self) -> None:
+        with patch.object(
+            bundle_store,
+            "_scan_recent_terminal_bundles_by_request_key",
+            side_effect=AssertionError("terminal history should not run on a normal empty miss"),
+        ) as terminal_reader:
+            found = bundle_store._find_command_bundle_by_request_key(f"sha256:{'f' * 64}")
+
+        self.assertIsNone(found)
+        terminal_reader.assert_not_called()
+
+    def test_missing_slot_self_heals_from_running_bundle_without_terminal_scan(self) -> None:
+        title = f"Running index repair {uuid4().hex[:8]}"
+        steps = [server.CommandBundleStep(name="status", argv=["git", "status", "--short"])]
+        staged = server.workspace_stage_command_bundle(title=title, cwd=self.project_cwd(), steps=steps)
+        self.bundle_ids.append(staged.bundle_id)
+        pending_path, record = server._find_command_bundle(staged.bundle_id)
+        request_key = str(record["request_key"])
+        running_path = bundle_store.COMMAND_BUNDLE_RUNNING_DIR / pending_path.name
+        pending_path.replace(running_path)
+        bundle_store._request_key_slot_path(request_key).unlink()
+
+        with patch.object(
+            bundle_store,
+            "_scan_recent_terminal_bundles_by_request_key",
+            side_effect=AssertionError("running repair must not scan terminal history"),
+        ) as terminal_reader:
+            found = bundle_store._find_command_bundle_by_request_key(request_key)
+
+        self.assertIsNotNone(found)
+        assert found is not None
+        self.assertEqual(found[0], running_path)
+        self.assertEqual(found[1]["status"], "running")
+        self.assertTrue(bundle_store._request_key_slot_path(request_key).exists())
+        terminal_reader.assert_not_called()
+
+    def test_terminal_compatibility_fallback_reads_a_bounded_window(self) -> None:
+        applied_dir = bundle_store.COMMAND_BUNDLE_APPLIED_DIR
+        for index in range(bundle_store.REQUEST_KEY_TERMINAL_FALLBACK_LIMIT + 20):
+            bundle_id = f"cmd-legacy-{index:04d}"
+            (applied_dir / f"{bundle_id}.json").write_text(
+                json.dumps(
+                    {
+                        "bundle_id": bundle_id,
+                        "status": "applied",
+                        "request_key": f"sha256:{index:064x}",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.bundle_ids.append(bundle_id)
+
+        with patch.object(bundle_store, "_read_json", wraps=bundle_store._read_json) as reader:
+            found = bundle_store._find_command_bundle_by_request_key(f"sha256:{'e' * 64}")
+
+        self.assertIsNone(found)
+        self.assertLessEqual(reader.call_count, bundle_store.REQUEST_KEY_TERMINAL_FALLBACK_LIMIT)
+
+    async def test_final_replay_is_default_and_retry_id_creates_one_new_attempt(self) -> None:
+        self.use_temp_tool_calls()
+        title = f"Retry command {uuid4().hex[:8]}"
+
+        async def immediate_wait(
+            bundle_id: str,
+            timeout_seconds: int,
+            poll_interval_seconds: float,
+        ) -> server.CommandBundleStatusResult:
+            return server._workspace_command_bundle_status_impl(bundle_id)
+
+        original_wait = server._workspace_wait_command_bundle_status_impl
+        server._workspace_wait_command_bundle_status_impl = immediate_wait
+        try:
+            first = await server.workspace_propose_command_and_wait(
+                title=title,
+                cwd=self.project_cwd(),
+                argv=["git", "status", "--short"],
+            )
+            self.bundle_ids.append(first.bundle_id)
+            with patch.object(bundle_store, "write_handoff_from_bundle", return_value=None):
+                bundle_store._move_command_bundle(first.bundle_id, "applied", {"result": {"ok": True}})
+            _, final_record = server._find_command_bundle(first.bundle_id)
+            final_request_key = str(final_record["request_key"])
+            bundle_store._request_key_slot_path(final_request_key).unlink()
+
+            replay = await server.workspace_propose_command_and_wait(
+                title=title,
+                cwd=self.project_cwd(),
+                argv=["git", "status", "--short"],
+            )
+            retry = await server.workspace_propose_command_and_wait(
+                title=title,
+                cwd=self.project_cwd(),
+                argv=["git", "status", "--short"],
+                retry_id="attempt-2",
+            )
+            retry_replay = await server.workspace_propose_command_and_wait(
+                title=title,
+                cwd=self.project_cwd(),
+                argv=["git", "status", "--short"],
+                retry_id="attempt-2",
+            )
+        finally:
+            server._workspace_wait_command_bundle_status_impl = original_wait
+
+        self.bundle_ids.append(retry.bundle_id)
+        self.assertEqual(replay.bundle_id, first.bundle_id)
+        self.assertEqual(replay.status, "applied")
+        self.assertTrue(bundle_store._request_key_slot_path(final_request_key).exists())
+        self.assertNotEqual(retry.bundle_id, first.bundle_id)
+        self.assertEqual(retry.status, "pending")
+        self.assertEqual(retry_replay.bundle_id, retry.bundle_id)
+        _, retry_record = server._find_command_bundle(retry.bundle_id)
+        self.assertEqual(retry_record["metadata"]["retry_id"], "attempt-2")
 
     def test_action_bundle_duplicate_returns_same_bundle_without_new_file(self) -> None:
         title = f"Dedupe action {uuid4().hex[:8]}"
@@ -567,11 +721,11 @@ class CommandBundleDedupeTests(unittest.TestCase):
         self.assertEqual(after_first_count, before_count + 1)
         self.assertEqual(after_second_count, after_first_count)
 
-    def test_wrapper_benefits_from_stage_dedupe(self) -> None:
+    async def test_wrapper_benefits_from_stage_dedupe(self) -> None:
         title = f"Dedupe wrapper {uuid4().hex[:8]}"
         steps = [server.CommandBundleStep(name="status", argv=["git", "status", "--short"])]
 
-        first = server.workspace_stage_command_bundle_and_wait(
+        first = await server.workspace_stage_command_bundle_and_wait(
             title=title,
             cwd=self.project_cwd(),
             steps=steps,
@@ -579,7 +733,7 @@ class CommandBundleDedupeTests(unittest.TestCase):
             poll_interval_seconds=0.2,
         )
         self.bundle_ids.append(first.bundle_id)
-        second = server.workspace_stage_command_bundle_and_wait(
+        second = await server.workspace_stage_command_bundle_and_wait(
             title=title,
             cwd=self.project_cwd(),
             steps=steps,
@@ -694,7 +848,7 @@ class IntentFlowTests(unittest.TestCase):
             self.tmp.cleanup()
 
         for bundle_id in self.bundle_ids:
-            for status in ("pending", "applied", "rejected", "failed"):
+            for status in ("pending", "running", "applied", "rejected", "failed", "interrupted"):
                 server._command_bundle_path(bundle_id, status).unlink(missing_ok=True)
 
     def use_temp_runtime_bits(self) -> None:

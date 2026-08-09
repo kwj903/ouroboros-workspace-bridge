@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import contextlib
+import concurrent.futures
 import io
 import json
+import os
 import subprocess
+import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 from uuid import uuid4
 
 from scripts import command_bundle_runner as runner
+from terminal_bridge import handoffs
 
 
 class ActionBundleAtomicApplyTests(unittest.TestCase):
@@ -26,22 +32,28 @@ class ActionBundleAtomicApplyTests(unittest.TestCase):
             "RUNTIME_ROOT": runner.RUNTIME_ROOT,
             "COMMAND_BUNDLES_DIR": runner.COMMAND_BUNDLES_DIR,
             "PENDING_DIR": runner.PENDING_DIR,
+            "RUNNING_DIR": runner.RUNNING_DIR,
             "APPLIED_DIR": runner.APPLIED_DIR,
             "REJECTED_DIR": runner.REJECTED_DIR,
             "FAILED_DIR": runner.FAILED_DIR,
+            "INTERRUPTED_DIR": runner.INTERRUPTED_DIR,
             "BACKUP_DIR": runner.BACKUP_DIR,
             "TEXT_PAYLOAD_DIR": runner.TEXT_PAYLOAD_DIR,
+            "HANDOFF_DIR": handoffs.HANDOFF_DIR,
         }
 
         runner.WORKSPACE_ROOT = self.workspace_root
         runner.RUNTIME_ROOT = self.runtime_root
         runner.COMMAND_BUNDLES_DIR = self.runtime_root / "command_bundles"
         runner.PENDING_DIR = runner.COMMAND_BUNDLES_DIR / "pending"
+        runner.RUNNING_DIR = runner.COMMAND_BUNDLES_DIR / "running"
         runner.APPLIED_DIR = runner.COMMAND_BUNDLES_DIR / "applied"
         runner.REJECTED_DIR = runner.COMMAND_BUNDLES_DIR / "rejected"
         runner.FAILED_DIR = runner.COMMAND_BUNDLES_DIR / "failed"
+        runner.INTERRUPTED_DIR = runner.COMMAND_BUNDLES_DIR / "interrupted"
         runner.BACKUP_DIR = self.runtime_root / "command_bundle_file_backups"
         runner.TEXT_PAYLOAD_DIR = self.runtime_root / "text_payloads"
+        handoffs.HANDOFF_DIR = self.runtime_root / "handoffs"
 
         for directory in runner.bundle_dirs():
             directory.mkdir(parents=True, exist_ok=True)
@@ -56,7 +68,10 @@ class ActionBundleAtomicApplyTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         for name, value in self.original_paths.items():
-            setattr(runner, name, value)
+            if name == "HANDOFF_DIR":
+                handoffs.HANDOFF_DIR = value
+            else:
+                setattr(runner, name, value)
         self.tmp.cleanup()
 
     def run_git(self, args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -91,9 +106,9 @@ class ActionBundleAtomicApplyTests(unittest.TestCase):
         runner.write_json(runner.PENDING_DIR / f"{bundle_id}.json", record)
         return bundle_id
 
-    def apply_bundle(self, bundle_id: str) -> None:
+    def apply_bundle(self, bundle_id: str) -> bool:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            runner.apply_bundle(bundle_id, yes=True)
+            return runner.apply_bundle(bundle_id, yes=True)
 
     def failed_record(self, bundle_id: str) -> dict[str, object]:
         return json.loads((runner.FAILED_DIR / f"{bundle_id}.json").read_text(encoding="utf-8"))
@@ -245,6 +260,122 @@ class ActionBundleAtomicApplyTests(unittest.TestCase):
         record = self.applied_record(bundle_id)
         self.assertTrue(record["result"]["ok"])
         self.assertEqual(self.readme.read_text(encoding="utf-8"), "changed\n")
+
+    def test_concurrent_runner_attempts_execute_bundle_once(self) -> None:
+        bundle_id = self.write_action_bundle(
+            [
+                {
+                    "type": "command",
+                    "name": "Count execution",
+                    "argv": ["git", "status", "--short"],
+                    "risk": "low",
+                }
+            ]
+        )
+        start = threading.Barrier(3)
+        counter_lock = threading.Lock()
+        execution_count = 0
+
+        def fake_apply_step(_cwd: Path, _step: dict[str, object]) -> dict[str, object]:
+            nonlocal execution_count
+            with counter_lock:
+                execution_count += 1
+            return {
+                "type": "command",
+                "name": "Count execution",
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": "",
+                "truncated": False,
+            }
+
+        def run_once() -> bool | str:
+            start.wait()
+            try:
+                return runner.apply_bundle(bundle_id, yes=True)
+            except SystemExit as exc:
+                return str(exc)
+
+        with mock.patch.object(runner, "apply_step", side_effect=fake_apply_step):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(run_once) for _ in range(2)]
+                start.wait()
+                outcomes = [future.result(timeout=5) for future in futures]
+
+        self.assertEqual(execution_count, 1)
+        self.assertEqual(outcomes.count(True), 1)
+        self.assertEqual(len([value for value in outcomes if isinstance(value, str)]), 1)
+        self.assertTrue((runner.APPLIED_DIR / f"{bundle_id}.json").exists())
+        self.assertFalse((runner.RUNNING_DIR / f"{bundle_id}.json").exists())
+
+    def test_interrupted_execution_is_terminal_and_not_replayed(self) -> None:
+        bundle_id = self.write_action_bundle(
+            [
+                {
+                    "type": "command",
+                    "name": "Interrupt",
+                    "argv": ["git", "status"],
+                    "risk": "low",
+                }
+            ]
+        )
+
+        with mock.patch.object(runner, "apply_step", side_effect=KeyboardInterrupt):
+            applied = self.apply_bundle(bundle_id)
+
+        self.assertFalse(applied)
+        record = json.loads(
+            (runner.INTERRUPTED_DIR / f"{bundle_id}.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(record["status"], "interrupted")
+        self.assertFalse(record["recovery"]["automatic_replay"])
+        self.assertFalse((runner.PENDING_DIR / f"{bundle_id}.json").exists())
+        self.assertFalse((runner.RUNNING_DIR / f"{bundle_id}.json").exists())
+
+    def test_main_exits_nonzero_when_apply_persists_failure(self) -> None:
+        with mock.patch.object(runner, "apply_bundle", return_value=False):
+            with mock.patch.object(sys, "argv", ["command_bundle_runner.py", "apply", "cmd-test", "--yes"]):
+                with self.assertRaises(SystemExit) as raised:
+                    runner.main()
+
+        self.assertEqual(raised.exception.code, 1)
+
+    def test_failed_runner_process_exits_nonzero_and_persists_failed_status(self) -> None:
+        bundle_id = self.write_action_bundle(
+            [
+                {
+                    "type": "command",
+                    "name": "Expected failure",
+                    "argv": ["git", "rev-parse", "--verify", "refs/heads/definitely-missing"],
+                    "risk": "low",
+                }
+            ]
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                "MCP_TERMINAL_BRIDGE_RUNTIME_ROOT": str(self.runtime_root),
+                "WORKSPACE_ROOT": str(self.workspace_root),
+                "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+            }
+        )
+
+        completed = subprocess.run(
+            [sys.executable, str(Path(runner.__file__)), "apply", bundle_id, "--yes"],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        failed = self.failed_record(bundle_id)
+        self.assertEqual(failed["status"], "failed")
+        self.assertFalse(failed["result"]["ok"])
 
 
 if __name__ == "__main__":

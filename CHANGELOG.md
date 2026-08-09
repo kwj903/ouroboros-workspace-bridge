@@ -4,6 +4,18 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 ## Unreleased
 
+### Added
+
+- Public `workspace_propose_*_and_wait` tools accept an optional `retry_id`; omitting it preserves final-result idempotent replay, while a new value creates one deliberate new attempt without changing task, client, session, or project identity.
+
+### Changed
+
+- Bundle lifecycle changes now publish a compact atomic generation token, review long-polling avoids whole-history JSON parsing, and request-key deduplication uses rebuildable filesystem slots with bounded legacy fallback.
+- Public bundle waits and proposal wrappers now await non-blocking async polling, including async-aware tool-call completion, cancellation, and failure journaling.
+- Bundle persistence/transition logic is centralized behind a filesystem store plus a focused `BundleService`; new runner executions use one validated workspace `cwd` and no longer emit retired worktree-routing identity fields.
+- The canonical 31-tool public MCP manifest now drives `workspace_info` and smoke/schema checks, and runtime-mutating proposal/payload/cancel tools advertise non-read-only annotations that reflect YOLO auto-execution semantics.
+- `terminalbridge` remains the normal full-stack operator CLI while `woojae` remains the lower-level diagnostic/update CLI; their shared version rendering now uses one common helper.
+
 ## 0.6.0 - 2026-08-07
 
 ### Changed

@@ -28,8 +28,12 @@ build-backend = "setuptools.build_meta"
 include = ["terminal_bridge*"]
 
 [tool.ruff.lint.per-file-ignores]
+# Standalone scripts bootstrap PROJECT_ROOT onto sys.path before importing terminal_bridge.
 "scripts/command_bundle_review_server.py" = ["E402"]
 "scripts/command_bundle_runner.py" = ["E402"]
+"scripts/command_bundle_watcher.py" = ["E402"]
+"scripts/focus_review_url.py" = ["E402"]
+"scripts/update_version_info.py" = ["E402"]
 
 [dependency-groups]
 dev = [

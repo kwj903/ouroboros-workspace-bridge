@@ -33,8 +33,9 @@ Use this checklist after the first setup:
 2. `http://127.0.0.1:8790/pending` opens locally.
 3. `uv run terminalbridge copy-url` or `uv run terminalbridge mcp-url` returns the expected MCP URL information.
 4. The ChatGPT custom app uses the current MCP server URL.
-5. Asking ChatGPT for a brief overview of the target workspace directory creates a pending bundle.
-6. Approving that bundle shows a result in the review UI history.
+5. Asking ChatGPT for a brief overview of the target workspace directory creates a bundle. In Normal it should usually remain `pending`; Safe Auto/YOLO may move it to `running` or a terminal state immediately.
+6. Resolve the bundle according to the active approval mode and confirm a terminal result in review/history.
+7. After connector refresh/reconnect, confirm the default MCP surface is the canonical 31-tool set reported by `workspace_info`.
 
 If one step fails, troubleshoot that step first instead of repeating the full setup.
 

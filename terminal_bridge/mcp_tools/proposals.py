@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from terminal_bridge.models import (
     CommandBundleAction,
@@ -13,19 +13,19 @@ MetadataInput = dict[str, object] | None
 
 StageCommandAndWait = Callable[
     [str, str, list[CommandBundleStep], int, float, MetadataInput],
-    CommandBundleStatusResult,
+    Awaitable[CommandBundleStatusResult],
 ]
 StageActionAndWait = Callable[
     [str, str, list[CommandBundleAction], int, float, MetadataInput],
-    CommandBundleStatusResult,
+    Awaitable[CommandBundleStatusResult],
 ]
 StagePatchAndWait = Callable[
     [str, str, str | None, str | None, int, float, MetadataInput],
-    CommandBundleStatusResult,
+    Awaitable[CommandBundleStatusResult],
 ]
 StageCommitAndWait = Callable[
     [str, list[str], str, int, float, MetadataInput],
-    CommandBundleStatusResult,
+    Awaitable[CommandBundleStatusResult],
 ]
 
 
@@ -102,7 +102,7 @@ def git_push_proposal(
     return safe_remote, safe_branch, title, step
 
 
-def command_proposal_and_wait(
+async def command_proposal_and_wait(
     stage_command_and_wait: StageCommandAndWait,
     title: str,
     cwd: str,
@@ -111,7 +111,7 @@ def command_proposal_and_wait(
     poll_interval_seconds: float,
     metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
-    return stage_command_and_wait(
+    return await stage_command_and_wait(
         title,
         cwd,
         [step],
@@ -121,7 +121,7 @@ def command_proposal_and_wait(
     )
 
 
-def action_proposal_and_wait(
+async def action_proposal_and_wait(
     stage_action_and_wait: StageActionAndWait,
     title: str,
     cwd: str,
@@ -130,7 +130,7 @@ def action_proposal_and_wait(
     poll_interval_seconds: float,
     metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
-    return stage_action_and_wait(
+    return await stage_action_and_wait(
         title,
         cwd,
         [action],
@@ -140,7 +140,7 @@ def action_proposal_and_wait(
     )
 
 
-def patch_proposal_and_wait(
+async def patch_proposal_and_wait(
     stage_patch_and_wait: StagePatchAndWait,
     title: str,
     cwd: str,
@@ -150,7 +150,7 @@ def patch_proposal_and_wait(
     poll_interval_seconds: float,
     metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
-    return stage_patch_and_wait(
+    return await stage_patch_and_wait(
         title,
         cwd,
         patch,
@@ -161,7 +161,7 @@ def patch_proposal_and_wait(
     )
 
 
-def commit_proposal_and_wait(
+async def commit_proposal_and_wait(
     stage_commit_and_wait: StageCommitAndWait,
     cwd: str,
     paths: list[str],
@@ -170,7 +170,7 @@ def commit_proposal_and_wait(
     poll_interval_seconds: float,
     metadata: MetadataInput = None,
 ) -> CommandBundleStatusResult:
-    return stage_commit_and_wait(
+    return await stage_commit_and_wait(
         cwd,
         paths,
         message,

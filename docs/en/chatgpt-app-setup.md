@@ -119,7 +119,7 @@ Use this workspace directory: /path/to/your/project
 Show me a brief overview of this directory's structure and tell me what kind of project it looks like.
 ```
 
-When the expected command bundle appears in the review UI, inspect it and approve it.
+With the default Normal mode, inspect the expected pending bundle in the review UI and approve it. If Safe Auto or YOLO is intentionally enabled, the bundle may already be `running` or final, so verify its status/history instead.
 
 ## Common issues
 
@@ -161,6 +161,7 @@ Then confirm:
 - the ngrok URL has not changed, or the Cloudflare/external connector currently targets the intended computer.
 - the ChatGPT app's MCP server URL has been updated to the current URL.
 - `http://127.0.0.1:8790/pending` opens locally.
+- after reconnect/refresh, the default connector exposes the canonical **31-tool** surface. `workspace_info` should report the same set used by smoke/schema checks.
 
 ## Related docs
 

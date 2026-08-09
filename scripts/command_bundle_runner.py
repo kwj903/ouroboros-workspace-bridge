@@ -4,11 +4,9 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
-import json
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,58 +16,55 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from terminal_bridge.commands import _classify_exec_command, _safe_env as safe_env, _validate_exec_argv
+from terminal_bridge.bundles import (
+    BundleClaimError,
+    _claim_pending_command_bundle,
+    _find_command_bundle,
+    _finalize_running_command_bundle,
+    _move_command_bundle,
+    _reject_pending_command_bundle,
+)
 from terminal_bridge.config import (
     BLOCKED_DIR_NAMES,
     BLOCKED_FILE_PATTERNS,
+    COMMAND_BUNDLE_APPLIED_DIR,
+    COMMAND_BUNDLE_FAILED_DIR,
+    COMMAND_BUNDLE_INTERRUPTED_DIR,
+    COMMAND_BUNDLE_PENDING_DIR,
+    COMMAND_BUNDLE_REJECTED_DIR,
+    COMMAND_BUNDLE_RUNNING_DIR,
     MAX_STDERR_CHARS,
     MAX_STDOUT_CHARS,
     RUNTIME_ROOT,
     TEXT_PAYLOAD_MAX_TOTAL_CHARS,
     WORKSPACE_ROOT,
 )
-from terminal_bridge.handoffs import write_handoff_from_bundle
+from terminal_bridge.storage import _now_iso, _read_json, _write_json_atomic
 from terminal_bridge.truncation import truncate_text
 
 COMMAND_BUNDLES_DIR = RUNTIME_ROOT / "command_bundles"
-PENDING_DIR = COMMAND_BUNDLES_DIR / "pending"
-APPLIED_DIR = COMMAND_BUNDLES_DIR / "applied"
-REJECTED_DIR = COMMAND_BUNDLES_DIR / "rejected"
-FAILED_DIR = COMMAND_BUNDLES_DIR / "failed"
+PENDING_DIR = COMMAND_BUNDLE_PENDING_DIR
+RUNNING_DIR = COMMAND_BUNDLE_RUNNING_DIR
+APPLIED_DIR = COMMAND_BUNDLE_APPLIED_DIR
+REJECTED_DIR = COMMAND_BUNDLE_REJECTED_DIR
+FAILED_DIR = COMMAND_BUNDLE_FAILED_DIR
+INTERRUPTED_DIR = COMMAND_BUNDLE_INTERRUPTED_DIR
 BACKUP_DIR = RUNTIME_ROOT / "command_bundle_file_backups"
 TEXT_PAYLOAD_DIR = RUNTIME_ROOT / "text_payloads"
 
 
-@dataclass(frozen=True)
-class RunnerWorkspace:
-    source_root: Path
-    apply_root: Path
-    source_cwd: Path
-    apply_cwd: Path
-    reason: str = "direct"
-
-    def as_result(self) -> dict[str, Any]:
-        return {
-            "workspace_mode": "direct",
-            "source_cwd": _source_relative(self.source_cwd),
-            "actual_cwd": str(self.apply_cwd),
-            "reason": self.reason,
-        }
-
-
-_ACTIVE_RUNNER_WORKSPACE: RunnerWorkspace | None = None
-
-
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    """Compatibility alias for tests and older runner integrations."""
+
+    return _now_iso()
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return _read_json(path)
 
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_json_atomic(path, data, trailing_newline=True)
 
 
 def normalize_text_payload_id(payload_id: str) -> str:
@@ -146,15 +141,11 @@ def text_source_preview(step: dict[str, Any], key: str) -> str:
 
 
 def bundle_dirs() -> list[Path]:
-    return [PENDING_DIR, APPLIED_DIR, REJECTED_DIR, FAILED_DIR]
+    return [RUNNING_DIR, PENDING_DIR, APPLIED_DIR, REJECTED_DIR, FAILED_DIR, INTERRUPTED_DIR]
 
 
 def find_bundle(bundle_id: str) -> tuple[Path, dict[str, Any]]:
-    for directory in bundle_dirs():
-        path = directory / f"{bundle_id}.json"
-        if path.exists():
-            return path, read_json(path)
-    raise FileNotFoundError(f"Bundle not found: {bundle_id}")
+    return _find_command_bundle(bundle_id, directories=bundle_dirs())
 
 
 def truncate(value: str, limit: int) -> tuple[str, bool]:
@@ -165,56 +156,30 @@ def is_blocked_name(name: str) -> bool:
     return any(fnmatch.fnmatch(name, pattern) for pattern in BLOCKED_FILE_PATTERNS)
 
 
-def _source_relative(path: Path) -> str:
+def relative(path: Path) -> str:
     resolved = path.resolve(strict=False)
-    if resolved == WORKSPACE_ROOT:
+    workspace_root = WORKSPACE_ROOT.resolve(strict=False)
+    if resolved == workspace_root:
         return "."
-    return str(resolved.relative_to(WORKSPACE_ROOT))
+    return str(resolved.relative_to(workspace_root))
 
 
-def _resolve_source_cwd(cwd: str) -> Path:
+def resolve_cwd(cwd: str) -> Path:
     raw = Path(cwd)
     if raw.is_absolute() or ".." in raw.parts:
         raise ValueError("cwd must be a relative path under WORKSPACE_ROOT")
 
-    target = (WORKSPACE_ROOT / raw).resolve(strict=False)
-    if target != WORKSPACE_ROOT and not target.is_relative_to(WORKSPACE_ROOT):
-        raise ValueError(f"cwd escapes WORKSPACE_ROOT: {WORKSPACE_ROOT}")
-    if not target.exists() or not target.is_dir():
-        raise NotADirectoryError(f"cwd does not exist or is not a directory: {cwd}")
-
-    return target
-
-
-def resolve_runner_workspace(record: dict[str, Any]) -> RunnerWorkspace:
     workspace_root = WORKSPACE_ROOT.resolve(strict=False)
-    source_cwd = _resolve_source_cwd(str(record.get("cwd", ".")))
-    return RunnerWorkspace(
-        source_root=workspace_root,
-        apply_root=workspace_root,
-        source_cwd=source_cwd,
-        apply_cwd=source_cwd,
-        reason="direct",
-    )
-
-
-def resolve_bundle_apply_cwd(record: dict[str, Any]) -> Path:
-    return resolve_runner_workspace(record).apply_cwd
-
-
-def _map_source_path_for_apply(source_path: Path) -> Path:
-    return source_path
-
-
-def resolve_cwd(cwd: str) -> Path:
-    source_target = _resolve_source_cwd(cwd)
-    target = _map_source_path_for_apply(source_target)
+    target = (workspace_root / raw).resolve(strict=False)
+    if target != workspace_root and not target.is_relative_to(workspace_root):
+        raise ValueError(f"cwd escapes WORKSPACE_ROOT: {workspace_root}")
     if not target.exists() or not target.is_dir():
         raise NotADirectoryError(f"cwd does not exist or is not a directory: {cwd}")
+
     return target
 
 
-def _resolve_source_file_path(raw_path: str) -> Path:
+def resolve_file_path(raw_path: str) -> Path:
     raw = Path(raw_path)
     if raw.is_absolute() or raw_path.startswith("~") or ".." in raw.parts:
         raise ValueError(f"unsafe file action path: {raw_path}")
@@ -233,10 +198,6 @@ def _resolve_source_file_path(raw_path: str) -> Path:
         raise PermissionError(f"file action touches blocked file: {raw_path}")
 
     return target
-
-
-def resolve_file_path(raw_path: str) -> Path:
-    return _map_source_path_for_apply(_resolve_source_file_path(raw_path))
 
 
 def clean_patch_path(raw_path: str) -> str | None:
@@ -364,10 +325,6 @@ def step_patch_paths(step: dict[str, Any], patch: str) -> list[str]:
     return extract_patch_paths(patch)
 
 
-def relative(path: Path) -> str:
-    return _source_relative(path)
-
-
 def backup_file(path: Path) -> str | None:
     if not path.exists() or not path.is_file():
         return None
@@ -410,13 +367,11 @@ def action_step_targets(steps: list[Any]) -> list[Path]:
 
 def snapshot_action_targets(cwd: Path, steps: list[Any]) -> list[dict[str, Any]]:
     snapshots: list[dict[str, Any]] = []
-    route = _ACTIVE_RUNNER_WORKSPACE
-    fallback_stop_at = route.apply_root if route is not None else WORKSPACE_ROOT
 
     for target in action_step_targets(steps):
         existed = target.exists()
         content = target.read_bytes() if existed and target.is_file() else None
-        stop_at = cwd if target == cwd or target.is_relative_to(cwd) else fallback_stop_at
+        stop_at = cwd if target == cwd or target.is_relative_to(cwd) else WORKSPACE_ROOT
 
         snapshots.append(
             {
@@ -492,20 +447,20 @@ def action_failure_message(
 
 
 def move_bundle(source: Path, record: dict[str, Any], status: str) -> None:
-    target = {
-        "applied": APPLIED_DIR,
-        "rejected": REJECTED_DIR,
-        "failed": FAILED_DIR,
-    }[status] / source.name
+    """Compatibility adapter for callers that still pass a loaded runner record."""
 
-    record["status"] = status
-    record["updated_at"] = now_iso()
-    write_json(target, record)
-    if status in {"applied", "failed", "rejected"}:
-        write_handoff_from_bundle(record)
-
-    if source != target and source.exists():
-        source.unlink()
+    bundle_id = str(record.get("bundle_id", source.stem))
+    updates = {
+        key: value
+        for key, value in record.items()
+        if key not in {"status", "updated_at"}
+    }
+    _move_command_bundle(
+        bundle_id,
+        status,
+        updates,
+        directories=bundle_dirs(),
+    )
 
 
 def list_bundles() -> None:
@@ -522,7 +477,7 @@ def list_bundles() -> None:
                 (
                     str(record.get("updated_at", "")),
                     str(record.get("bundle_id", path.stem)),
-                    str(record.get("status", directory.name)),
+                    directory.name,
                     str(record.get("risk", "")),
                     str(record.get("title", "")),
                 )
@@ -562,11 +517,11 @@ def preview(bundle_id: str) -> None:
             print(f"   argv: {raw_step.get('argv')}")
             print(f"   timeout: {raw_step.get('timeout_seconds')}")
         elif kind == "apply_patch":
-            print(f"   cwd: {raw_step.get('cwd', record.get('cwd'))}")
+            print(f"   cwd: {record.get('cwd')}")
             print(f"   patch source: {text_source_preview(raw_step, 'patch')}")
             print(f"   files: {raw_step.get('files')}")
             try:
-                step_cwd = resolve_cwd(str(raw_step.get("cwd", record.get("cwd", "."))))
+                step_cwd = resolve_cwd(str(record.get("cwd", ".")))
                 patch = step_text(raw_step, "patch")
                 if not raw_step.get("patch_ref"):
                     patch_preview, _ = truncate(patch, 1000)
@@ -596,13 +551,23 @@ def preview(bundle_id: str) -> None:
 
 
 def reject(bundle_id: str) -> None:
-    path, record = find_bundle(bundle_id)
+    _path, record = find_bundle(bundle_id)
     if record.get("status") != "pending":
         raise SystemExit(f"Only pending bundles can be rejected. Current: {record.get('status')}")
 
-    record["error"] = "Rejected by local command_bundle_runner."
-    record["result"] = None
-    move_bundle(path, record, "rejected")
+    try:
+        _reject_pending_command_bundle(
+            bundle_id,
+            {
+                "error": "Rejected by local command_bundle_runner.",
+                "result": None,
+            },
+            pending_dir=PENDING_DIR,
+            running_dir=RUNNING_DIR,
+            rejected_dir=REJECTED_DIR,
+        )
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     print(f"rejected {bundle_id}")
 
 
@@ -732,7 +697,6 @@ def apply_replace_text(step: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply_patch_step(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
-    step_cwd = resolve_cwd(str(step.get("cwd", relative(cwd))))
     patch = step_text(step, "patch")
     expected_sha256 = step.get("patch_sha256")
     patch_sha256 = hashlib.sha256(patch.encode("utf-8")).hexdigest()
@@ -741,28 +705,28 @@ def apply_patch_step(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("patch_sha256 does not match patch content.")
 
     patch_paths = step_patch_paths(step, patch)
-    validate_patch_paths(step_cwd, patch_paths)
+    validate_patch_paths(cwd, patch_paths)
 
-    check = run_git_apply(step_cwd, ["--check"], patch)
+    check = run_git_apply(cwd, ["--check"], patch)
     if check["exit_code"] != 0:
         raise RuntimeError(f"git apply --check failed: {check['stderr'] or check['stdout']}")
 
     backup_ids: dict[str, str | None] = {}
     for patch_path in patch_paths:
-        workspace_path = resolve_patch_path(step_cwd, patch_path)
+        workspace_path = resolve_patch_path(cwd, patch_path)
         if workspace_path.exists() and workspace_path.is_file():
             backup_ids[patch_path] = backup_file(workspace_path)
         else:
             backup_ids[patch_path] = None
 
-    applied = run_git_apply(step_cwd, [], patch)
+    applied = run_git_apply(cwd, [], patch)
     if applied["exit_code"] != 0:
         raise RuntimeError(f"git apply failed: {applied['stderr'] or applied['stdout']}")
 
     return {
         "type": "apply_patch",
         "name": step.get("name"),
-        "cwd": relative(step_cwd),
+        "cwd": relative(cwd),
         "files": patch_paths,
         "exit_code": applied["exit_code"],
         "stdout": applied["stdout"],
@@ -792,10 +756,8 @@ def apply_step(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
     raise ValueError(f"unsupported step type: {kind}")
 
 
-def apply_bundle(bundle_id: str, yes: bool) -> None:
-    global _ACTIVE_RUNNER_WORKSPACE
-
-    path, record = find_bundle(bundle_id)
+def apply_bundle(bundle_id: str, yes: bool) -> bool:
+    _path, record = find_bundle(bundle_id)
     if record.get("status") != "pending":
         raise SystemExit(f"Only pending bundles can be applied. Current: {record.get('status')}")
 
@@ -805,6 +767,15 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
         answer = input("\nApply this command bundle? Type 'yes' to continue: ")
         if answer.strip() != "yes":
             raise SystemExit("aborted")
+
+    try:
+        _path, record, execution_id = _claim_pending_command_bundle(
+            bundle_id,
+            pending_dir=PENDING_DIR,
+            running_dir=RUNNING_DIR,
+        )
+    except BundleClaimError as exc:
+        raise SystemExit(str(exc)) from exc
 
     action_bundle = is_action_bundle(record)
     raw_steps = record.get("steps", [])
@@ -816,19 +787,19 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
     failure_error: str | None = None
     rollback_result: dict[str, Any] | None = None
     action_snapshots: list[dict[str, Any]] = []
-    runner_workspace: RunnerWorkspace | None = None
-    previous_workspace = _ACTIVE_RUNNER_WORKSPACE
+    cwd: Path | None = None
+    interrupted = False
 
     try:
         try:
-            runner_workspace = resolve_runner_workspace(record)
+            cwd = resolve_cwd(str(record.get("cwd", ".")))
         except Exception as exc:
             failed = True
             failure_error = str(exc)
             results.append(
                 {
                     "type": "preflight",
-                    "name": "Direct workspace routing",
+                    "name": "Workspace cwd validation",
                     "exit_code": None,
                     "stdout": "",
                     "stderr": str(exc),
@@ -836,10 +807,7 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
                 }
             )
 
-        if runner_workspace is not None:
-            _ACTIVE_RUNNER_WORKSPACE = runner_workspace
-            cwd = runner_workspace.apply_cwd
-
+        if cwd is not None:
             if action_bundle:
                 try:
                     action_snapshots = snapshot_action_targets(cwd, raw_steps)
@@ -895,8 +863,22 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
                         )
                         print(str(exc), file=sys.stderr)
                         break
-    finally:
-        _ACTIVE_RUNNER_WORKSPACE = previous_workspace
+    except BaseException as exc:
+        interrupted = True
+        failed = True
+        detail = str(exc).strip() or type(exc).__name__
+        failure_error = f"Execution interrupted: {detail}"
+        results.append(
+            {
+                "type": "interruption",
+                "name": "Runner interrupted",
+                "action_index": len(results) + 1 if action_bundle else None,
+                "exit_code": None,
+                "stdout": "",
+                "stderr": failure_error,
+                "truncated": False,
+            }
+        )
 
     if action_bundle and failed:
         rollback_result = rollback_action_changes(action_snapshots)
@@ -908,26 +890,28 @@ def apply_bundle(bundle_id: str, yes: bool) -> None:
             idx = int(failed_step.get("action_index") or len(results))
             failure_error = action_failure_message(idx, failed_step, failure_error, rollback_status)
 
-    record["result"] = {
+    result_record: dict[str, Any] = {
         "cwd": str(record.get("cwd", ".")),
-        "workspace_routing": (
-            runner_workspace.as_result()
-            if runner_workspace is not None
-            else {
-                "workspace_mode": "direct",
-                "error": failure_error,
-            }
-        ),
         "steps": results,
         "ok": not failed,
     }
     if rollback_result is not None:
-        record["result"]["rollback"] = rollback_result
+        result_record["rollback"] = rollback_result
 
-    record["error"] = None if not failed else failure_error or "One or more bundle steps failed."
-
-    move_bundle(path, record, "failed" if failed else "applied")
-    print(f"\n{'failed' if failed else 'applied'} {bundle_id}")
+    error = None if not failed else failure_error or "One or more bundle steps failed."
+    terminal_status = "interrupted" if interrupted else ("failed" if failed else "applied")
+    _finalize_running_command_bundle(
+        bundle_id,
+        execution_id,
+        terminal_status,
+        {"result": result_record, "error": error},
+        running_dir=RUNNING_DIR,
+        applied_dir=APPLIED_DIR,
+        failed_dir=FAILED_DIR,
+        interrupted_dir=INTERRUPTED_DIR,
+    )
+    print(f"\n{terminal_status} {bundle_id}")
+    return terminal_status == "applied"
 
 
 def main() -> None:
@@ -953,7 +937,8 @@ def main() -> None:
     elif args.cmd == "preview":
         preview(args.bundle_id)
     elif args.cmd == "apply":
-        apply_bundle(args.bundle_id, yes=args.yes)
+        if not apply_bundle(args.bundle_id, yes=args.yes):
+            raise SystemExit(1)
     elif args.cmd == "reject":
         reject(args.bundle_id)
     else:

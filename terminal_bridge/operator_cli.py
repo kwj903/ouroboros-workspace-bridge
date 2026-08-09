@@ -16,6 +16,7 @@ from pathlib import Path
 from terminal_bridge import public_access
 from terminal_bridge import session_supervisor as supervisor
 from terminal_bridge import setup_ui
+from terminal_bridge.cli_common import print_version_info as _print_shared_version_info
 from terminal_bridge.version import version_summary
 
 
@@ -551,12 +552,7 @@ def doctor_operator() -> int:
 
 
 def print_version_info() -> int:
-    summary = version_summary()
-    print(f"{summary['name']} {summary['version']}")
-    print(f"commit: {summary['commit']}")
-    print(f"branch: {summary['branch']}")
-    print(f"dirty: {summary['dirty']}")
-    return 0
+    return _print_shared_version_info(version_summary)
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -16,6 +16,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 
+from terminal_bridge import bundles as _bundle_store
 from terminal_bridge.backups import (
     _backup_file as _create_backup_file,
     _list_backup_entries,
@@ -28,13 +29,12 @@ from terminal_bridge.browsing import (
 )
 from terminal_bridge.bundles import (
     _command_bundle_dirs,
-    _command_bundle_path,
-    _find_command_bundle,
     _merge_command_bundle_metadata,
-    _move_command_bundle,
-    _new_command_bundle_id,
     _request_key,
-    _write_command_bundle,
+)
+from terminal_bridge.bundle_service import (
+    BundleService,
+    command_bundle_stage_result as _command_bundle_stage_result,
 )
 from terminal_bridge.bundle_serialization import (
     _serialize_action_steps,
@@ -141,14 +141,11 @@ from terminal_bridge.mcp_tools.proposals import (
     validate_git_remote_or_branch as _proposal_validate_git_remote_or_branch,
 )
 from terminal_bridge.mcp_tools.bundles import (
-    cancel_command_bundle as _bundle_cancel_command_bundle,
-    command_bundle_status as _bundle_command_bundle_status,
     list_command_bundles as _bundle_list_command_bundles,
     stage_action_bundle_and_wait as _bundle_stage_action_bundle_and_wait,
     stage_command_bundle_and_wait as _bundle_stage_command_bundle_and_wait,
     stage_commit_bundle_and_wait as _bundle_stage_commit_bundle_and_wait,
     stage_patch_bundle_and_wait as _bundle_stage_patch_bundle_and_wait,
-    wait_command_bundle_status as _bundle_wait_command_bundle_status,
 )
 from terminal_bridge.mcp_tools.status import (
     get_operation as _status_get_operation,
@@ -174,6 +171,11 @@ from terminal_bridge.operations import (
     _fail_operation,
     _normalize_operation_id,
     _read_operation,
+)
+from terminal_bridge.public_tools import (
+    DEFAULT_PUBLIC_MCP_TOOLS,
+    DIRECT_MUTATION_MCP_TOOLS,
+    public_mutation_annotations,
 )
 from terminal_bridge.payloads import (
     _new_text_payload_id,
@@ -204,10 +206,9 @@ from terminal_bridge.trash import (
 )
 from terminal_bridge.mcp_runtime import (
     _audit,
-    _command_bundle_stage_result,
-    _dedupe_command_bundle,
     _ensure_runtime_dirs,
     _record_tool_call,
+    _record_tool_call_async,
     _tool_call_status_result,
 )
 from terminal_bridge.mcp_intents import (
@@ -217,6 +218,12 @@ from terminal_bridge.mcp_intents import (
     sign_intent_payload as _sign_intent_payload_with_secret,
     validate_intent_token as _validate_intent_token_with_secret,
 )
+
+
+_BUNDLE_SERVICE = BundleService(audit=lambda event, **data: _audit(event, **data))
+# Retained as private compatibility seams for older tests and local integrations.
+_command_bundle_path = _bundle_store._command_bundle_path
+_find_command_bundle = _bundle_store._find_command_bundle
 
 allowed_hosts = [
     "127.0.0.1:*",
@@ -260,13 +267,6 @@ def _direct_mutation_tool(**kwargs: object):
     if MCP_EXPOSE_DIRECT_MUTATION_TOOLS:
         return mcp.tool(**kwargs)
 
-    def decorator(func):
-        return func
-
-    return decorator
-
-
-def _internal_tool(**_kwargs: object):
     def decorator(func):
         return func
 
@@ -480,7 +480,7 @@ def _intent_result_from_import(record: dict[str, object]) -> CommandBundleStageR
     if not isinstance(bundle_id, str):
         return None
     try:
-        path, bundle_record = _find_command_bundle(bundle_id)
+        path, bundle_record = _BUNDLE_SERVICE.find(bundle_id)
     except FileNotFoundError:
         return None
     return _command_bundle_stage_result(path, bundle_record)
@@ -906,57 +906,6 @@ def _run_command(cwd: str, command: list[str], timeout_seconds: int = 30) -> Com
     )
 
     return result
-
-
-DEFAULT_PUBLIC_MCP_TOOLS: tuple[str, ...] = (
-    "workspace_info",
-    "workspace_list",
-    "workspace_tree",
-    "workspace_read_file",
-    "workspace_find_files",
-    "workspace_search_text",
-    "workspace_read_many_files",
-    "workspace_project_snapshot",
-    "workspace_git_status",
-    "workspace_git_diff",
-    "workspace_preview_patch",
-    "workspace_transport_probe",
-    "workspace_read_audit_log",
-    "workspace_recover_last_activity",
-    "workspace_get_handoff_for_bundle",
-    "workspace_next_handoff",
-    "workspace_list_handoffs",
-    "workspace_list_tool_calls",
-    "workspace_tool_call_status",
-    "workspace_list_backups",
-    "workspace_stage_text_payload",
-    "workspace_propose_command_and_wait",
-    "workspace_propose_file_write_and_wait",
-    "workspace_propose_file_replace_and_wait",
-    "workspace_propose_patch_and_wait",
-    "workspace_propose_git_commit_and_wait",
-    "workspace_propose_git_push_and_wait",
-    "workspace_command_bundle_status",
-    "workspace_wait_command_bundle_status",
-    "workspace_list_command_bundles",
-    "workspace_cancel_command_bundle",
-)
-
-DIRECT_MUTATION_MCP_TOOLS: tuple[str, ...] = (
-    "workspace_create_directory",
-    "workspace_write_file",
-    "workspace_append_file",
-    "workspace_replace_text",
-    "workspace_soft_delete",
-    "workspace_move_to_trash",
-    "workspace_restore_deleted",
-    "workspace_restore_backup",
-    "workspace_apply_patch",
-    "workspace_git_add",
-    "workspace_git_commit",
-    "workspace_exec",
-    "workspace_run_profile",
-)
 
 
 def _workspace_info_tools() -> list[str]:
@@ -1441,14 +1390,6 @@ def _workspace_transport_probe_impl(cwd: str, include_git_status: bool) -> Trans
     )
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
 def workspace_prepare_check_intent(
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     check: Annotated[Literal["git_status", "py_compile", "unit_tests", "check_all"], Field(description="Check bundle to prepare.")],
@@ -1461,14 +1402,6 @@ def workspace_prepare_check_intent(
     )
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
 def workspace_prepare_commit_current_changes_intent(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
@@ -1488,14 +1421,6 @@ def workspace_prepare_commit_current_changes_intent(
     )
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
 def workspace_prepare_dev_session_intent(
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     action: Annotated[Literal["status", "doctor", "restart_mcp", "restart_session"], Field(description="Dev session action to prepare.")],
@@ -1640,14 +1565,6 @@ def workspace_tool_call_status(
     return _status_tool_call_status(_read_tool_call_record, _tool_call_status_result, call_id)
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
 def workspace_get_operation(
     operation_id: Annotated[str, Field(description="Operation id returned by write/delete/replace tools.")],
 ) -> OperationStatusResult:
@@ -1655,14 +1572,6 @@ def workspace_get_operation(
     return _status_get_operation(_normalize_operation_id, _read_operation_record, operation_id)
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
 def workspace_list_operations(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum operations to return.")] = 50,
 ) -> OperationListResult:
@@ -1730,14 +1639,6 @@ def workspace_restore_backup(
         raise
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
 def workspace_list_trash(
     limit: Annotated[int, Field(ge=1, le=200, description="Maximum trash entries to return.")] = 50,
 ) -> TrashListResult:
@@ -2104,12 +2005,7 @@ def workspace_exec(
 
 
 @mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
+    annotations=public_mutation_annotations("workspace_stage_text_payload"),
 )
 def workspace_stage_text_payload(
     text: Annotated[
@@ -2184,6 +2080,7 @@ def _proposal_metadata_input(
     client_id: str | None = None,
     session_id: str | None = None,
     project_id: str | None = None,
+    retry_id: str | None = None,
 ) -> dict[str, object] | None:
     """Normalize logical routing metadata for concurrent direct-mode sessions."""
     metadata: dict[str, object] = {}
@@ -2192,6 +2089,7 @@ def _proposal_metadata_input(
         "client_id": client_id,
         "session_id": session_id,
         "project_id": project_id,
+        "retry_id": retry_id,
     }.items():
         if value is None:
             continue
@@ -2211,50 +2109,6 @@ def _request_payload_with_metadata(payload: dict[str, object], metadata: dict[st
     return {**payload, "metadata": metadata}
 
 
-def _write_pending_stage_bundle(
-    *,
-    version: int,
-    title: str,
-    cwd: str,
-    risk: str,
-    steps: list[dict[str, object]],
-    request_key: str,
-    metadata: dict[str, object] | None = None,
-) -> CommandBundleStageResult:
-    bundle_id = _new_command_bundle_id()
-    now = _now_iso()
-    record: dict[str, object] = {
-        "version": version,
-        "bundle_id": bundle_id,
-        "title": title,
-        "cwd": cwd,
-        "status": "pending",
-        "risk": risk,
-        "approval_required": True,
-        "created_at": now,
-        "updated_at": now,
-        "steps": steps,
-        "metadata": _merge_command_bundle_metadata(cwd, metadata, validate_workspace_mode=True),
-        "result": None,
-        "error": None,
-        "request_key": request_key,
-        "request_key_version": 1,
-        "duplicate_of": None,
-    }
-
-    bundle_path = _command_bundle_path(bundle_id, "pending")
-    _write_command_bundle(bundle_path, record)
-    return _command_bundle_stage_result(bundle_path, record)
-
-
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
 def workspace_stage_patch_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
@@ -2310,10 +2164,6 @@ def workspace_stage_patch_bundle(
             bundle_metadata,
         )
     )
-    deduped = _dedupe_command_bundle(request_key, kind="patch_bundle", title=title)
-    if deduped is not None:
-        return deduped
-
     serialized_steps = [
         {
             "type": "apply_patch",
@@ -2326,7 +2176,7 @@ def workspace_stage_patch_bundle(
             "reason": "Patch apply requires local approval.",
         }
     ]
-    stage_result = _write_pending_stage_bundle(
+    submission = _BUNDLE_SERVICE.stage(
         version=3,
         title=title,
         cwd=relative_cwd,
@@ -2334,7 +2184,11 @@ def workspace_stage_patch_bundle(
         steps=serialized_steps,
         request_key=request_key,
         metadata=bundle_metadata,
+        kind="patch_bundle",
     )
+    if not submission.created:
+        return submission.result
+    stage_result = submission.result
     _audit(
         "stage_patch_bundle",
         bundle_id=stage_result.bundle_id,
@@ -2348,14 +2202,6 @@ def workspace_stage_patch_bundle(
     return stage_result
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
 def workspace_stage_action_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
@@ -2384,11 +2230,7 @@ def workspace_stage_action_bundle(
             bundle_metadata,
         )
     )
-    deduped = _dedupe_command_bundle(request_key, kind="action_bundle", title=title)
-    if deduped is not None:
-        return deduped
-
-    stage_result = _write_pending_stage_bundle(
+    submission = _BUNDLE_SERVICE.stage(
         version=2,
         title=title,
         cwd=relative_cwd,
@@ -2396,7 +2238,11 @@ def workspace_stage_action_bundle(
         steps=serialized_steps,
         request_key=request_key,
         metadata=bundle_metadata,
+        kind="action_bundle",
     )
+    if not submission.created:
+        return submission.result
+    stage_result = submission.result
     _audit(
         "stage_action_bundle",
         bundle_id=stage_result.bundle_id,
@@ -2410,14 +2256,6 @@ def workspace_stage_action_bundle(
     return stage_result
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
 def workspace_stage_commit_bundle(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     paths: Annotated[
@@ -2453,12 +2291,8 @@ def workspace_stage_commit_bundle(
             bundle_metadata,
         )
     )
-    deduped = _dedupe_command_bundle(request_key, kind="commit_bundle", title=f"Commit: {commit_message[:120]}")
-    if deduped is not None:
-        return deduped
-
     title = f"Commit: {commit_message[:120]}"
-    stage_result = _write_pending_stage_bundle(
+    submission = _BUNDLE_SERVICE.stage(
         version=4,
         title=title,
         cwd=relative_cwd,
@@ -2466,7 +2300,11 @@ def workspace_stage_commit_bundle(
         steps=serialized_steps,
         request_key=request_key,
         metadata=bundle_metadata,
+        kind="commit_bundle",
     )
+    if not submission.created:
+        return submission.result
+    stage_result = submission.result
     _audit(
         "stage_commit_bundle",
         bundle_id=stage_result.bundle_id,
@@ -2480,14 +2318,6 @@ def workspace_stage_commit_bundle(
     return stage_result
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
 def workspace_stage_command_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
@@ -2514,11 +2344,7 @@ def workspace_stage_command_bundle(
             bundle_metadata,
         )
     )
-    deduped = _dedupe_command_bundle(request_key, kind="command_bundle", title=title)
-    if deduped is not None:
-        return deduped
-
-    stage_result = _write_pending_stage_bundle(
+    submission = _BUNDLE_SERVICE.stage(
         version=1,
         title=title,
         cwd=relative_cwd,
@@ -2526,7 +2352,11 @@ def workspace_stage_command_bundle(
         steps=serialized_steps,
         request_key=request_key,
         metadata=bundle_metadata,
+        kind="command_bundle",
     )
+    if not submission.created:
+        return submission.result
+    stage_result = submission.result
     _audit(
         "stage_command_bundle",
         bundle_id=stage_result.bundle_id,
@@ -2560,7 +2390,7 @@ def workspace_command_bundle_status(
 
 
 def _workspace_command_bundle_status_impl(bundle_id: str) -> CommandBundleStatusResult:
-    return _bundle_command_bundle_status(_find_command_bundle, bundle_id)
+    return _BUNDLE_SERVICE.status(bundle_id)
 
 
 @mcp.tool(
@@ -2571,7 +2401,7 @@ def _workspace_command_bundle_status_impl(bundle_id: str) -> CommandBundleStatus
         "openWorldHint": False,
     },
 )
-def workspace_wait_command_bundle_status(
+async def workspace_wait_command_bundle_status(
     bundle_id: Annotated[str, Field(description="Command bundle id returned by workspace_stage_command_bundle.")],
     timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
@@ -2581,7 +2411,7 @@ def workspace_wait_command_bundle_status(
     This tool is read-only. It never approves, rejects, or executes bundles. It only polls
     the existing bundle status so ChatGPT can continue promptly after a local approval.
     """
-    return _record_tool_call(
+    return await _record_tool_call_async(
         "workspace_wait_command_bundle_status",
         {
             "bundle_id": bundle_id,
@@ -2592,27 +2422,18 @@ def workspace_wait_command_bundle_status(
     )
 
 
-def _workspace_wait_command_bundle_status_impl(
+async def _workspace_wait_command_bundle_status_impl(
     bundle_id: str,
     timeout_seconds: int,
     poll_interval_seconds: float,
 ) -> CommandBundleStatusResult:
-    return _bundle_wait_command_bundle_status(
-        _find_command_bundle,
+    return await _BUNDLE_SERVICE.wait(
         bundle_id,
-        timeout_seconds,
-        poll_interval_seconds,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
     )
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
 def workspace_submit_command_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
@@ -2636,14 +2457,6 @@ def _workspace_submit_command_bundle_impl(
     return workspace_stage_command_bundle(title=title, cwd=cwd, steps=steps, metadata=metadata)
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
 def workspace_submit_patch_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
@@ -2669,14 +2482,6 @@ def _workspace_submit_patch_bundle_impl(
     return workspace_stage_patch_bundle(title=title, cwd=cwd, patch=patch, patch_ref=patch_ref, metadata=metadata)
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
 def workspace_submit_action_bundle(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
@@ -2700,14 +2505,6 @@ def _workspace_submit_action_bundle_impl(
     return workspace_stage_action_bundle(title=title, cwd=cwd, actions=actions, metadata=metadata)
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
 def workspace_submit_commit_bundle(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     paths: Annotated[
@@ -2740,15 +2537,7 @@ def _workspace_submit_commit_bundle_impl(
     )
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
-def workspace_stage_command_bundle_and_wait(
+async def workspace_stage_command_bundle_and_wait(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     steps: Annotated[
@@ -2772,7 +2561,7 @@ def workspace_stage_command_bundle_and_wait(
     local user review. Commands run only after the user approves the proposal in the
     local /pending browser UI.
     """
-    return _record_tool_call(
+    return await _record_tool_call_async(
         "workspace_stage_command_bundle_and_wait",
         {
             "title": title,
@@ -2791,7 +2580,7 @@ def workspace_stage_command_bundle_and_wait(
     )
 
 
-def _workspace_stage_command_bundle_and_wait_impl(
+async def _workspace_stage_command_bundle_and_wait_impl(
     title: str,
     cwd: str,
     steps: list[CommandBundleStep],
@@ -2799,7 +2588,7 @@ def _workspace_stage_command_bundle_and_wait_impl(
     poll_interval_seconds: float,
     metadata: dict[str, object] | None = None,
 ) -> CommandBundleStatusResult:
-    return _bundle_stage_command_bundle_and_wait(
+    return await _bundle_stage_command_bundle_and_wait(
         _workspace_submit_command_bundle_impl,
         _workspace_wait_command_bundle_status_impl,
         title,
@@ -2811,15 +2600,7 @@ def _workspace_stage_command_bundle_and_wait_impl(
     )
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
-def workspace_stage_patch_bundle_and_wait(
+async def workspace_stage_patch_bundle_and_wait(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     patch: Annotated[
@@ -2843,7 +2624,7 @@ def workspace_stage_patch_bundle_and_wait(
     patches or many-file changes when possible; split them into smaller patch
     proposals or action micro edits.
     """
-    return _record_tool_call(
+    return await _record_tool_call_async(
         "workspace_stage_patch_bundle_and_wait",
         {
             "title": title,
@@ -2864,7 +2645,7 @@ def workspace_stage_patch_bundle_and_wait(
     )
 
 
-def _workspace_stage_patch_bundle_and_wait_impl(
+async def _workspace_stage_patch_bundle_and_wait_impl(
     title: str,
     cwd: str,
     patch: str | None,
@@ -2873,7 +2654,7 @@ def _workspace_stage_patch_bundle_and_wait_impl(
     poll_interval_seconds: float,
     metadata: dict[str, object] | None = None,
 ) -> CommandBundleStatusResult:
-    return _bundle_stage_patch_bundle_and_wait(
+    return await _bundle_stage_patch_bundle_and_wait(
         _workspace_submit_patch_bundle_impl,
         _workspace_wait_command_bundle_status_impl,
         title,
@@ -2886,15 +2667,7 @@ def _workspace_stage_patch_bundle_and_wait_impl(
     )
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
-def workspace_stage_action_bundle_and_wait(
+async def workspace_stage_action_bundle_and_wait(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     actions: Annotated[
@@ -2918,7 +2691,7 @@ def workspace_stage_action_bundle_and_wait(
     for local user review. Project files are changed only after the user approves
     the proposal in the local /pending browser UI.
     """
-    return _record_tool_call(
+    return await _record_tool_call_async(
         "workspace_stage_action_bundle_and_wait",
         {
             "title": title,
@@ -2937,7 +2710,7 @@ def workspace_stage_action_bundle_and_wait(
     )
 
 
-def _workspace_stage_action_bundle_and_wait_impl(
+async def _workspace_stage_action_bundle_and_wait_impl(
     title: str,
     cwd: str,
     actions: list[CommandBundleAction],
@@ -2945,7 +2718,7 @@ def _workspace_stage_action_bundle_and_wait_impl(
     poll_interval_seconds: float,
     metadata: dict[str, object] | None = None,
 ) -> CommandBundleStatusResult:
-    return _bundle_stage_action_bundle_and_wait(
+    return await _bundle_stage_action_bundle_and_wait(
         _workspace_submit_action_bundle_impl,
         _workspace_wait_command_bundle_status_impl,
         title,
@@ -2957,15 +2730,7 @@ def _workspace_stage_action_bundle_and_wait_impl(
     )
 
 
-@_internal_tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
-def workspace_stage_commit_bundle_and_wait(
+async def workspace_stage_commit_bundle_and_wait(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     paths: Annotated[
         list[str],
@@ -2989,7 +2754,7 @@ def workspace_stage_commit_bundle_and_wait(
     actual git add/commit runs only after the user approves it. Use ['.'] only
     after reviewing git status and diff.
     """
-    return _record_tool_call(
+    return await _record_tool_call_async(
         "workspace_stage_commit_bundle_and_wait",
         {
             "cwd": cwd,
@@ -3008,7 +2773,7 @@ def workspace_stage_commit_bundle_and_wait(
     )
 
 
-def _workspace_stage_commit_bundle_and_wait_impl(
+async def _workspace_stage_commit_bundle_and_wait_impl(
     cwd: str,
     paths: list[str],
     message: str,
@@ -3016,7 +2781,7 @@ def _workspace_stage_commit_bundle_and_wait_impl(
     poll_interval_seconds: float,
     metadata: dict[str, object] | None = None,
 ) -> CommandBundleStatusResult:
-    return _bundle_stage_commit_bundle_and_wait(
+    return await _bundle_stage_commit_bundle_and_wait(
         _workspace_submit_commit_bundle_impl,
         _workspace_wait_command_bundle_status_impl,
         cwd,
@@ -3033,14 +2798,9 @@ def _validate_git_remote_or_branch(value: str, label: str) -> str:
 
 
 @mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
+    annotations=public_mutation_annotations("workspace_propose_command_and_wait"),
 )
-def workspace_propose_command_and_wait(
+async def workspace_propose_command_and_wait(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     argv: Annotated[
@@ -3063,6 +2823,7 @@ def workspace_propose_command_and_wait(
     client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
+    retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
     timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
@@ -3077,9 +2838,10 @@ def workspace_propose_command_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
+        retry_id=retry_id,
     )
     step = _proposal_command_step(title, argv, command_name, command_timeout_seconds)
-    return _record_tool_call(
+    return await _record_tool_call_async(
         "workspace_propose_command_and_wait",
         {
             "title": title,
@@ -3089,6 +2851,7 @@ def workspace_propose_command_and_wait(
             "command_timeout_seconds": command_timeout_seconds,
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
+            "retry_id": retry_id,
         },
         lambda: _proposal_command_and_wait(
             _workspace_stage_command_bundle_and_wait_impl,
@@ -3103,14 +2866,9 @@ def workspace_propose_command_and_wait(
 
 
 @mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
+    annotations=public_mutation_annotations("workspace_propose_file_write_and_wait"),
 )
-def workspace_propose_file_write_and_wait(
+async def workspace_propose_file_write_and_wait(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     path: Annotated[str, Field(description="Relative file path to create or overwrite under cwd.")],
@@ -3130,6 +2888,7 @@ def workspace_propose_file_write_and_wait(
     client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
+    retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
     timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
@@ -3144,6 +2903,7 @@ def workspace_propose_file_write_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
+        retry_id=retry_id,
     )
     action = _proposal_file_write_action(
         title,
@@ -3152,7 +2912,7 @@ def workspace_propose_file_write_and_wait(
         overwrite,
         create_parent_dirs,
     )
-    return _record_tool_call(
+    return await _record_tool_call_async(
         "workspace_propose_file_write_and_wait",
         {
             "title": title,
@@ -3163,6 +2923,7 @@ def workspace_propose_file_write_and_wait(
             "create_parent_dirs": create_parent_dirs,
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
+            "retry_id": retry_id,
         },
         lambda: _proposal_action_and_wait(
             _workspace_stage_action_bundle_and_wait_impl,
@@ -3177,14 +2938,9 @@ def workspace_propose_file_write_and_wait(
 
 
 @mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
+    annotations=public_mutation_annotations("workspace_propose_file_replace_and_wait"),
 )
-def workspace_propose_file_replace_and_wait(
+async def workspace_propose_file_replace_and_wait(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative working directory under the configured WORKSPACE_ROOT.")],
     path: Annotated[str, Field(description="Relative UTF-8 file path under cwd.")],
@@ -3206,6 +2962,7 @@ def workspace_propose_file_replace_and_wait(
     client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
+    retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
 ) -> CommandBundleStatusResult:
     """Create exactly one file replacement proposal in the local pending UI and briefly wait.
 
@@ -3218,6 +2975,7 @@ def workspace_propose_file_replace_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
+        retry_id=retry_id,
     )
     action = _proposal_file_replace_action(
         title,
@@ -3226,7 +2984,7 @@ def workspace_propose_file_replace_and_wait(
         new_text,
         replace_all,
     )
-    return _record_tool_call(
+    return await _record_tool_call_async(
         "workspace_propose_file_replace_and_wait",
         {
             "title": title,
@@ -3237,6 +2995,7 @@ def workspace_propose_file_replace_and_wait(
             "replace_all": replace_all,
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
+            "retry_id": retry_id,
         },
         lambda: _proposal_action_and_wait(
             _workspace_stage_action_bundle_and_wait_impl,
@@ -3251,14 +3010,9 @@ def workspace_propose_file_replace_and_wait(
 
 
 @mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
+    annotations=public_mutation_annotations("workspace_propose_patch_and_wait"),
 )
-def workspace_propose_patch_and_wait(
+async def workspace_propose_patch_and_wait(
     title: Annotated[str, Field(min_length=1, max_length=160)],
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     patch: Annotated[str | None, Field(description="Unified diff patch text. Prefer smaller patches or file-specific wrappers.")] = None,
@@ -3269,6 +3023,7 @@ def workspace_propose_patch_and_wait(
     client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
+    retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
 ) -> CommandBundleStatusResult:
     """Create one patch proposal in the local pending UI and briefly wait.
 
@@ -3281,8 +3036,9 @@ def workspace_propose_patch_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
+        retry_id=retry_id,
     )
-    return _record_tool_call(
+    return await _record_tool_call_async(
         "workspace_propose_patch_and_wait",
         {
             "title": title,
@@ -3291,6 +3047,7 @@ def workspace_propose_patch_and_wait(
             "patch_ref": patch_ref,
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
+            "retry_id": retry_id,
         },
         lambda: _proposal_patch_and_wait(
             _workspace_stage_patch_bundle_and_wait_impl,
@@ -3306,14 +3063,9 @@ def workspace_propose_patch_and_wait(
 
 
 @mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
+    annotations=public_mutation_annotations("workspace_propose_git_commit_and_wait"),
 )
-def workspace_propose_git_commit_and_wait(
+async def workspace_propose_git_commit_and_wait(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     paths: Annotated[list[str], Field(min_length=1, max_length=100, description="Relative paths to stage and commit.")],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
@@ -3323,6 +3075,7 @@ def workspace_propose_git_commit_and_wait(
     client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
+    retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
 ) -> CommandBundleStatusResult:
     """Create one git commit proposal in the local pending UI and briefly wait.
 
@@ -3335,8 +3088,9 @@ def workspace_propose_git_commit_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
+        retry_id=retry_id,
     )
-    return _record_tool_call(
+    return await _record_tool_call_async(
         "workspace_propose_git_commit_and_wait",
         {
             "cwd": cwd,
@@ -3344,6 +3098,7 @@ def workspace_propose_git_commit_and_wait(
             "message": message,
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
+            "retry_id": retry_id,
         },
         lambda: _proposal_commit_and_wait(
             _workspace_stage_commit_bundle_and_wait_impl,
@@ -3358,14 +3113,9 @@ def workspace_propose_git_commit_and_wait(
 
 
 @mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
+    annotations=public_mutation_annotations("workspace_propose_git_push_and_wait"),
 )
-def workspace_propose_git_push_and_wait(
+async def workspace_propose_git_push_and_wait(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     remote: Annotated[str, Field(min_length=1, max_length=80, description="Git remote name, usually origin.")] = "origin",
     branch: Annotated[str, Field(min_length=1, max_length=120, description="Git branch name, usually main.")] = "main",
@@ -3373,6 +3123,7 @@ def workspace_propose_git_push_and_wait(
     client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
     session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
+    retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
     timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
@@ -3387,9 +3138,10 @@ def workspace_propose_git_push_and_wait(
         client_id=client_id,
         session_id=session_id,
         project_id=project_id,
+        retry_id=retry_id,
     )
     safe_remote, safe_branch, title, step = _proposal_git_push(remote, branch)
-    return _record_tool_call(
+    return await _record_tool_call_async(
         "workspace_propose_git_push_and_wait",
         {
             "cwd": cwd,
@@ -3397,6 +3149,7 @@ def workspace_propose_git_push_and_wait(
             "branch": safe_branch,
             "timeout_seconds": timeout_seconds,
             "poll_interval_seconds": poll_interval_seconds,
+            "retry_id": retry_id,
         },
         lambda: _proposal_command_and_wait(
             _workspace_stage_command_bundle_and_wait_impl,
@@ -3442,23 +3195,13 @@ def workspace_list_command_bundles(
 
 
 @mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
+    annotations=public_mutation_annotations("workspace_cancel_command_bundle"),
 )
 def workspace_cancel_command_bundle(
     bundle_id: Annotated[str, Field(description="Pending command bundle id to reject.")],
 ) -> CommandBundleStatusResult:
     """Reject a pending command bundle without executing it."""
-    return _bundle_cancel_command_bundle(
-        _find_command_bundle,
-        _move_command_bundle,
-        _audit,
-        bundle_id,
-    )
+    return _BUNDLE_SERVICE.cancel(bundle_id)
 
 
 
