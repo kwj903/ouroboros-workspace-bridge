@@ -2379,7 +2379,7 @@ def workspace_stage_command_bundle(
     },
 )
 def workspace_command_bundle_status(
-    bundle_id: Annotated[str, Field(description="Command bundle id returned by workspace_stage_command_bundle.")],
+    bundle_id: Annotated[str, Field(description="Command bundle id returned by a workspace_propose_*_and_wait tool.")],
 ) -> CommandBundleStatusResult:
     """Return status and result for a staged command bundle."""
     return _record_tool_call(
@@ -2402,14 +2402,14 @@ def _workspace_command_bundle_status_impl(bundle_id: str) -> CommandBundleStatus
     },
 )
 async def workspace_wait_command_bundle_status(
-    bundle_id: Annotated[str, Field(description="Command bundle id returned by workspace_stage_command_bundle.")],
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    bundle_id: Annotated[str, Field(description="Command bundle id returned by a workspace_propose_*_and_wait tool.")],
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait while the bundle remains in an active pending/running state.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
-    """Wait briefly for a pending command bundle to be approved, rejected, applied, or failed.
+    """Wait briefly for a command bundle to leave pending/running and reach a terminal state.
 
     This tool is read-only. It never approves, rejects, or executes bundles. It only polls
-    the existing bundle status so ChatGPT can continue promptly after a local approval.
+    canonical bundle status so ChatGPT can continue after manual or automatic authorization.
     """
     return await _record_tool_call_async(
         "workspace_wait_command_bundle_status",
@@ -2552,14 +2552,13 @@ async def workspace_stage_command_bundle_and_wait(
             ),
         ),
     ],
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait while the bundle remains in an active pending/running state.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
-    """Stage exactly one command proposal, then briefly wait for local review UI approval.
+    """Stage exactly one command proposal, then briefly wait for bundle status.
 
-    This tool does not directly execute commands. It writes one pending proposal for
-    local user review. Commands run only after the user approves the proposal in the
-    local /pending browser UI.
+    This tool does not directly execute commands. It creates a durable pending proposal;
+    Normal requires local review, while Safe Auto or YOLO may authorize it automatically.
     """
     return await _record_tool_call_async(
         "workspace_stage_command_bundle_and_wait",
@@ -2614,7 +2613,7 @@ async def workspace_stage_patch_bundle_and_wait(
         ),
     ] = None,
     patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait while the bundle remains in an active pending/running state.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Stage a patch proposal, then briefly wait for local review UI approval.
@@ -2682,14 +2681,13 @@ async def workspace_stage_action_bundle_and_wait(
             ),
         ),
     ],
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait while the bundle remains in an active pending/running state.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
-    """Stage exactly one action proposal, then briefly wait for local review UI approval.
+    """Stage exactly one action proposal, then briefly wait for bundle status.
 
-    This tool does not directly modify project files. It writes one pending proposal
-    for local user review. Project files are changed only after the user approves
-    the proposal in the local /pending browser UI.
+    This tool does not directly modify project files. It creates a durable pending proposal;
+    Normal requires local review, while Safe Auto or YOLO may authorize it automatically.
     """
     return await _record_tool_call_async(
         "workspace_stage_action_bundle_and_wait",
@@ -2744,15 +2742,14 @@ async def workspace_stage_commit_bundle_and_wait(
         ),
     ],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait while the bundle remains in an active pending/running state.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
     """Stage a commit proposal, then briefly wait for local review UI approval.
 
-    This tool does not directly run git add or git commit. It writes a pending
-    commit proposal for local user review in the local /pending browser UI. The
-    actual git add/commit runs only after the user approves it. Use ['.'] only
-    after reviewing git status and diff.
+    This tool does not directly run git add or git commit. It creates a durable pending
+    commit proposal. Normal requires local review, while Safe Auto or YOLO may authorize
+    it automatically. Use ['.'] only after reviewing git status and diff.
     """
     return await _record_tool_call_async(
         "workspace_stage_commit_bundle_and_wait",
@@ -2809,8 +2806,8 @@ async def workspace_propose_command_and_wait(
             min_length=1,
             max_length=MAX_EXEC_ARGV_ITEMS,
             description=(
-                "Exactly one argv-based command proposal. This only creates a local pending bundle. "
-                "It does not run until approved at http://127.0.0.1:8790/pending."
+                "Exactly one argv-based command proposal. This creates a durable pending bundle; "
+                "the local approval policy decides whether manual review is required or it may auto-run."
             ),
         ),
     ],
@@ -2824,14 +2821,13 @@ async def workspace_propose_command_and_wait(
     session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
     retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait while the bundle remains in an active pending/running state.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
-    """Create exactly one command proposal in the local pending UI and briefly wait.
+    """Create exactly one command proposal and briefly wait for bundle status.
 
-    This tool only creates a local pending proposal. It never executes the command
-    in ChatGPT. The command runs only after the user approves the bundle at
-    http://127.0.0.1:8790/pending.
+    This tool never executes the command inside ChatGPT. It creates a durable pending bundle;
+    Normal requires manual review, while Safe Auto or YOLO may authorize local execution automatically.
     """
     metadata = _proposal_metadata_input(
         task_id=task_id,
@@ -2877,8 +2873,8 @@ async def workspace_propose_file_write_and_wait(
         Field(
             max_length=MAX_WRITE_CHARS,
             description=(
-                "UTF-8 text content. This only creates a local pending bundle. "
-                "It does not write until approved at http://127.0.0.1:8790/pending."
+                "UTF-8 text content. This creates a durable pending bundle; "
+                "the local approval policy decides whether manual review is required or it may auto-run."
             ),
         ),
     ],
@@ -2889,14 +2885,13 @@ async def workspace_propose_file_write_and_wait(
     session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
     retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait while the bundle remains in an active pending/running state.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
-    """Create exactly one file-write proposal in the local pending UI and briefly wait.
+    """Create exactly one file-write proposal and briefly wait for bundle status.
 
-    This tool only creates a local pending proposal. It never writes files in
-    ChatGPT. Files change only after the user approves the bundle at
-    http://127.0.0.1:8790/pending.
+    This tool never writes files inside ChatGPT. It creates a durable pending bundle;
+    Normal requires manual review, while Safe Auto or YOLO may authorize local execution automatically.
     """
     metadata = _proposal_metadata_input(
         task_id=task_id,
@@ -2950,13 +2945,13 @@ async def workspace_propose_file_replace_and_wait(
         Field(
             max_length=MAX_WRITE_CHARS,
             description=(
-                "Replacement text. This only creates a local pending bundle. "
-                "It does not edit until approved at http://127.0.0.1:8790/pending."
+                "Replacement text. This creates a durable pending bundle; "
+                "the local approval policy decides whether manual review is required or it may auto-run."
             ),
         ),
     ],
     replace_all: Annotated[bool, Field(description="Replace all occurrences instead of only the first.")] = False,
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait while the bundle remains in an active pending/running state.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
     task_id: Annotated[str | None, Field(description="Optional logical task id used to distinguish concurrent work. Reuse it only for calls belonging to the same task; empty strings are ignored.")] = None,
     client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
@@ -2964,11 +2959,10 @@ async def workspace_propose_file_replace_and_wait(
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
     retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
 ) -> CommandBundleStatusResult:
-    """Create exactly one file replacement proposal in the local pending UI and briefly wait.
+    """Create exactly one file replacement proposal and briefly wait for bundle status.
 
-    This tool only creates a local pending proposal. It never edits files in
-    ChatGPT. Files change only after the user approves the bundle at
-    http://127.0.0.1:8790/pending.
+    This tool never edits files inside ChatGPT. It creates a durable pending bundle;
+    Normal requires manual review, while Safe Auto or YOLO may authorize local execution automatically.
     """
     metadata = _proposal_metadata_input(
         task_id=task_id,
@@ -3017,7 +3011,7 @@ async def workspace_propose_patch_and_wait(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     patch: Annotated[str | None, Field(description="Unified diff patch text. Prefer smaller patches or file-specific wrappers.")] = None,
     patch_ref: Annotated[str | None, Field(description="Text payload id containing unified diff patch text.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait while the bundle remains in an active pending/running state.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
     task_id: Annotated[str | None, Field(description="Optional logical task id used to distinguish concurrent work. Reuse it only for calls belonging to the same task; empty strings are ignored.")] = None,
     client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
@@ -3025,11 +3019,10 @@ async def workspace_propose_patch_and_wait(
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
     retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
 ) -> CommandBundleStatusResult:
-    """Create one patch proposal in the local pending UI and briefly wait.
+    """Create one patch proposal and briefly wait for bundle status.
 
-    This tool only creates a local pending proposal. It never applies patches in
-    ChatGPT. The patch applies only after the user approves the bundle at
-    http://127.0.0.1:8790/pending.
+    This tool never applies patches inside ChatGPT. It creates a durable pending bundle;
+    Normal requires manual review, while Safe Auto or YOLO may authorize local execution automatically.
     """
     metadata = _proposal_metadata_input(
         task_id=task_id,
@@ -3069,7 +3062,7 @@ async def workspace_propose_git_commit_and_wait(
     cwd: Annotated[str, Field(description="Relative git repository directory under the configured WORKSPACE_ROOT.")],
     paths: Annotated[list[str], Field(min_length=1, max_length=100, description="Relative paths to stage and commit.")],
     message: Annotated[str, Field(min_length=1, max_length=200, description="Single-line commit message.")],
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait while the bundle remains in an active pending/running state.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
     task_id: Annotated[str | None, Field(description="Optional logical task id used to distinguish concurrent work. Reuse it only for calls belonging to the same task; empty strings are ignored.")] = None,
     client_id: Annotated[str | None, Field(description="Optional caller/platform id such as chatgpt, claude, or another AI client. Use a stable value per client; empty strings are ignored.")] = None,
@@ -3077,11 +3070,10 @@ async def workspace_propose_git_commit_and_wait(
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
     retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
 ) -> CommandBundleStatusResult:
-    """Create one git commit proposal in the local pending UI and briefly wait.
+    """Create one git commit proposal and briefly wait for bundle status.
 
-    This tool only creates a local pending proposal. It never runs git add or git
-    commit in ChatGPT. Git runs only after the user approves the bundle at
-    http://127.0.0.1:8790/pending.
+    This tool never runs git add or git commit inside ChatGPT. It creates a durable pending bundle;
+    Normal requires manual review, while Safe Auto or YOLO may authorize local execution automatically.
     """
     metadata = _proposal_metadata_input(
         task_id=task_id,
@@ -3124,14 +3116,13 @@ async def workspace_propose_git_push_and_wait(
     session_id: Annotated[str | None, Field(description="Optional conversation/session id. Use a distinct stable value per concurrent chat so identical requests from different sessions remain separate; empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional logical project id for filtering and request identity. Use a stable value for calls targeting the same project; empty strings are ignored.")] = None,
     retry_id: Annotated[str | None, Field(description="Optional retry identity. Reuse the same value for idempotent replay, or provide a new value to create a deliberate new attempt after a final result.")] = None,
-    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait for pending status to change.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
+    timeout_seconds: Annotated[int, Field(ge=MIN_BUNDLE_WAIT_SECONDS, le=MAX_BUNDLE_WAIT_SECONDS, description="Maximum seconds to wait while the bundle remains in an active pending/running state.")] = DEFAULT_BUNDLE_WAIT_SECONDS,
     poll_interval_seconds: Annotated[float, Field(ge=MIN_BUNDLE_POLL_INTERVAL_SECONDS, le=MAX_BUNDLE_POLL_INTERVAL_SECONDS, description="Seconds between status checks.")] = DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
 ) -> CommandBundleStatusResult:
-    """Create one git push proposal in the local pending UI and briefly wait.
+    """Create one git push proposal and briefly wait for bundle status.
 
-    This tool only creates a local pending proposal. It never pushes in ChatGPT.
-    Git push runs only after the user approves the bundle at
-    http://127.0.0.1:8790/pending.
+    This tool never runs git push inside ChatGPT. It creates a durable pending bundle;
+    Normal requires manual review, while Safe Auto or YOLO may authorize local execution automatically.
     """
     metadata = _proposal_metadata_input(
         task_id=task_id,
@@ -3178,7 +3169,7 @@ def workspace_list_command_bundles(
     session_id: Annotated[str | None, Field(description="Optional conversation/session_id filter. Empty strings are ignored.")] = None,
     project_id: Annotated[str | None, Field(description="Optional logical project_id filter. Empty strings are ignored.")] = None,
 ) -> CommandBundleListResult:
-    """List recent command bundles across pending/applied/rejected/failed states.
+    """List recent command bundles across pending/running/applied/rejected/failed/interrupted states.
 
     When metadata filters are omitted or empty, this keeps the existing unfiltered
     list behavior. When provided, filters are ANDed against normalized bundle metadata.

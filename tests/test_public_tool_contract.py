@@ -37,6 +37,32 @@ class PublicToolContractTests(unittest.TestCase):
                 }
                 self.assertEqual(actual, expected)
 
+    def test_public_bundle_descriptions_match_current_approval_and_lifecycle_semantics(self) -> None:
+        registered = {tool.name: tool for tool in server.mcp._tool_manager.list_tools()}
+        proposal_names = (
+            "workspace_propose_command_and_wait",
+            "workspace_propose_file_write_and_wait",
+            "workspace_propose_file_replace_and_wait",
+            "workspace_propose_patch_and_wait",
+            "workspace_propose_git_commit_and_wait",
+            "workspace_propose_git_push_and_wait",
+        )
+
+        for name in proposal_names:
+            with self.subTest(tool=name):
+                description = registered[name].description or ""
+                self.assertIn("Normal requires manual review", description)
+                self.assertIn("Safe Auto or YOLO", description)
+                self.assertNotIn("only after the user approves", description)
+
+        wait_description = registered["workspace_wait_command_bundle_status"].description or ""
+        self.assertIn("pending/running", wait_description)
+        self.assertIn("terminal state", wait_description)
+
+        list_description = registered["workspace_list_command_bundles"].description or ""
+        for state in ("pending", "running", "applied", "rejected", "failed", "interrupted"):
+            self.assertIn(state, list_description)
+
 
 if __name__ == "__main__":
     unittest.main()
