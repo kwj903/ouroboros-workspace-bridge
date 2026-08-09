@@ -4,6 +4,8 @@
 
 Completed on 2026-08-10. Phases 1-3 are implemented and live-verified against the managed Workspace Terminal Bridge stack. The final source passes the full unit suite, local smoke, version-info check, `git diff --check`, Graphify rebuild, full Ruff, exact 31-tool remote MCP contract, and live mutation-annotation checks. The pre-existing user-owned `TASK-123` pending bundle remains pending and was not replayed during the controlled restart.
 
+Post-completion backup contract correction: new command-bundle file mutations use the same canonical `RUNTIME_ROOT/backups/<backup_id>/manifest.json` writer as direct compatibility paths. `backup_id` is the authoritative persistent identifier, while legacy `RUNTIME_ROOT/command_bundle_file_backups/` data is retained unchanged as historical/read-only runtime state. Action snapshots remain a separate in-memory rollback mechanism for partial bundle failure.
+
 ## Goal
 
 Simplify Workspace Terminal Bridge's approval-gated mutation runtime without weakening its core product invariants:
@@ -217,6 +219,7 @@ If public MCP registration or annotations change, restart the managed MCP/review
 ## Migration and compatibility
 
 - No historical runtime JSON should be deleted as part of this refactor.
+- Existing `command_bundle_file_backups/` payloads remain historical runtime data; new persistent file backups are written only through the canonical `backups/` manifest store.
 - Readers normalize legacy records without `running`, generation, or new execution metadata.
 - New records should not emit retired worktree routing fields.
 - Public mutation remains bundle/review-first by default.

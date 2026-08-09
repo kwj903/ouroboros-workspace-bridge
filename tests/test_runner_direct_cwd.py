@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -136,6 +137,56 @@ class RunnerDirectCwdTests(unittest.TestCase):
         self.assertEqual(
             loaded["result"]["workspace_routing"]["workspace_mode"], "task-workspace"
         )
+
+    def test_patch_existing_files_use_canonical_backup_ids(self) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=self.project, check=True)
+        readme = self.project / "README.md"
+        notes = self.project / "notes.txt"
+        readme.write_text("before\n", encoding="utf-8")
+        notes.write_text("notes-before\n", encoding="utf-8")
+        patch = """diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1 +1 @@
+-before
++after
+diff --git a/notes.txt b/notes.txt
+--- a/notes.txt
++++ b/notes.txt
+@@ -1 +1 @@
+-notes-before
++notes-after
+"""
+
+        result = runner.apply_patch_step(
+            self.project.resolve(),
+            {
+                "type": "apply_patch",
+                "name": "Modify existing files",
+                "patch": patch,
+                "files": ["README.md", "notes.txt"],
+            },
+        )
+
+        backup_ids = result["backup_ids"]
+        self.assertEqual(set(backup_ids), {"README.md", "notes.txt"})
+        self.assertNotEqual(backup_ids["README.md"], backup_ids["notes.txt"])
+        expected = {
+            "README.md": ("project/README.md", "before\n"),
+            "notes.txt": ("project/notes.txt", "notes-before\n"),
+        }
+        for path, backup_id in backup_ids.items():
+            self.assertIsInstance(backup_id, str)
+            manifest_path = runner.BACKUP_DIR / backup_id / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["backup_id"], backup_id)
+            self.assertEqual(manifest["original_path"], expected[path][0])
+            self.assertEqual(
+                Path(manifest["backup_path"]).read_text(encoding="utf-8"),
+                expected[path][1],
+            )
+        self.assertEqual(readme.read_text(encoding="utf-8"), "after\n")
+        self.assertEqual(notes.read_text(encoding="utf-8"), "notes-after\n")
 
     def test_patch_execution_uses_bundle_cwd_not_legacy_step_routing(self) -> None:
         observed_cwds: list[Path] = []

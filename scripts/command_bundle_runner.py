@@ -7,7 +7,6 @@ import hashlib
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from terminal_bridge.backups import _create_backup_entry
 from terminal_bridge.commands import _classify_exec_command, _safe_env as safe_env, _validate_exec_argv
 from terminal_bridge.bundles import (
     BundleClaimError,
@@ -25,6 +25,7 @@ from terminal_bridge.bundles import (
     _reject_pending_command_bundle,
 )
 from terminal_bridge.config import (
+    BACKUP_DIR,
     BLOCKED_DIR_NAMES,
     BLOCKED_FILE_PATTERNS,
     COMMAND_BUNDLE_APPLIED_DIR,
@@ -49,7 +50,6 @@ APPLIED_DIR = COMMAND_BUNDLE_APPLIED_DIR
 REJECTED_DIR = COMMAND_BUNDLE_REJECTED_DIR
 FAILED_DIR = COMMAND_BUNDLE_FAILED_DIR
 INTERRUPTED_DIR = COMMAND_BUNDLE_INTERRUPTED_DIR
-BACKUP_DIR = RUNTIME_ROOT / "command_bundle_file_backups"
 TEXT_PAYLOAD_DIR = RUNTIME_ROOT / "text_payloads"
 
 
@@ -325,15 +325,14 @@ def step_patch_paths(step: dict[str, Any], patch: str) -> list[str]:
     return extract_patch_paths(patch)
 
 
-def backup_file(path: Path) -> str | None:
-    if not path.exists() or not path.is_file():
-        return None
+def create_persistent_backup(path: Path):
+    """Create a canonical persistent backup while keeping runner roots testable."""
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    backup_path = BACKUP_DIR / stamp / relative(path)
-    backup_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(path, backup_path)
-    return str(backup_path)
+    return _create_backup_entry(
+        path,
+        backup_dir=BACKUP_DIR,
+        workspace_root=WORKSPACE_ROOT,
+    )
 
 
 def is_action_bundle(record: dict[str, Any]) -> bool:
@@ -627,7 +626,7 @@ def apply_write_file(step: dict[str, Any]) -> dict[str, Any]:
     if create_parent_dirs:
         target.parent.mkdir(parents=True, exist_ok=True)
 
-    backup_path = backup_file(target)
+    backup = create_persistent_backup(target)
     target.write_text(content, encoding="utf-8")
 
     return {
@@ -635,7 +634,8 @@ def apply_write_file(step: dict[str, Any]) -> dict[str, Any]:
         "name": step.get("name"),
         "path": relative(target),
         "size_bytes": target.stat().st_size,
-        "backup_path": backup_path,
+        "backup_id": backup.backup_id if backup is not None else None,
+        "backup_path": backup.backup_path if backup is not None else None,
     }
 
 
@@ -647,7 +647,7 @@ def apply_append_file(step: dict[str, Any]) -> dict[str, Any]:
     if create_parent_dirs:
         target.parent.mkdir(parents=True, exist_ok=True)
 
-    backup_path = backup_file(target)
+    backup = create_persistent_backup(target)
     with target.open("a", encoding="utf-8") as f:
         f.write(content)
 
@@ -656,7 +656,8 @@ def apply_append_file(step: dict[str, Any]) -> dict[str, Any]:
         "name": step.get("name"),
         "path": relative(target),
         "size_bytes": target.stat().st_size,
-        "backup_path": backup_path,
+        "backup_id": backup.backup_id if backup is not None else None,
+        "backup_path": backup.backup_path if backup is not None else None,
     }
 
 
@@ -676,7 +677,7 @@ def apply_replace_text(step: dict[str, Any]) -> dict[str, Any]:
     if old_text not in original:
         raise ValueError(f"old_text was not found in {relative(target)}")
 
-    backup_path = backup_file(target)
+    backup = create_persistent_backup(target)
     if replace_all:
         updated = original.replace(old_text, new_text)
         replacements = original.count(old_text)
@@ -692,7 +693,8 @@ def apply_replace_text(step: dict[str, Any]) -> dict[str, Any]:
         "path": relative(target),
         "replacements": replacements,
         "size_bytes": target.stat().st_size,
-        "backup_path": backup_path,
+        "backup_id": backup.backup_id if backup is not None else None,
+        "backup_path": backup.backup_path if backup is not None else None,
     }
 
 
@@ -715,7 +717,8 @@ def apply_patch_step(cwd: Path, step: dict[str, Any]) -> dict[str, Any]:
     for patch_path in patch_paths:
         workspace_path = resolve_patch_path(cwd, patch_path)
         if workspace_path.exists() and workspace_path.is_file():
-            backup_ids[patch_path] = backup_file(workspace_path)
+            backup = create_persistent_backup(workspace_path)
+            backup_ids[patch_path] = backup.backup_id if backup is not None else None
         else:
             backup_ids[patch_path] = None
 

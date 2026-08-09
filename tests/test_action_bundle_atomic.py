@@ -15,7 +15,7 @@ from unittest import mock
 from uuid import uuid4
 
 from scripts import command_bundle_runner as runner
-from terminal_bridge import handoffs
+from terminal_bridge import backups, handoffs
 
 
 class ActionBundleAtomicApplyTests(unittest.TestCase):
@@ -27,6 +27,7 @@ class ActionBundleAtomicApplyTests(unittest.TestCase):
         self.runtime_root = root / "runtime"
 
         self.project.mkdir(parents=True)
+        self.original_backup_dir = backups.BACKUP_DIR
         self.original_paths = {
             "WORKSPACE_ROOT": runner.WORKSPACE_ROOT,
             "RUNTIME_ROOT": runner.RUNTIME_ROOT,
@@ -51,7 +52,8 @@ class ActionBundleAtomicApplyTests(unittest.TestCase):
         runner.REJECTED_DIR = runner.COMMAND_BUNDLES_DIR / "rejected"
         runner.FAILED_DIR = runner.COMMAND_BUNDLES_DIR / "failed"
         runner.INTERRUPTED_DIR = runner.COMMAND_BUNDLES_DIR / "interrupted"
-        runner.BACKUP_DIR = self.runtime_root / "command_bundle_file_backups"
+        runner.BACKUP_DIR = self.runtime_root / "backups"
+        backups.BACKUP_DIR = runner.BACKUP_DIR
         runner.TEXT_PAYLOAD_DIR = self.runtime_root / "text_payloads"
         handoffs.HANDOFF_DIR = self.runtime_root / "handoffs"
 
@@ -72,6 +74,7 @@ class ActionBundleAtomicApplyTests(unittest.TestCase):
                 handoffs.HANDOFF_DIR = value
             else:
                 setattr(runner, name, value)
+        backups.BACKUP_DIR = self.original_backup_dir
         self.tmp.cleanup()
 
     def run_git(self, args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -116,6 +119,127 @@ class ActionBundleAtomicApplyTests(unittest.TestCase):
     def applied_record(self, bundle_id: str) -> dict[str, object]:
         return json.loads((runner.APPLIED_DIR / f"{bundle_id}.json").read_text(encoding="utf-8"))
 
+    def backup_entries(self):
+        return backups._list_backup_entries(100)
+
+    def test_overwrite_action_creates_canonical_backup_visible_to_list(self) -> None:
+        legacy_file = self.runtime_root / "command_bundle_file_backups" / "legacy" / "README.md"
+        legacy_file.parent.mkdir(parents=True)
+        legacy_file.write_text("historical\n", encoding="utf-8")
+        bundle_id = self.write_action_bundle(
+            [
+                {
+                    "type": "write_file",
+                    "name": "Overwrite README",
+                    "path": "project/README.md",
+                    "content": "overwritten\n",
+                    "overwrite": True,
+                    "create_parent_dirs": True,
+                    "risk": "medium",
+                }
+            ]
+        )
+
+        self.assertTrue(self.apply_bundle(bundle_id))
+
+        record = self.applied_record(bundle_id)
+        step = record["result"]["steps"][0]
+        backup_id = step["backup_id"]
+        self.assertIsInstance(backup_id, str)
+        entries = {entry.backup_id: entry for entry in self.backup_entries()}
+        self.assertIn(backup_id, entries)
+        entry = entries[backup_id]
+        self.assertEqual(entry.original_path, "project/README.md")
+        self.assertEqual(Path(entry.backup_path).read_text(encoding="utf-8"), "initial\n")
+        self.assertEqual(step["backup_path"], entry.backup_path)
+        self.assertTrue((runner.BACKUP_DIR / backup_id / "manifest.json").exists())
+        self.assertEqual(legacy_file.read_text(encoding="utf-8"), "historical\n")
+
+    def test_append_action_creates_canonical_backup(self) -> None:
+        bundle_id = self.write_action_bundle(
+            [
+                {
+                    "type": "append_file",
+                    "name": "Append README",
+                    "path": "project/README.md",
+                    "content": "appended\n",
+                    "create_parent_dirs": True,
+                    "risk": "medium",
+                }
+            ]
+        )
+
+        self.assertTrue(self.apply_bundle(bundle_id))
+
+        step = self.applied_record(bundle_id)["result"]["steps"][0]
+        backup_id = step["backup_id"]
+        entries = {entry.backup_id: entry for entry in self.backup_entries()}
+        self.assertIn(backup_id, entries)
+        self.assertEqual(Path(entries[backup_id].backup_path).read_text(encoding="utf-8"), "initial\n")
+        self.assertEqual(self.readme.read_text(encoding="utf-8"), "initial\nappended\n")
+
+    def test_replace_actions_create_distinct_canonical_backup_ids(self) -> None:
+        first_bundle = self.write_action_bundle(
+            [
+                {
+                    "type": "replace_text",
+                    "name": "First replace",
+                    "path": "project/README.md",
+                    "old_text": "initial",
+                    "new_text": "first",
+                    "replace_all": False,
+                    "risk": "medium",
+                }
+            ]
+        )
+        self.assertTrue(self.apply_bundle(first_bundle))
+        first_id = self.applied_record(first_bundle)["result"]["steps"][0]["backup_id"]
+
+        second_bundle = self.write_action_bundle(
+            [
+                {
+                    "type": "replace_text",
+                    "name": "Second replace",
+                    "path": "project/README.md",
+                    "old_text": "first",
+                    "new_text": "second",
+                    "replace_all": False,
+                    "risk": "medium",
+                }
+            ]
+        )
+        self.assertTrue(self.apply_bundle(second_bundle))
+        second_id = self.applied_record(second_bundle)["result"]["steps"][0]["backup_id"]
+
+        self.assertIsInstance(first_id, str)
+        self.assertIsInstance(second_id, str)
+        self.assertNotEqual(first_id, second_id)
+        entries = {entry.backup_id: entry for entry in self.backup_entries()}
+        self.assertEqual(Path(entries[first_id].backup_path).read_text(encoding="utf-8"), "initial\n")
+        self.assertEqual(Path(entries[second_id].backup_path).read_text(encoding="utf-8"), "first\n")
+
+    def test_new_file_action_creates_no_persistent_backup(self) -> None:
+        bundle_id = self.write_action_bundle(
+            [
+                {
+                    "type": "write_file",
+                    "name": "Create generated file",
+                    "path": "project/generated.txt",
+                    "content": "new\n",
+                    "overwrite": False,
+                    "create_parent_dirs": True,
+                    "risk": "medium",
+                }
+            ]
+        )
+
+        self.assertTrue(self.apply_bundle(bundle_id))
+
+        step = self.applied_record(bundle_id)["result"]["steps"][0]
+        self.assertIsNone(step["backup_id"])
+        self.assertIsNone(step["backup_path"])
+        self.assertEqual(self.backup_entries(), [])
+
     def test_failed_action_rolls_back_prior_replace_text(self) -> None:
         bundle_id = self.write_action_bundle(
             [
@@ -148,6 +272,7 @@ class ActionBundleAtomicApplyTests(unittest.TestCase):
         self.assertIn("Action 2 failed: Missing text", str(record["error"]))
         self.assertIn("type: replace_text", str(record["error"]))
         self.assertIn("rollback: completed", str(record["error"]))
+        self.assertEqual(len(self.backup_entries()), 1)
 
     def test_failed_action_removes_created_untracked_file(self) -> None:
         new_file = self.project / "generated.txt"

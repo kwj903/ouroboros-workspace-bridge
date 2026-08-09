@@ -16,6 +16,10 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 - The canonical 31-tool public MCP manifest now drives `workspace_info` and smoke/schema checks, and runtime-mutating proposal/payload/cancel tools advertise non-read-only annotations that reflect YOLO auto-execution semantics.
 - `terminalbridge` remains the normal full-stack operator CLI while `woojae` remains the lower-level diagnostic/update CLI; their shared version rendering now uses one common helper.
 
+### Fixed
+
+- Command-bundle write/append/replace/patch mutations now create persistent backups in the canonical `backups/` manifest store, so their `backup_id` records are visible through public `workspace_list_backups`; historical `command_bundle_file_backups/` data remains untouched for compatibility.
+
 ## 0.6.0 - 2026-08-07
 
 ### Changed

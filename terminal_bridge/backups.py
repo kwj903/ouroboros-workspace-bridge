@@ -6,38 +6,63 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from terminal_bridge import safety
 from terminal_bridge.config import BACKUP_DIR
 from terminal_bridge.models import BackupEntry, BackupRestoreResult
-from terminal_bridge.safety import _relative, _resolve_workspace_path
-from terminal_bridge.storage import _now_iso, _sha256_bytes
+from terminal_bridge.storage import _now_iso, _sha256_bytes, _write_json_atomic
 
 
 def _sha256_file(path: Path) -> str:
     return _sha256_bytes(path.read_bytes())
 
 
-def _backup_file(path: Path) -> str | None:
+def _workspace_relative(path: Path, workspace_root: Path) -> str:
+    target = path.absolute()
+    root = workspace_root.absolute()
+    try:
+        return str(target.relative_to(root))
+    except ValueError as exc:
+        raise ValueError(f"Backup path escapes WORKSPACE_ROOT: {path}") from exc
+
+
+def _create_backup_entry(
+    path: Path,
+    *,
+    backup_dir: Path | None = None,
+    workspace_root: Path | None = None,
+) -> BackupEntry | None:
+    """Create one canonical persistent file backup and return its manifest entry."""
+
     if not path.exists() or not path.is_file():
         return None
 
+    target_backup_dir = BACKUP_DIR if backup_dir is None else backup_dir
+    target_workspace_root = safety.WORKSPACE_ROOT if workspace_root is None else workspace_root
     backup_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-    rel = _relative(path)
-    target = BACKUP_DIR / backup_id / rel
+    rel = _workspace_relative(path, target_workspace_root)
+    target = target_backup_dir / backup_id / rel
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, target)
 
-    manifest = {
-        "backup_id": backup_id,
-        "original_path": rel,
-        "backup_path": str(target),
-        "sha256": _sha256_file(path),
-        "created_at": _now_iso(),
-    }
+    entry = BackupEntry(
+        backup_id=backup_id,
+        original_path=rel,
+        backup_path=str(target),
+        sha256=_sha256_file(path),
+        created_at=_now_iso(),
+    )
+    _write_json_atomic(
+        target_backup_dir / backup_id / "manifest.json",
+        entry.model_dump(),
+    )
+    return entry
 
-    manifest_path = BACKUP_DIR / backup_id / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    return backup_id
+def _backup_file(path: Path) -> str | None:
+    """Compatibility wrapper returning the canonical backup identifier only."""
+
+    entry = _create_backup_entry(path)
+    return entry.backup_id if entry is not None else None
 
 
 def _read_backup_manifest(backup_id: str) -> dict[str, object]:
@@ -76,14 +101,16 @@ def _list_backup_entries(limit: int) -> list[BackupEntry]:
 
 def _restore_backup_payload(backup_id: str, overwrite: bool) -> BackupRestoreResult:
     manifest = _read_backup_manifest(backup_id)
-    original = _resolve_workspace_path(str(manifest["original_path"]))
+    original = safety._resolve_workspace_path(str(manifest["original_path"]))
     backup_path = Path(str(manifest["backup_path"]))
 
     if not backup_path.exists() or not backup_path.is_file():
         raise FileNotFoundError(f"Backup payload not found: {backup_id}")
 
     if original.exists() and not overwrite:
-        raise FileExistsError(f"Original path already exists. Set overwrite=true: {_relative(original)}")
+        raise FileExistsError(
+            f"Original path already exists. Set overwrite=true: {safety._relative(original)}"
+        )
 
     backup_id_before_overwrite = None
     if original.exists() and overwrite:
@@ -94,7 +121,7 @@ def _restore_backup_payload(backup_id: str, overwrite: bool) -> BackupRestoreRes
 
     return BackupRestoreResult(
         backup_id=backup_id,
-        restored_path=_relative(original),
+        restored_path=safety._relative(original),
         sha256=_sha256_file(original),
         backup_id_before_overwrite=backup_id_before_overwrite,
     )
