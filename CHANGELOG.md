@@ -19,6 +19,8 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 ### Fixed
 
 - Command-bundle write/append/replace/patch mutations now create persistent backups in the canonical `backups/` manifest store, so their `backup_id` records are visible through public `workspace_list_backups`; historical `command_bundle_file_backups/` data remains untouched for compatibility.
+- Windows stale-running recovery now checks process liveness through the Win32 process API instead of POSIX-style `os.kill(pid, 0)`, preventing CI console interrupts and avoiding unsafe Windows signal semantics.
+- Canonical backup manifests now persist workspace-relative paths with `/` separators on every platform so backup list/restore contracts remain stable on Windows as well as POSIX systems.
 
 ## 0.6.0 - 2026-08-07
 

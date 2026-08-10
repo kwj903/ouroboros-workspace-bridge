@@ -20,7 +20,7 @@ def _workspace_relative(path: Path, workspace_root: Path) -> str:
     target = path.absolute()
     root = workspace_root.absolute()
     try:
-        return str(target.relative_to(root))
+        return target.relative_to(root).as_posix()
     except ValueError as exc:
         raise ValueError(f"Backup path escapes WORKSPACE_ROOT: {path}") from exc
 

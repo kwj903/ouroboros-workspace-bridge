@@ -483,11 +483,49 @@ def _parse_bundle_timestamp(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _windows_process_is_alive(pid: int) -> bool | None:
+    """Return process liveness on Windows without using os.kill()."""
+
+    import ctypes
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+    error_access_denied = 5
+    error_invalid_parameter = 87
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    kernel32.GetExitCodeProcess.restype = ctypes.c_int
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+
+    handle = kernel32.OpenProcess(process_query_limited_information, 0, pid)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == error_access_denied:
+            return True
+        if error == error_invalid_parameter:
+            return False
+        return None
+
+    try:
+        exit_code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return None
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _process_is_alive(value: object) -> bool | None:
     """Return process liveness when a usable PID was recorded."""
 
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         return None
+    if os.name == "nt":
+        return _windows_process_is_alive(value)
     try:
         os.kill(value, 0)
     except ProcessLookupError:

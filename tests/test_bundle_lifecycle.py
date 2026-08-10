@@ -229,6 +229,17 @@ class BundleLifecycleTests(unittest.TestCase):
 
         self.assertEqual(loaded["status"], "running")
 
+    def test_windows_process_probe_does_not_use_os_kill(self) -> None:
+        with (
+            mock.patch.object(bundles.os, "name", "nt"),
+            mock.patch.object(bundles, "_windows_process_is_alive", return_value=False) as windows_probe,
+            mock.patch.object(bundles.os, "kill") as kill,
+        ):
+            self.assertFalse(bundles._process_is_alive(12345))
+
+        windows_probe.assert_called_once_with(12345)
+        kill.assert_not_called()
+
     def test_stale_running_record_becomes_interrupted_without_replay(self) -> None:
         bundle_id = "cmd-stale-running"
         old = datetime.now(timezone.utc) - timedelta(days=2)

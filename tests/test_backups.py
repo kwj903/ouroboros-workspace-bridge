@@ -34,6 +34,7 @@ class CanonicalBackupTests(unittest.TestCase):
         self.assertIsNotNone(entry)
         assert entry is not None
         self.assertTrue((self.backup_dir / entry.backup_id / "manifest.json").exists())
+        self.assertEqual(entry.original_path, "project/file.txt")
         self.assertEqual(Path(entry.backup_path).read_text(encoding="utf-8"), "before\n")
 
         listed = backups._list_backup_entries(10)
