@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import html
 import hmac
@@ -47,6 +48,12 @@ from terminal_bridge.commands import (
     _validate_command_args,
     _validate_exec_argv,
 )
+from terminal_bridge.cloudflare_access import (
+    CloudflareAccessJWTVerifier,
+    CloudflareAccessSettings,
+    CloudflareAccessVerificationError,
+    access_jwt_from_headers,
+)
 from terminal_bridge.config import (
     AUDIT_LOG,
     DEFAULT_BUNDLE_POLL_INTERVAL_SECONDS,
@@ -70,6 +77,8 @@ from terminal_bridge.config import (
     MAX_TREE_ENTRIES,
     MAX_WRITE_CHARS,
     MCP_ACCESS_TOKEN,
+    CLOUDFLARE_ACCESS_AUDIENCE,
+    CLOUDFLARE_ACCESS_TEAM_DOMAIN,
     MCP_EXPOSE_DIRECT_MUTATION_TOOLS,
     MCP_HOST,
     MCP_PORT,
@@ -670,12 +679,18 @@ async def _approve_intent_endpoint(request: object):
 
 
 class AccessTokenMiddleware:
-    def __init__(self, app: object, access_token: str | None) -> None:
+    def __init__(
+        self,
+        app: object,
+        access_token: str | None,
+        access_jwt_verifier: CloudflareAccessJWTVerifier | None = None,
+    ) -> None:
         self.app = app
         self.access_token = access_token
+        self.access_jwt_verifier = access_jwt_verifier
 
     async def __call__(self, scope: dict[str, object], receive: object, send: object) -> None:
-        if scope.get("type") != "http" or not self.access_token:
+        if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
 
@@ -693,6 +708,16 @@ class AccessTokenMiddleware:
         if _is_authorized_mcp_request(headers, query_string, self.access_token):
             await self.app(scope, receive, send)
             return
+
+        access_jwt = access_jwt_from_headers(headers)
+        if self.access_jwt_verifier is not None and access_jwt is not None:
+            try:
+                await asyncio.to_thread(self.access_jwt_verifier.verify, access_jwt)
+            except CloudflareAccessVerificationError:
+                pass
+            else:
+                await self.app(scope, receive, send)
+                return
 
         await send(
             {
@@ -712,6 +737,25 @@ class AccessTokenMiddleware:
         )
 
 
+def _cloudflare_access_verifier() -> CloudflareAccessJWTVerifier | None:
+    configured = bool(CLOUDFLARE_ACCESS_TEAM_DOMAIN or CLOUDFLARE_ACCESS_AUDIENCE)
+    if not configured:
+        return None
+    if not CLOUDFLARE_ACCESS_TEAM_DOMAIN or not CLOUDFLARE_ACCESS_AUDIENCE:
+        raise SystemExit(
+            "Cloudflare Access Managed OAuth requires both "
+            "CLOUDFLARE_ACCESS_TEAM_DOMAIN and CLOUDFLARE_ACCESS_AUDIENCE."
+        )
+    try:
+        settings = CloudflareAccessSettings(
+            team_domain=CLOUDFLARE_ACCESS_TEAM_DOMAIN,
+            audience=CLOUDFLARE_ACCESS_AUDIENCE,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"Invalid Cloudflare Access configuration: {exc}") from exc
+    return CloudflareAccessJWTVerifier(settings)
+
+
 def _run_server() -> None:
     if not MCP_ACCESS_TOKEN:
         raise SystemExit(
@@ -723,7 +767,11 @@ def _run_server() -> None:
     from starlette.routing import Mount, Route
     import uvicorn
 
-    protected_mcp_app = AccessTokenMiddleware(mcp.streamable_http_app(), MCP_ACCESS_TOKEN)
+    protected_mcp_app = AccessTokenMiddleware(
+        mcp.streamable_http_app(),
+        MCP_ACCESS_TOKEN,
+        access_jwt_verifier=_cloudflare_access_verifier(),
+    )
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette):

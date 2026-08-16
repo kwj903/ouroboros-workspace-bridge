@@ -10,6 +10,14 @@ uv run terminalbridge status
 
 `uv run woojae ...` remains available as the low-level Bridge supervisor for debugging and compatibility.
 
+For an OS service manager, run the full stack as one foreground lifecycle instead of periodically re-running `start`:
+
+```bash
+uv run terminalbridge supervise
+```
+
+`supervise` stays alive, reuses healthy review/MCP/tunnel children, reaps exited children, and restarts only missing managed processes. A service manager such as macOS launchd should own this foreground process with its native restart policy (`RunAtLoad` + `KeepAlive` on launchd); a `StartInterval` polling job is not needed. `terminalbridge stop` explicitly pauses managed children while the supervisor remains alive, and `terminalbridge start` resumes normal supervision.
+
 ## Ownership rule
 
 Every installation uses infrastructure owned by that user:
@@ -87,6 +95,30 @@ http://127.0.0.1:8790/pending
 ```
 
 Cloudflare account login, tunnel creation, DNS routing, credential storage, and config ownership remain the user's responsibility. The project only starts and stops the configured connector.
+
+### Optional Cloudflare Access Managed OAuth
+
+OAuth-capable MCP clients can use Cloudflare Access Managed OAuth instead of placing the existing `MCP_ACCESS_TOKEN` in their connector URL. This is an **additional authentication path**, not a replacement for static-token authentication, so an existing ChatGPT connector and an OAuth client can share the same local MCP server.
+
+Configure both values to enable Access JWT verification at the origin:
+
+```text
+CLOUDFLARE_ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
+CLOUDFLARE_ACCESS_AUDIENCE=<access-application-aud>
+```
+
+Configuring only one value fails closed. Leaving both unset preserves the existing `MCP_ACCESS_TOKEN` behavior only.
+
+For Managed OAuth, protect the MCP hostname/path with a Cloudflare Access self-hosted application and store that application's exact AUD and team domain in the private Bridge runtime settings. Before a request reaches FastMCP, the origin validates the `Cf-Access-Jwt-Assertion` provided after Access authentication, including:
+
+- RS256 and `kid`;
+- the rotating Cloudflare team JWKS signature;
+- exact issuer and audience;
+- expiry.
+
+To preserve an existing connector, a useful deployment pattern is a second OAuth-only hostname routed through the same tunnel to the same `127.0.0.1:8787` origin. Set Cloudflare ingress `httpHostHeader` to the existing `PUBLIC_MCP_URL` hostname so FastMCP's host allowlist does not need to expand.
+
+Do not persist OAuth client secrets, access tokens, refresh tokens, or raw application JWTs in Git or operator documentation.
 
 ## Generic external mode
 

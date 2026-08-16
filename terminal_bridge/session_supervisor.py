@@ -36,6 +36,8 @@ class SessionSettings:
     cloudflared_config_path: str = ""
     cloudflared_tunnel_name: str = ""
     cloudflared_bin: str = "cloudflared"
+    cloudflare_access_team_domain: str = ""
+    cloudflare_access_audience: str = ""
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8787
     review_host: str = "127.0.0.1"
@@ -85,6 +87,14 @@ class SessionSettings:
         env["CLOUDFLARED_CONFIG_PATH"] = self.cloudflared_config_path
         env["CLOUDFLARED_TUNNEL_NAME"] = self.cloudflared_tunnel_name
         env["CLOUDFLARED_BIN"] = self.cloudflared_bin
+        if self.cloudflare_access_team_domain:
+            env["CLOUDFLARE_ACCESS_TEAM_DOMAIN"] = self.cloudflare_access_team_domain
+        else:
+            env.pop("CLOUDFLARE_ACCESS_TEAM_DOMAIN", None)
+        if self.cloudflare_access_audience:
+            env["CLOUDFLARE_ACCESS_AUDIENCE"] = self.cloudflare_access_audience
+        else:
+            env.pop("CLOUDFLARE_ACCESS_AUDIENCE", None)
         env["WOOJAE_HELP_LANG"] = self.help_language
         if self.mcp_access_token:
             env["MCP_ACCESS_TOKEN"] = self.mcp_access_token
@@ -289,6 +299,12 @@ def load_settings(*, strict_public_access: bool = True) -> SessionSettings:
         ).strip(),
         cloudflared_bin=session_value("CLOUDFLARED_BIN", "cloudflared_bin").strip()
         or "cloudflared",
+        cloudflare_access_team_domain=session_value(
+            "CLOUDFLARE_ACCESS_TEAM_DOMAIN", "cloudflare_access_team_domain"
+        ).strip(),
+        cloudflare_access_audience=session_value(
+            "CLOUDFLARE_ACCESS_AUDIENCE", "cloudflare_access_audience"
+        ).strip(),
         mcp_host=session_value("MCP_HOST", "mcp_host") or "127.0.0.1",
         mcp_port=int_session_value("MCP_PORT", "mcp_port", 8787),
         review_host=session_value("BUNDLE_REVIEW_HOST", "review_host") or "127.0.0.1",
@@ -322,6 +338,8 @@ def write_session_files(settings: SessionSettings) -> None:
                 "cloudflared_config_path": settings.cloudflared_config_path,
                 "cloudflared_tunnel_name": settings.cloudflared_tunnel_name,
                 "cloudflared_bin": settings.cloudflared_bin,
+                "cloudflare_access_team_domain": settings.cloudflare_access_team_domain,
+                "cloudflare_access_audience": settings.cloudflare_access_audience,
                 "workspace_root": str(settings.workspace_root),
                 "mcp_host": settings.mcp_host,
                 "mcp_port": settings.mcp_port,
@@ -347,6 +365,8 @@ def write_session_files(settings: SessionSettings) -> None:
         f"export CLOUDFLARED_CONFIG_PATH={shlex.quote(settings.cloudflared_config_path)}",
         f"export CLOUDFLARED_TUNNEL_NAME={shlex.quote(settings.cloudflared_tunnel_name)}",
         f"export CLOUDFLARED_BIN={shlex.quote(settings.cloudflared_bin)}",
+        f"export CLOUDFLARE_ACCESS_TEAM_DOMAIN={shlex.quote(settings.cloudflare_access_team_domain)}",
+        f"export CLOUDFLARE_ACCESS_AUDIENCE={shlex.quote(settings.cloudflare_access_audience)}",
         f"export WORKSPACE_ROOT={shlex.quote(str(settings.workspace_root))}",
         f"export MCP_HOST={shlex.quote(settings.mcp_host)}",
         f"export MCP_PORT={shlex.quote(str(settings.mcp_port))}",
@@ -482,6 +502,8 @@ def configure() -> int:
         cloudflared_config_path=cloudflared_config_path,
         cloudflared_tunnel_name=cloudflared_tunnel_name,
         cloudflared_bin=cloudflared_bin,
+        cloudflare_access_team_domain=current.cloudflare_access_team_domain,
+        cloudflare_access_audience=current.cloudflare_access_audience,
         mcp_host=prompt_text("MCP_HOST", current.mcp_host),
         mcp_port=int(prompt_text("MCP_PORT", str(current.mcp_port))),
         review_host=prompt_text("BUNDLE_REVIEW_HOST", current.review_host),
@@ -551,11 +573,33 @@ def _windows_pid_is_alive(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
+def reap_exited_children() -> list[int]:
+    if is_windows():
+        return []
+    reaped: list[int] = []
+    while True:
+        try:
+            waited_pid, _status = os.waitpid(-1, os.WNOHANG)
+        except (ChildProcessError, OSError):
+            break
+        if waited_pid <= 0:
+            break
+        reaped.append(waited_pid)
+    return reaped
+
+
 def is_pid_alive(pid: int | None) -> bool:
     if pid is None or pid < 1:
         return False
     if is_windows():
         return _windows_pid_is_alive(pid)
+    try:
+        waited_pid, _status = os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        pass
+    else:
+        if waited_pid == pid:
+            return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

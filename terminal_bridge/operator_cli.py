@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import signal
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -24,6 +26,8 @@ CLOUDFLARED_SERVICE = "cloudflared"
 PROCESS_METADATA_VERSION = 1
 LOCAL_READY_TIMEOUT_SECONDS = 15.0
 PUBLIC_READY_TIMEOUT_SECONDS = 20.0
+SUPERVISOR_LIVENESS_INTERVAL_SECONDS = 30.0
+OPERATOR_PAUSE_FILENAME = "operator.paused"
 
 
 def selected_operator_mode(settings: supervisor.SessionSettings) -> str:
@@ -412,6 +416,26 @@ def wait_for_public_endpoint(
     return None
 
 
+def operator_pause_file(settings: supervisor.SessionSettings) -> Path:
+    return settings.process_dir / OPERATOR_PAUSE_FILENAME
+
+
+def operator_is_paused(settings: supervisor.SessionSettings) -> bool:
+    return operator_pause_file(settings).exists()
+
+
+def set_operator_paused(
+    settings: supervisor.SessionSettings,
+    paused: bool,
+) -> None:
+    path = operator_pause_file(settings)
+    if paused:
+        settings.process_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text("paused\n", encoding="utf-8")
+    else:
+        path.unlink(missing_ok=True)
+
+
 def start_operator(mode: str | None = None) -> int:
     settings = (
         persist_operator_mode(mode)
@@ -421,43 +445,49 @@ def start_operator(mode: str | None = None) -> int:
     selected = selected_operator_mode(settings)
     if selected == "cloudflare":
         cloudflared_command(settings)
+    set_operator_paused(settings, True)
     print(f"Starting Terminal Bridge operator mode: {selected}")
 
-    code = 0
-    if selected == "cloudflare":
-        code = max(code, supervisor.stop_service("ngrok"))
-    else:
-        code = max(code, stop_cloudflared(settings))
-
-    code = max(code, supervisor.start_session())
-    settings = supervisor.load_settings()
-    if not wait_for_local_bridge(settings):
-        print("[error] Review or MCP service did not become ready.", file=sys.stderr)
-        supervisor.stop_session()
-        return max(code, 1)
-
-    if selected == "cloudflare":
-        connector_code = start_cloudflared(settings)
-        code = max(code, connector_code)
-        if connector_code != 0:
-            supervisor.stop_session()
-            return code
-        status = wait_for_public_endpoint(settings)
-        if status is None:
-            print(
-                "[warn] Cloudflare connector is running but the public endpoint is not reachable yet."
-            )
-            code = max(code, 1)
+    try:
+        code = 0
+        if selected == "cloudflare":
+            code = max(code, supervisor.stop_service("ngrok"))
         else:
-            print(f"[ok] Public endpoint reachable: HTTP {status}")
-    elif selected == "external":
-        print("[info] External tunnel lifecycle remains operator-managed.")
+            code = max(code, stop_cloudflared(settings))
 
-    return code
+        code = max(code, supervisor.start_session())
+        settings = supervisor.load_settings()
+        if not wait_for_local_bridge(settings):
+            print("[error] Review or MCP service did not become ready.", file=sys.stderr)
+            supervisor.stop_session()
+            return max(code, 1)
+
+        if selected == "cloudflare":
+            connector_code = start_cloudflared(settings)
+            code = max(code, connector_code)
+            if connector_code != 0:
+                supervisor.stop_session()
+                return code
+            status = wait_for_public_endpoint(settings)
+            if status is None:
+                print(
+                    "[warn] Cloudflare connector is running but the public endpoint is not reachable yet."
+                )
+                code = max(code, 1)
+            else:
+                print(f"[ok] Public endpoint reachable: HTTP {status}")
+        elif selected == "external":
+            print("[info] External tunnel lifecycle remains operator-managed.")
+
+        return code
+    finally:
+        set_operator_paused(settings, False)
 
 
-def stop_operator() -> int:
+def stop_operator(*, pause_supervisor: bool = True) -> int:
     settings = supervisor.load_settings(strict_public_access=False)
+    if pause_supervisor:
+        set_operator_paused(settings, True)
     print("Stopping Terminal Bridge operator session")
     code = stop_cloudflared(settings)
     code = max(code, supervisor.stop_session())
@@ -465,8 +495,112 @@ def stop_operator() -> int:
 
 
 def restart_operator(mode: str | None = None) -> int:
-    code = stop_operator()
+    code = stop_operator(pause_supervisor=False)
     return max(code, start_operator(mode))
+
+
+def _local_service_is_alive(
+    settings: supervisor.SessionSettings,
+    service: str,
+) -> bool:
+    pid = supervisor.read_pid(supervisor.pid_file(settings, service))
+    if pid is not None and supervisor.is_pid_alive(pid):
+        return True
+    host, port = supervisor.service_endpoint(settings, service)
+    return bool(
+        pid is None
+        and host
+        and port
+        and supervisor.tcp_reachable(host, port, timeout_seconds=0.05)
+    )
+
+
+def _ensure_supervised_processes(settings: supervisor.SessionSettings) -> int:
+    code = 0
+    for service in supervisor.active_services(settings):
+        if _local_service_is_alive(settings, service):
+            continue
+        code = max(code, supervisor.start_service(service))
+
+    if selected_operator_mode(settings) == "cloudflare":
+        pid = supervisor.read_pid(cloudflared_pid_file(settings))
+        if pid is None or not supervisor.is_pid_alive(pid):
+            code = max(code, start_cloudflared(settings))
+    return code
+
+
+def supervise_operator(
+    *,
+    liveness_interval_seconds: float = SUPERVISOR_LIVENESS_INTERVAL_SECONDS,
+) -> int:
+    settings = supervisor.load_settings()
+    selected = selected_operator_mode(settings)
+    if selected == "cloudflare":
+        cloudflared_command(settings)
+
+    stop_event = threading.Event()
+    wake_event = threading.Event()
+    previous_handlers: dict[int, object] = {}
+
+    def request_stop(_signum: int, _frame: object) -> None:
+        stop_event.set()
+        wake_event.set()
+
+    def child_changed(_signum: int, _frame: object) -> None:
+        wake_event.set()
+
+    signal_handlers = [
+        (signal.SIGTERM, request_stop),
+        (signal.SIGINT, request_stop),
+    ]
+    if hasattr(signal, "SIGCHLD") and not supervisor.is_windows():
+        signal_handlers.append((signal.SIGCHLD, child_changed))
+
+    for signum, handler in signal_handlers:
+        try:
+            previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, handler)
+        except (OSError, ValueError):
+            pass
+
+    print(f"Supervising Terminal Bridge operator mode: {selected}")
+    try:
+        code = 0
+        if operator_is_paused(settings):
+            print("[info] Terminal Bridge operator is explicitly stopped; waiting for start.")
+        else:
+            if selected == "cloudflare":
+                code = max(code, supervisor.stop_service("ngrok"))
+            else:
+                code = max(code, stop_cloudflared(settings))
+            code = max(code, _ensure_supervised_processes(settings))
+            if code != 0:
+                return code
+
+        while not stop_event.is_set():
+            wake_event.wait(liveness_interval_seconds)
+            wake_event.clear()
+            supervisor.reap_exited_children()
+            if stop_event.is_set():
+                break
+            if operator_is_paused(settings):
+                continue
+            code = _ensure_supervised_processes(settings)
+            if code != 0:
+                print(
+                    "[error] Failed to recover a managed Terminal Bridge process.",
+                    file=sys.stderr,
+                )
+                return code
+        return 0
+    finally:
+        for signum, previous in previous_handlers.items():
+            try:
+                signal.signal(signum, previous)
+            except (OSError, ValueError):
+                pass
+        print("Stopping supervised Terminal Bridge operator session")
+        stop_operator(pause_supervisor=False)
 
 
 def print_cloudflared_status(settings: supervisor.SessionSettings) -> None:
@@ -574,6 +708,11 @@ def build_parser() -> argparse.ArgumentParser:
     start = subparsers.add_parser("start", help="Start Bridge and the selected public connector.")
     start.add_argument("--mode", choices=tuple(sorted(public_access.OPERATOR_MODES)))
 
+    subparsers.add_parser(
+        "supervise",
+        help="Run Bridge and the selected public connector under a foreground lifecycle supervisor.",
+    )
+
     subparsers.add_parser("stop", help="Stop Bridge and every managed public connector.")
 
     restart = subparsers.add_parser("restart", help="Restart Bridge and the selected public connector.")
@@ -609,6 +748,8 @@ def _main(argv: list[str] | None = None) -> int:
         return doctor_operator()
     if args.command == "start":
         return start_operator(args.mode)
+    if args.command == "supervise":
+        return supervise_operator()
     if args.command == "stop":
         return stop_operator()
     if args.command == "restart":

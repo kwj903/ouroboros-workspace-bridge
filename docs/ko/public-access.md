@@ -10,6 +10,14 @@ uv run terminalbridge status
 
 `uv run woojae ...`는 디버깅과 하위 호환을 위한 저수준 Bridge supervisor 명령으로 계속 사용할 수 있습니다.
 
+OS 서비스 매니저에서 운영할 때는 `start`를 주기적으로 다시 실행하는 polling 대신 전체 스택을 하나의 foreground lifecycle로 실행합니다.
+
+```bash
+uv run terminalbridge supervise
+```
+
+`supervise`는 계속 실행되면서 정상 review/MCP/tunnel child를 재사용하고, 종료된 child를 회수(reap)한 뒤 누락된 관리 프로세스만 다시 시작합니다. macOS launchd 같은 서비스 매니저는 이 foreground 프로세스를 자체 재시작 정책으로 관리하면 됩니다(`RunAtLoad` + `KeepAlive`). 따라서 `StartInterval` polling은 필요하지 않습니다. `terminalbridge stop`은 supervisor를 유지한 채 관리 child를 명시적 정지 상태로 두며, `terminalbridge start`가 정상 supervision을 다시 시작합니다.
+
 ## 사용자별 소유 원칙
 
 각 설치는 반드시 해당 사용자가 소유한 인프라를 사용합니다.
@@ -87,6 +95,30 @@ http://127.0.0.1:8790/pending
 ```
 
 Cloudflare 계정 로그인, tunnel 생성, DNS route, credential 저장과 config 소유권은 각 사용자의 책임입니다. 프로젝트는 사용자가 지정한 connector를 시작하고 중지하는 역할만 합니다.
+
+### 선택형 Cloudflare Access Managed OAuth
+
+OAuth를 지원하는 MCP client에는 기존 `MCP_ACCESS_TOKEN`을 URL에 전달하는 대신 Cloudflare Access Managed OAuth를 추가할 수 있습니다. 이 기능은 기존 정적 token 인증을 대체하지 않고 **추가 인증 경로**로 동작하므로, 기존 ChatGPT connector와 OAuth client가 같은 로컬 MCP 서버를 공유할 수 있습니다.
+
+원본에서 Access JWT 검증을 활성화하려면 두 값을 함께 설정합니다.
+
+```text
+CLOUDFLARE_ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
+CLOUDFLARE_ACCESS_AUDIENCE=<access-application-aud>
+```
+
+두 값 중 하나만 설정된 상태는 fail-closed로 거부됩니다. 둘 다 설정되지 않으면 기존 `MCP_ACCESS_TOKEN` 동작만 유지합니다.
+
+Managed OAuth를 사용할 때는 Cloudflare Access self-hosted application을 MCP hostname/path에 적용하고, 해당 application의 정확한 AUD와 team domain을 Bridge runtime 설정에 저장합니다. Cloudflare가 인증 후 원본에 전달하는 `Cf-Access-Jwt-Assertion`은 FastMCP 도달 전에 다음을 검증합니다.
+
+- RS256 및 `kid`
+- Cloudflare team의 rotating JWKS 서명
+- 정확한 issuer와 audience
+- 만료 시간
+
+기존 connector를 깨지 않으려면 같은 tunnel과 같은 `127.0.0.1:8787` origin을 사용하되 OAuth client용 별도 hostname을 두는 구성이 유용합니다. 이 경우 Cloudflare ingress의 `httpHostHeader`를 기존 `PUBLIC_MCP_URL` hostname으로 유지하면 FastMCP의 host allowlist를 넓히지 않아도 됩니다.
+
+OAuth client secret, Access token, refresh token, application JWT 원문은 runtime 문서나 Git에 저장하지 않습니다.
 
 ## 일반 external 모드
 

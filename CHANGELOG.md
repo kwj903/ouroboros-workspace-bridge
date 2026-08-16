@@ -6,6 +6,8 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 ### Added
 
+- `terminalbridge supervise` provides a foreground lifecycle for service managers such as macOS launchd. It keeps the existing review/MCP/tunnel processes under one supervisor, immediately recovers exited managed children, preserves explicit `terminalbridge stop`/`start` semantics, and removes the need for periodic CLI relaunch polling.
+- Optional Cloudflare Access Managed OAuth authentication can now coexist with the existing `MCP_ACCESS_TOKEN` flow. When a trusted Access team domain and application audience are configured, the MCP origin verifies the `Cf-Access-Jwt-Assertion` signature, issuer, audience, and expiry against Cloudflare's rotating JWKS without changing the 31-tool public MCP schema.
 - Public `workspace_propose_*_and_wait` tools accept an optional `retry_id`; omitting it preserves final-result idempotent replay, while a new value creates one deliberate new attempt without changing task, client, session, or project identity.
 
 ### Changed
@@ -18,6 +20,7 @@ This project uses a lightweight changelog format inspired by Keep a Changelog.
 
 ### Fixed
 
+- Cloudflare Access authentication is additive rather than replacing static token authentication, so existing ChatGPT connectors can keep using the same MCP origin while OAuth-capable clients use an Access-protected hostname routed to that origin.
 - Command-bundle write/append/replace/patch mutations now create persistent backups in the canonical `backups/` manifest store, so their `backup_id` records are visible through public `workspace_list_backups`; historical `command_bundle_file_backups/` data remains untouched for compatibility.
 - Windows stale-running recovery now checks process liveness through the Win32 process API instead of POSIX-style `os.kill(pid, 0)`, preventing CI console interrupts and avoiding unsafe Windows signal semantics.
 - Canonical backup manifests now persist workspace-relative paths with `/` separators on every platform so backup list/restore contracts remain stable on Windows as well as POSIX systems.

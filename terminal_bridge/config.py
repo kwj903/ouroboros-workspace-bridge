@@ -339,6 +339,19 @@ PUBLIC_MCP_HOST = public_access.public_mcp_hostname(
 # MCP 접근 토큰입니다. 외부 connector 요청을 인증할 때 사용되며, 값 자체를 로그/출력에 노출하면 안 됩니다.
 MCP_ACCESS_TOKEN = os.getenv("MCP_ACCESS_TOKEN")
 
+# 선택적으로 Cloudflare Access Managed OAuth 인증을 함께 허용합니다.
+# 두 값은 비밀이 아니지만 정확한 Access 애플리케이션 identity에 고정되어야 합니다.
+CLOUDFLARE_ACCESS_TEAM_DOMAIN = (
+    os.getenv("CLOUDFLARE_ACCESS_TEAM_DOMAIN")
+    or _session_env_value("CLOUDFLARE_ACCESS_TEAM_DOMAIN")
+    or ""
+).strip()
+CLOUDFLARE_ACCESS_AUDIENCE = (
+    os.getenv("CLOUDFLARE_ACCESS_AUDIENCE")
+    or _session_env_value("CLOUDFLARE_ACCESS_AUDIENCE")
+    or ""
+).strip()
+
 # 직접 변경 도구 노출 스위치입니다.
 # 기본값은 False이며, public schema에는 review-gated proposal 도구를 우선 노출합니다.
 # 정말 필요한 개발/디버그 상황에서만 MCP_EXPOSE_DIRECT_MUTATION_TOOLS=1로 켭니다.

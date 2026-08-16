@@ -70,6 +70,11 @@ class OperatorModeTests(unittest.TestCase):
         self.assertEqual(args.command, "start")
         self.assertEqual(args.mode, "cloudflare")
 
+    def test_parser_accepts_supervise(self) -> None:
+        args = operator_cli.build_parser().parse_args(["supervise"])
+
+        self.assertEqual(args.command, "supervise")
+
     def test_parser_accepts_setup_ui_options(self) -> None:
         args = operator_cli.build_parser().parse_args(
             ["setup-ui", "--port", "8891", "--no-open"]
@@ -411,6 +416,173 @@ class CloudflaredLifecycleTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(calls, ["stop:cloudflared", "start:bridge"])
 
+    def test_supervisor_restarts_only_missing_local_process(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = make_settings(tmp)
+            with (
+                mock.patch.object(
+                    operator_cli.supervisor,
+                    "active_services",
+                    return_value=("review", "mcp"),
+                ),
+                mock.patch.object(
+                    operator_cli,
+                    "_local_service_is_alive",
+                    side_effect=lambda _settings, service: service == "review",
+                ),
+                mock.patch.object(
+                    operator_cli.supervisor, "start_service", return_value=0
+                ) as start_service,
+                mock.patch.object(
+                    operator_cli.supervisor, "read_pid", return_value=4321
+                ),
+                mock.patch.object(
+                    operator_cli.supervisor, "is_pid_alive", return_value=True
+                ),
+                mock.patch.object(operator_cli, "start_cloudflared") as start_cloudflared,
+            ):
+                result = operator_cli._ensure_supervised_processes(settings)
+
+        self.assertEqual(result, 0)
+        start_service.assert_called_once_with("mcp")
+        start_cloudflared.assert_not_called()
+
+    def test_supervisor_restarts_missing_cloudflared(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = make_settings(tmp)
+            with (
+                mock.patch.object(
+                    operator_cli.supervisor, "active_services", return_value=()
+                ),
+                mock.patch.object(
+                    operator_cli.supervisor, "read_pid", return_value=None
+                ),
+                mock.patch.object(
+                    operator_cli, "start_cloudflared", return_value=0
+                ) as start_cloudflared,
+            ):
+                result = operator_cli._ensure_supervised_processes(settings)
+
+        self.assertEqual(result, 0)
+        start_cloudflared.assert_called_once_with(settings)
+
+    def test_supervise_operator_stops_children_on_shutdown(self) -> None:
+        stop_event = operator_cli.threading.Event()
+        wake_event = mock.Mock()
+        wake_event.wait.side_effect = lambda _timeout: stop_event.set() or True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = make_settings(tmp)
+            with (
+                mock.patch.object(
+                    operator_cli.supervisor, "load_settings", return_value=settings
+                ),
+                mock.patch.object(
+                    operator_cli, "cloudflared_command", return_value=["cloudflared"]
+                ),
+                mock.patch.object(
+                    operator_cli.supervisor, "stop_service", return_value=0
+                ),
+                mock.patch.object(
+                    operator_cli, "_ensure_supervised_processes", return_value=0
+                ),
+                mock.patch.object(
+                    operator_cli.threading,
+                    "Event",
+                    side_effect=[stop_event, wake_event],
+                ),
+                mock.patch.object(operator_cli.signal, "getsignal", return_value=0),
+                mock.patch.object(operator_cli.signal, "signal"),
+                mock.patch.object(operator_cli, "stop_operator", return_value=0) as stop_operator,
+            ):
+                result = operator_cli.supervise_operator()
+
+        self.assertEqual(result, 0)
+        stop_operator.assert_called_once_with(pause_supervisor=False)
+
+    def test_stop_operator_marks_supervisor_paused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = make_settings(tmp)
+            with (
+                mock.patch.object(
+                    operator_cli.supervisor, "load_settings", return_value=settings
+                ),
+                mock.patch.object(operator_cli, "stop_cloudflared", return_value=0),
+                mock.patch.object(
+                    operator_cli.supervisor, "stop_session", return_value=0
+                ),
+            ):
+                result = operator_cli.stop_operator()
+
+            self.assertEqual(result, 0)
+            self.assertTrue(operator_cli.operator_is_paused(settings))
+
+    def test_start_operator_clears_explicit_pause(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = make_settings(tmp)
+            operator_cli.set_operator_paused(settings, True)
+            with (
+                mock.patch.object(
+                    operator_cli.supervisor, "load_settings", return_value=settings
+                ),
+                mock.patch.object(
+                    operator_cli,
+                    "cloudflared_command",
+                    return_value=["cloudflared", "tunnel", "run", "example-tunnel"],
+                ),
+                mock.patch.object(
+                    operator_cli.supervisor, "stop_service", return_value=0
+                ),
+                mock.patch.object(
+                    operator_cli.supervisor, "start_session", return_value=0
+                ),
+                mock.patch.object(
+                    operator_cli, "wait_for_local_bridge", return_value=True
+                ),
+                mock.patch.object(
+                    operator_cli, "start_cloudflared", return_value=0
+                ),
+                mock.patch.object(
+                    operator_cli, "wait_for_public_endpoint", return_value=401
+                ),
+            ):
+                result = operator_cli.start_operator()
+
+            self.assertEqual(result, 0)
+            self.assertFalse(operator_cli.operator_is_paused(settings))
+
+    def test_supervise_operator_respects_explicit_pause(self) -> None:
+        stop_event = operator_cli.threading.Event()
+        wake_event = mock.Mock()
+        wake_event.wait.side_effect = lambda _timeout: stop_event.set() or True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = make_settings(tmp)
+            operator_cli.set_operator_paused(settings, True)
+            with (
+                mock.patch.object(
+                    operator_cli.supervisor, "load_settings", return_value=settings
+                ),
+                mock.patch.object(
+                    operator_cli, "cloudflared_command", return_value=["cloudflared"]
+                ),
+                mock.patch.object(
+                    operator_cli, "_ensure_supervised_processes"
+                ) as ensure_processes,
+                mock.patch.object(
+                    operator_cli.threading,
+                    "Event",
+                    side_effect=[stop_event, wake_event],
+                ),
+                mock.patch.object(operator_cli.signal, "getsignal", return_value=0),
+                mock.patch.object(operator_cli.signal, "signal"),
+                mock.patch.object(operator_cli, "stop_operator", return_value=0),
+            ):
+                result = operator_cli.supervise_operator()
+
+        self.assertEqual(result, 0)
+        ensure_processes.assert_not_called()
+
     def test_public_endpoint_readiness_requires_authentication_challenge(self) -> None:
         self.assertTrue(operator_cli.public_endpoint_is_ready(401))
         self.assertFalse(operator_cli.public_endpoint_is_ready(200))
@@ -446,6 +618,14 @@ class CloudflaredLifecycleTests(unittest.TestCase):
             self.assertEqual(operator_cli.main(["setup"]), 0)
 
         configure.assert_called_once_with()
+
+    def test_main_routes_supervise_to_foreground_supervisor(self) -> None:
+        with mock.patch.object(
+            operator_cli, "supervise_operator", return_value=0
+        ) as supervise:
+            self.assertEqual(operator_cli.main(["supervise"]), 0)
+
+        supervise.assert_called_once_with()
 
     def test_main_routes_setup_ui_to_existing_onboarding_server(self) -> None:
         with mock.patch.object(
