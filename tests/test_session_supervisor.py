@@ -347,6 +347,7 @@ class SessionSupervisorProcessTests(unittest.TestCase):
     def test_is_pid_alive_keeps_posix_probe_for_non_child(self) -> None:
         with (
             mock.patch.object(supervisor, "is_windows", return_value=False),
+            mock.patch.object(supervisor.os, "WNOHANG", 1, create=True),
             mock.patch.object(
                 supervisor.os, "waitpid", side_effect=ChildProcessError
             ) as waitpid,
@@ -354,12 +355,13 @@ class SessionSupervisorProcessTests(unittest.TestCase):
         ):
             self.assertTrue(supervisor.is_pid_alive(1234))
 
-        waitpid.assert_called_once_with(1234, os.WNOHANG)
+        waitpid.assert_called_once_with(1234, 1)
         os_kill.assert_called_once_with(1234, 0)
 
     def test_is_pid_alive_reaps_exited_direct_posix_child(self) -> None:
         with (
             mock.patch.object(supervisor, "is_windows", return_value=False),
+            mock.patch.object(supervisor.os, "WNOHANG", 1, create=True),
             mock.patch.object(supervisor.os, "waitpid", return_value=(1234, 0)),
             mock.patch.object(supervisor.os, "kill") as os_kill,
         ):
@@ -370,6 +372,7 @@ class SessionSupervisorProcessTests(unittest.TestCase):
     def test_reap_exited_children_drains_posix_zombies(self) -> None:
         with (
             mock.patch.object(supervisor, "is_windows", return_value=False),
+            mock.patch.object(supervisor.os, "WNOHANG", 1, create=True),
             mock.patch.object(
                 supervisor.os,
                 "waitpid",
